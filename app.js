@@ -8,7 +8,7 @@
 //            numeros.js (números apartados) · estilos.css · sw.js (abre sin internet)
 //  Por ahora solo tasaBin APAGADO (Etapa 1: encendido): los Bs a tasa BCV y los $ a tasa Divisas (H9).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.0 · 3-11-2026";
+const APP_VER = "2.0.1 · 4-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -39,7 +39,7 @@ const S = {
   datos: null,       // lo que mandó el sistema (cj_datos) + descargadoEn
   tasas: null,       // { bcv, div, fecha, origen: "sistema" | "manual" }
   ventas: [],        // todas las ventas de este equipo
-  pref: { dosCopias: false, claro: false, tamTicket: "auto" },
+  pref: { dosCopias: false, claro: true, tamTicket: "auto" },   // tema claro por defecto
   turno: null,       // { id, cajeroId, cajeroNombre, apertura, fondoBs, fondoUsd } — el turno abierto
   cierres: [],       // cierres de turno de este equipo (se suben al sistema: hoja CierresCaja)
   online: null,      // true / false / null (no se sabe)

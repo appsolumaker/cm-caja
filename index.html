@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#07090d">
+<meta name="theme-color" content="#eef1f5">
 <meta name="cm-caja-web" content="ControlMaster · Caja">
 <title>Caja · ControlMaster</title>
 <link rel="stylesheet" href="estilos.css">
 </head>
-<body>
+<body class="light">
 
 <header class="top">
   <div class="top-tit" id="tTit">Caja<small id="tSub">ControlMaster</small></div>
@@ -20,15 +20,15 @@
     <button type="button" data-v="vender" class="on" onclick="irA('vender')">🛒 Vender</button>
     <button type="button" data-v="ventas" onclick="irA('ventas')">🧾 Ventas</button>
     <button type="button" data-v="ajustes" onclick="irA('ajustes')">⚙️</button>
-    <button type="button" id="btnTema" title="Tema claro / oscuro" onclick="cambiarTema()">☀️</button>
   </nav>
+  <button type="button" class="btn-tema" id="btnTema" title="Tema claro / oscuro" onclick="cambiarTema()">🌙</button>
 </header>
 <div class="tasabar" id="tasaBar"></div>
 <div id="banners"></div>
 
 <!-- ENTRAR: activar el equipo, usuario y clave, descargar datos -->
 <section class="vista" id="vActivar">
-  <div class="activar card" style="margin:24px 12px;">
+  <div class="activar card">
     <div style="font-size:44px;" id="actIco">🧾</div>
     <h1 id="actTit">Caja</h1>
     <div id="actTxt"><p><span class="sp"></span>Abriendo…</p></div>
