@@ -1,0 +1,232 @@
+"use strict";
+// ══════════════════════════════════════════════════════════════
+//  ENTRAR · el equipo, el usuario y el pase (sistema ⇄ caja)
+//  Dos llaves:
+//   · EL EQUIPO: lo activa una vez un usuario con permiso de la caja y la clave maestra, aquí mismo.
+//     Con su llave se suben las ventas, los cierres y se piden/devuelven números (aunque la sesión venza).
+//   · EL USUARIO: usuario y clave del sistema, o el pase de un solo uso que manda el sistema al tocar
+//     la tarjeta de la caja. Con la sesión se descargan los datos y se abre el sistema (🏠 Sistema).
+//  Sin internet, la sesión que ya estaba abierta sigue sirviendo para vender. El cajero de cada turno
+//  entra con su PIN (app.js).
+// ══════════════════════════════════════════════════════════════
+const espera = ms => new Promise(r => setTimeout(r, ms));
+
+function sesionViva(){ return !!(S.ses && S.ses.token); }
+function modsSesion(){
+  const m = S.ses && S.ses.usuario && S.ses.usuario.modulos;
+  return (Array.isArray(m) ? m : String(m || "").split(",")).map(x => String(x).trim()).filter(Boolean);
+}
+function puedeCaja(n){ const m = modsSesion(); return m.indexOf("todos") >= 0 || m.indexOf("ventas_" + n) >= 0; }
+async function guardarSesion(r){
+  S.ses = { token: r.token, usuario: r.usuario || {}, desde: Date.now() };
+  S.sesionMal = "";
+  await kvSet("sesion", S.ses);
+}
+async function borrarSesion(){ S.ses = null; await kvSet("sesion", null); }
+function ventaAMedias(){ return F.items.length > 0 || !!P || !!document.querySelector(".mfondo:not(.oculto)"); }
+
+// ── Pantalla de entrar (la vista "activar") ──
+function pantalla(o){
+  document.body.classList.add("entrando");
+  mostrarVista("activar");
+  $("actIco").textContent = o.ico || "🧾";
+  $("actTit").textContent = o.tit || (S.datos && S.datos.negocio) || "Caja";
+  $("actTxt").innerHTML = o.html || "";
+  $("actForm").innerHTML = o.form || "";
+  $("actBtns").innerHTML = o.btns || "";
+}
+function pantallaCargando(txt){ pantalla({ ico: "🧾", html: '<p><span class="sp"></span>' + esc(txt) + "</p>" }); }
+
+// ── Arranque: equipo → usuario → datos → vender ──
+// Vino del sistema con #pase=…: se canjea por una sesión del mismo usuario (sirve una vez y por un minuto)
+async function entrarConPase(){
+  const m = String(location.hash || "").match(/[#&]pase=([A-Za-z0-9]{20,80})/);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);   // es una llave: se quita de la barra
+  pantallaCargando("Entrando…");
+  try {
+    const r = await api("cj_canje", { pase: m[1] }, 30000);
+    if (r && r.ok && r.token) {
+      if (S.ses && S.ses.token && S.ses.token !== r.token) api("cj_salir", { sesion: S.ses.token }, 15000).catch(() => {});   // la sesión anterior se cierra
+      await guardarSesion(r);
+      S.paseCaja = Number(r.caja) || 0;
+    } else S.avisoPase = (r && r.msg) || "";
+  } catch (e) { S.avisoPase = "No se pudo usar el pase del sistema (" + e.message + ")."; }
+}
+async function continuarArranque(){
+  // 1) El equipo
+  if (!S.eq) {
+    if (navigator.onLine === false) {
+      pantalla({ ico: "📡", html: "<p>Este equipo todavía no está activado para la caja. La primera vez necesita <b>internet</b>.</p>",
+        btns: '<button type="button" class="btn green" onclick="location.reload()">🔄 Reintentar</button>' });
+      return;
+    }
+    if (!sesionViva()) {
+      pantallaLogin((S.avisoPase ? esc(S.avisoPase) + "<br><br>" : "") + "Este equipo todavía no está activado para la caja. Entra con tu usuario para activarlo (hace falta la <b>clave maestra</b>).");
+      S.avisoPase = "";
+      return;
+    }
+    pantallaActivar();
+    return;
+  }
+  // 2) El usuario
+  if (!sesionViva()) { pantallaLogin(S.avisoPase ? esc(S.avisoPase) : ""); S.avisoPase = ""; return; }
+  // 3) Los datos de la caja
+  if (!S.datos) {
+    pantalla({ ico: "⬇️", html: "<p>Ahora hay que descargar los productos, los clientes y las tasas de la <b>Caja " + esc(S.eq.caja) + "</b>. Necesita <b>internet</b> esta vez.</p>",
+      btns: '<button type="button" class="btn green" id="btnPrimera" onclick="primeraDescarga(this)">⬇️ Descargar datos</button>' });
+    primeraDescarga($("btnPrimera"));
+    return;
+  }
+  const yaEstaba = _listoYa;
+  listo();
+  if (yaEstaba) actualizarDatos(null, true);
+  if (S.paseCaja && Number(S.paseCaja) !== Number(S.eq.caja)) {
+    aviso({ icono: "🧾", titulo: "Este equipo es de la Caja " + S.eq.caja, html: "Tocaste la <b>Caja " + S.paseCaja + "</b> en el sistema, pero este equipo está activado para la <b>Caja " + esc(S.eq.caja) + "</b>: aquí se vende como Caja " + esc(S.eq.caja) + "." });
+  }
+  S.paseCaja = 0;
+}
+
+// ── Usuario y clave ──
+function pantallaLogin(motivo){
+  pantalla({ ico: "🔐",
+    html: (motivo ? "<p>" + motivo + "</p>" : "") + "<p>Entra con tu usuario y tu clave del sistema.</p>",
+    form: '<label class="lbl" for="lgUsu">Usuario</label><input class="inp" id="lgUsu" autocomplete="username" autocapitalize="off" placeholder="Tu usuario">' +
+          '<label class="lbl" for="lgCla">Clave</label><input class="inp" id="lgCla" type="password" autocomplete="current-password" placeholder="Tu clave">',
+    btns: '<button type="button" class="btn green block" id="btnEntrar" onclick="entrar(this)">Entrar →</button>' });
+  $("lgUsu").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("lgCla").focus(); } });
+  $("lgCla").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); entrar($("btnEntrar")); } });
+  setTimeout(() => { const i = $("lgUsu"); if (i) i.focus(); }, 60);
+}
+async function entrar(btn){
+  if (btn && btn.disabled) return;
+  const u = $("lgUsu").value.trim(), c = $("lgCla").value;
+  if (!u || !c) { aviso({ icono: "🔐", titulo: "Faltan datos", html: "Escribe tu usuario y tu clave." }); return; }
+  btnOcupado(btn, "Entrando…");
+  let r;
+  try { r = await api("cj_login", { usuario: u, clave: c }, 30000); }
+  catch (e) { btnLibre(btn); aviso({ icono: "📡", titulo: "No se pudo entrar", html: esc(e.message) + (e.red ? "<br><br>Para entrar hace falta internet." : "") }); return; }
+  if (!r || !r.ok) { btnLibre(btn); aviso({ icono: "🔐", titulo: "No se pudo entrar", html: esc((r && r.msg) || "El sistema no respondió.") }); return; }
+  if (S.ses && S.ses.token) api("cj_salir", { sesion: S.ses.token }, 15000).catch(() => {});
+  await guardarSesion(r);
+  btnLibre(btn);
+  toast("✅ Hola, " + (r.usuario.nombre || r.usuario.usuario));
+  S.datosMal = ""; S.permisoMal = "";
+  continuarArranque();
+}
+
+// ── Activar este equipo (una vez, con la clave maestra) ──
+function pantallaActivar(){
+  const cajas = [1, 2, 3, 4, 5].filter(puedeCaja);
+  const u = (S.ses && S.ses.usuario) || {};
+  if (!cajas.length) {
+    pantalla({ ico: "⛔", html: "<p><b>" + esc(u.nombre || u.usuario) + "</b> no tiene permiso para ninguna caja. Entra con otro usuario.</p>",
+      btns: '<button type="button" class="btn green" onclick="pedirEntrarOtraVez()">🔐 Entrar con otro usuario</button>' });
+    return;
+  }
+  const sug = cajas.indexOf(Number(S.paseCaja)) >= 0 ? Number(S.paseCaja) : cajas[0];
+  pantalla({ ico: "🔌",
+    html: "<p>Este equipo todavía no está activado para la caja. Se hace <b>una sola vez</b>: después vende aunque se vaya el internet.</p>",
+    form: '<label class="lbl" for="acCaja">Caja de este equipo</label><select class="inp" id="acCaja">' + cajas.map(n => '<option value="' + n + '"' + (n === sug ? " selected" : "") + ">Caja " + n + "</option>").join("") + "</select>" +
+          '<label class="lbl" for="acNom">Nombre del equipo</label><input class="inp" id="acNom" maxlength="40" placeholder="Ej. PC de la caja 1, Celular de María">' +
+          '<label class="lbl" for="acMae">Clave maestra</label><input class="inp" id="acMae" type="password" autocomplete="off" placeholder="La del administrador">' +
+          '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Las ventas de este equipo quedan como de esa caja. Si después hay que quitarle el permiso: Configuración → Administración → Caja nueva.</div>",
+    btns: '<button type="button" class="btn green block" id="btnActivar" onclick="activarEquipo(this)">✅ Activar este equipo</button>' +
+          '<div style="margin-top:8px;"><button type="button" class="btn sm" onclick="pedirEntrarOtraVez()">Entrar con otro usuario</button></div>' });
+  $("acMae").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); activarEquipo($("btnActivar")); } });
+  setTimeout(() => { const i = $("acNom"); if (i) i.focus(); }, 60);
+}
+async function activarEquipo(btn){
+  if (btn && btn.disabled) return;
+  const caja = Number($("acCaja").value) || 0, nombre = $("acNom").value.trim(), mae = $("acMae").value;
+  if (!nombre) { aviso({ icono: "🖥️", titulo: "Falta el nombre", html: "Ponle un nombre al equipo para reconocerlo después, por ejemplo <b>PC de la caja 1</b> o <b>Celular de María</b>." }); return; }
+  if (!mae) { aviso({ icono: "🔐", titulo: "Falta la clave maestra", html: "Escribe la <b>clave maestra</b> para activar el equipo." }); return; }
+  btnOcupado(btn, "Activando…");
+  let r;
+  try { r = await api("cj_activar", { caja: caja, nombre: nombre, claveMaestra: mae }, 30000); }
+  catch (e) { btnLibre(btn); aviso({ icono: "📡", titulo: "No se activó", html: esc(e.message) }); return; }
+  if (!r || !r.ok) { btnLibre(btn); if (r && r.codigo === "SESION") return; aviso({ icono: "⛔", titulo: "No se activó", html: esc((r && r.msg) || "El sistema no respondió.") }); return; }
+  const cambiaCaja = S.datos && Number(S.datos.caja) !== Number(r.caja);
+  S.eq = { token: r.token, equipo: r.equipo, caja: r.caja, nombre: r.nombre, activado: ahoraTxt() };
+  await kvSet("equipo", S.eq);
+  await borrarDatosDelEquipo();   // datos y números del equipo anterior (si lo hubo); las ventas sin subir se quedan
+  if (cambiaCaja && S.turno) aviso({ icono: "🧾", titulo: "Hay un turno abierto de otra caja", html: "Ciérralo cuando puedas: las ventas nuevas quedan como de la Caja " + r.caja + "." });
+  S.permisoMal = ""; S.datosMal = "";
+  btnLibre(btn);
+  toast("✅ Equipo activado: " + r.equipo);
+  continuarArranque();
+}
+// El sistema dijo que este equipo ya no tiene permiso (dado de baja o activado en otro lado): activarlo de nuevo
+async function olvidarEquipo(){
+  if (ventaAMedias()) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de activar el equipo otra vez." }); return; }
+  if (!await confirmar({ icono: "🔌", titulo: "Activar este equipo otra vez", ok: "Sí, activar", html: "Hace falta un usuario con permiso de la caja y la <b>clave maestra</b>. Las ventas guardadas en este equipo no se borran: se suben con el permiso nuevo." })) return;
+  S.eq = null; S.permisoMal = "";
+  await kvSet("equipo", null);
+  pintarBanners();
+  continuarArranque();
+}
+
+// ── La sesión venció o el usuario no tiene permiso para esta caja (lo avisa api.js) ──
+function sesionProblema(res){
+  S.sesionMal = res.msg || "Tu sesión venció.";
+  if (S.vista !== "activar" && ventaAMedias()) { pintarBanners(); return; }   // primero se termina la venta
+  pedirEntrarOtraVez();
+}
+async function pedirEntrarOtraVez(){
+  const msg = S.sesionMal;
+  S.sesionMal = "";
+  if (S.ses) await borrarSesion();
+  pintarBanners();
+  pantallaLogin(msg ? esc(msg) : "");
+}
+async function cerrarSesion(btn){
+  if (S.online === false || navigator.onLine === false) {
+    aviso({ icono: "📡", titulo: "Sin internet", html: "Para volver a entrar hace falta internet: si cierras la sesión ahora, nadie podrá vender en esta caja hasta que vuelva la conexión. Ciérrala cuando haya internet." });
+    return;
+  }
+  if (ventaAMedias()) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de cerrar la sesión." }); return; }
+  if (!await confirmar({ icono: "🚪", titulo: "Cerrar sesión", ok: "Sí, cerrar sesión", colorOk: "naranja",
+    html: "Para volver a vender hay que entrar con usuario y clave." + (S.turno ? "<br><br>El turno de <b>" + esc(S.turno.cajeroNombre) + "</b> sigue abierto." : "") })) return;
+  btnOcupado(btn, "Cerrando…");
+  try { await api("cj_salir", {}, 15000); } catch (e) {}
+  btnLibre(btn);
+  await borrarSesion();
+  pantallaLogin("Sesión cerrada.");
+}
+
+// ── 🏠 Sistema: vuelve a la pestaña del sistema, o la abre con un pase de un solo uso ──
+async function irSistema(btn){
+  if (btn && btn.disabled) return;
+  if (S.online === false || navigator.onLine === false) {
+    aviso({ icono: "📡", titulo: "Sin internet", html: "El sistema necesita internet. La caja sigue funcionando aquí: puedes seguir vendiendo." });
+    return;
+  }
+  if (!sesionViva()) { aviso({ icono: "🔐", titulo: "Primero entra", html: "Entra con tu usuario y clave para abrir el sistema." }); return; }
+  // 1) Si el sistema abrió esta caja y sigue abierto, se vuelve a esa pestaña
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.focus();
+      await espera(350);
+      if (document.visibilityState === "hidden") return;
+    }
+  } catch (e) {}
+  // 2) Si no, se abre (o se reusa) la pestaña del sistema
+  let w = null;
+  try { w = window.open("", "cm_sistema"); } catch (e) { w = null; }
+  if (!w) { aviso({ icono: "🪟", titulo: "El navegador bloqueó la ventana", html: "Permite las ventanas emergentes de esta página y vuelve a tocar <b>🏠 Sistema</b>." }); return; }
+  let nueva = true;
+  try { nueva = !w.location.href || w.location.href === "about:blank"; } catch (e) { nueva = false; }   // otra dirección = el sistema ya está ahí
+  if (!nueva) { try { w.focus(); } catch (e) {} return; }
+  try { w.document.title = "Sistema"; w.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px;color:#555;">Abriendo el sistema…</p>'; } catch (e) {}
+  btnOcupado(btn, "Abriendo…");
+  let r = null;
+  try { r = await api("cj_pase", {}, 30000); } catch (e) { r = { ok: false, msg: e.message }; }
+  btnLibre(btn);
+  if (!r || !r.ok) {
+    try { w.close(); } catch (e) {}
+    if (r && r.codigo === "SESION") return;   // ya pidió entrar otra vez
+    aviso({ icono: "🏠", titulo: "No se abrió el sistema", html: esc((r && r.msg) || "El sistema no respondió.") });
+    return;
+  }
+  try { w.location.href = r.url; w.focus(); } catch (e) { location.href = r.url; }
+}
