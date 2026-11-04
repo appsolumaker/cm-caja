@@ -8,7 +8,7 @@
 //            numeros.js (números apartados) · estilos.css · sw.js (abre sin internet)
 //  Por ahora solo tasaBin APAGADO (Etapa 1: encendido): los Bs a tasa BCV y los $ a tasa Divisas (H9).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.1 · 4-11-2026";
+const APP_VER = "2.1.1 · 4-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -1088,8 +1088,8 @@ function pgTerminar(imprimir){
 // ══ TICKET (mismo formato que Ventas: generarTicket) ══
 function htmlTicket(v){
   const d = S.datos || {}, cfg = Object.assign({ formato: "ticket80", moneda: "BS", mostrarEquiv: true, nombreDoc: "Nota de Entrega", pieLinea1: "***Gracias por su compra***", pieLinea2: "Puede solicitar su factura en caja." }, d.impresion || {});
-  // Venta en Dólares (TasaBin): los $ de la pantalla pasan a Bs con la Divisas, que es lo que paga el cliente
-  const enDiv = v.unidad === "div", tasa = (enDiv ? v.tasas.div : v.tasas.bcv) || 1;
+  // Como Ventas: los Bs del ticket SIEMPRE a tasa BCV, aunque sea Venta en Dólares (solo cambia la etiqueta «Total $»)
+  const enDiv = v.unidad === "div", tasa = Number(v.tasas && v.tasas.bcv) || 1;
   const enBS = cfg.moneda !== "USD", conv = usd => enBS ? fmt(usd * tasa) : fmt(usd), sym = enBS ? "Bs." : "$";
   const fmtT = formatoTicket(), mostrarPU = fmtT !== "58";
   const nroT = v.numeroFactura || nroTicket(v);
