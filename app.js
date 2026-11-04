@@ -8,7 +8,7 @@
 //            numeros.js (números apartados) · estilos.css · sw.js (abre sin internet)
 //  Por ahora solo tasaBin APAGADO (Etapa 1: encendido): los Bs a tasa BCV y los $ a tasa Divisas (H9).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.0.1 · 4-11-2026";
+const APP_VER = "2.1 · 4-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -51,7 +51,7 @@ const S = {
   vista: "vender"
 };
 const F = nuevaFactura();   // la venta que se está armando
-function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, seq: 0 }; }
+function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, dolares: false, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, seq: 0 }; }   // dolares: Venta en Dólares (TasaBin), se apaga en cada venta como en Ventas
 let P = null;              // el pago abierto
 let _ventaGuardada = null; // la que se acaba de guardar (para imprimir)
 
@@ -196,10 +196,28 @@ async function descargarDatos(){
     throw e;
   }
   d.descargadoEn = Date.now();
+  const antes = F.items.length ? { total: totales(F.items, F.desc).total, u: unidadU() } : null;
   S.datos = d; S.permisoMal = ""; S.datosMal = "";
   await kvSet("datos", d);
-  S.tasas = { bcv: Number(d.tasa) || 0, div: Number(d.tasaDivisas) || 0, fecha: hoyTxt(), origen: "sistema" };
+  // TasaBin encendido: div = tasa Divisas (H7). Apagado: div = Divisas de los $ en efectivo (H9).
+  const on = d.binOn === true;
+  S.tasas = { bcv: Number(d.tasa) || 0, div: on ? (Number(d.tasaBinance) || Number(d.tasa) || 0) : (Number(d.tasaDivisas) || 0),
+              binOn: on, brecha: Number(d.brechaPct) || 0, fecha: hoyTxt(), origen: "sistema" };
+  if (!on) F.dolares = false;
   await kvSet("tasas", S.tasas);
+  if (antes) {   // la factura en pantalla toma las tasas nuevas (los precios del sistema no cambian)
+    repreciar();
+    const ahora = totales(F.items, F.desc).total;
+    if (antes.u === unidadU() && Math.abs(ahora - antes.total) >= 0.005)
+      aviso({ icono: "💱", titulo: "Precios recalculados", html: "Llegaron tasas nuevas del sistema: " + textoTasas() + ".<br><br>Total de la venta en pantalla: <b>" + txtU(antes.total) + "</b> → <b>" + txtU(ahora) + "</b> (Bs " + fmt(r2(ahora * bsPorU())) + ")." +
+        (F.items.some(i => i.manual) ? "<br><br>Las líneas con precio manual se pasaron con las tasas nuevas." : "") + "<br><br>Si ya le habías dicho el total al cliente, avísale del cambio." });
+  }
+}
+// Las tasas del equipo en palabras
+function textoTasas(){
+  const t = S.tasas || {};
+  if (t.binOn) return "BCV <b>Bs " + fmt(t.bcv) + "</b> · Divisas <b>Bs " + fmt(t.div) + "</b>" + (t.bcv > 0 && t.div > 0 ? " (brecha " + fmt((t.div / t.bcv - 1) * 100) + " %)" : "");
+  return "BCV <b>Bs " + fmt(t.bcv) + "</b> · Divisas efectivo <b>Bs " + (t.div > 0 ? fmt(t.div) : "—") + "</b>";
 }
 async function actualizarDatos(btn, silencioso){
   if (!S.eq || !sesionViva()) return;
@@ -249,7 +267,7 @@ function pintarCabecera(){
   $("tTit").innerHTML = esc(d.negocio || "Mi negocio") + "<small>Caja " + esc(d.caja) + " · equipo " + esc(d.equipo || "") + (S.ses && S.ses.usuario ? " · " + esc(S.ses.usuario.nombre || S.ses.usuario.usuario) : "") + "</small>";
   const t = S.tasas || {};
   const vieja = t.fecha && t.fecha !== hoyTxt();
-  $("tasaBar").innerHTML = "💱 BCV <b>Bs " + fmt(t.bcv) + "</b> · Divisas <b>Bs " + (t.div > 0 ? fmt(t.div) : "—") + "</b>" +
+  $("tasaBar").innerHTML = "💱 " + textoTasas() +
     (vieja ? ' · <span class="vieja">⚠️ tasa del ' + fechaCorta(t.fecha) + '</span>' : (t.origen === "manual" ? ' · <span class="vieja">puesta a mano</span>' : "")) +
     '<span class="flex1"></span><span>Datos del ' + fechaCorta(hoyTxt(new Date(d.descargadoEn))) + " " + pad(new Date(d.descargadoEn).getHours()) + ":" + pad(new Date(d.descargadoEn).getMinutes()) + "</span>";
 }
@@ -328,13 +346,13 @@ function buscar(){
   if (!norm(q) && window.innerWidth < 900) { box.innerHTML = '<div class="vacio">Escribe el nombre o el código, o pasa el lector de códigos.</div>'; box._lst = []; return; }
   if (!lst.length) { box.innerHTML = '<div class="vacio">No hay productos con «' + esc(q) + '».</div>'; box._lst = []; return; }
   box.innerHTML = lst.map((p, k) => {
-    const pr = precioDe(p, F.tipoPrecio), conIva = pr.base * (1 + pr.iva / 100);
+    const pr = precioDe(p, F.tipoPrecio), conIva = r2(basePantalla(pr.base) * (1 + pr.iva / 100));
     let ex = "";
     if (p.tipo === "servicio") ex = '<span class="tag">SERVICIO</span>';
     else { const e = existenciaLocal(p); ex = '<span class="ex ' + (e <= 0 ? "cero" : e <= 5 ? "bajo" : "") + '">' + fmtCant(e) + "</span>"; }
     return '<div class="prod" data-k="' + k + '" onclick="clicProducto(this,' + k + ')" ondblclick="agregarDeLista(' + k + ')"><div style="min-width:0;"><div class="prod-nom">' + esc(p.nombre) + "</div>" +
       '<div class="prod-sub">' + esc(p.codigoBarras || p.codigo) + (p.marca ? " · " + esc(p.marca) : "") + " " + ex + "</div></div>" +
-      '<div class="prod-pr"><b>Bs ' + fmt(conIva * (t.bcv || 0)) + "</b><span>$" + fmt(conIva) + "</span></div></div>";
+      '<div class="prod-pr"><b>Bs ' + fmt(conIva * bsPorU()) + "</b><span>" + txtU(conIva) + "</span></div></div>";
   }).join("");
   box._lst = lst;
 }
@@ -368,7 +386,7 @@ async function agregar(p){
   const ya = F.items.find(i => i.codigo === p.codigo && i.tipo === p.tipo && !i.manual && i.tipoIdx === F.tipoPrecio);
   if (ya) ya.cantidad = r3((Number(ya.cantidad) || 0) + 1);
   else F.items.push({ key: ++F.seq, tipo: p.tipo, codigo: p.codigo, nombre: p.nombre, codigoBarras: p.codigoBarras || p.codigo,
-    cantidad: 1, base: pr.base, iva: pr.iva, manual: false, tipoIdx: F.tipoPrecio });
+    cantidad: 1, libro: pr.base, base: basePantalla(pr.base), iva: pr.iva, manual: false, tipoIdx: F.tipoPrecio });   // libro: base del sistema (divisas con TasaBin) · base: en pantalla
   $("busca").value = "";
   buscar(); pintarFactura();
   toast("✅ " + p.nombre);
@@ -382,6 +400,9 @@ function pintarSelectores(){
   const tp = (d.tiposPrecios || []).map((n, i) => ({ n, i })).filter(o => o.i === 0 || (d.productos || []).some(p => p.precios && p.precios[o.i] && Number(p.precios[o.i].base) > 0));
   $("selTipoPrecio").innerHTML = tp.map(o => '<option value="' + o.i + '"' + (o.i === F.tipoPrecio ? " selected" : "") + ">💲 " + esc(o.n) + "</option>").join("");
   $("selTipoPrecio").classList.toggle("oculto", tp.length < 2);
+  // Venta en Dólares (solo con TasaBin encendido)
+  const bd = $("btnDolares");
+  if (bd) { bd.classList.toggle("oculto", !binOn()); bd.classList.toggle("on", !!F.dolares); bd.innerHTML = F.dolares ? "💵 Venta en Dólares ✓" : "💵 Venta en Dólares"; }
   // Vendedor
   const sel = $("selVend"), badge = $("badgeVend");
   sel.classList.add("oculto"); badge.classList.add("oculto");
@@ -399,7 +420,7 @@ function pintarSelectores(){
 function cambiarTipoPrecio(v){
   F.tipoPrecio = Number(v) || 0;
   const c = cat();
-  F.items.forEach(i => { if (i.manual || i.tipo === "servicio") return; const p = c.find(x => x.codigo === i.codigo && x.tipo === i.tipo); if (!p) return; const pr = precioDe(p, F.tipoPrecio); i.base = pr.base; i.iva = pr.iva; i.tipoIdx = F.tipoPrecio; });
+  F.items.forEach(i => { if (i.manual || i.tipo === "servicio") return; const p = c.find(x => x.codigo === i.codigo && x.tipo === i.tipo); if (!p) return; const pr = precioDe(p, F.tipoPrecio); i.libro = pr.base; i.base = basePantalla(pr.base); i.iva = pr.iva; i.tipoIdx = F.tipoPrecio; });
   buscar(); pintarFactura();
 }
 // Total igual que el servidor (_vsiTotal_ / registrarVentaDesdeHTML): descuento prorrateado sobre base e IVA
@@ -415,28 +436,29 @@ function totales(items, desc){
   return { sub: r2(sub), iva: r2(iva), desc: descB, ivaR: ivaR, total: Math.round((sub - descB + ivaR) * 100) / 100, f: f };
 }
 function pintarFactura(){
-  const box = $("lineas"), t = S.tasas || {};
+  const box = $("lineas");
   _vendidoLocal = null;
+  repreciar();
   if (!F.items.length) box.innerHTML = '<div class="vacio">Busca un producto o pasa el lector de códigos.<br>Toca un producto para agregarlo.</div>';
   else box.innerHTML = F.items.map(i => {
-    const conIva = i.base * (1 + i.iva / 100), tl = conIva * (Number(i.cantidad) || 0);
+    const conIva = r2(i.base * (1 + i.iva / 100)), tl = r2(conIva * (Number(i.cantidad) || 0));   // como la muestra Ventas
     return '<div class="linea"><div class="linea-nom">' + esc(i.nombre) + (i.manual ? '<span class="man">✏️ PRECIO MANUAL</span>' : "") + (i.tipo === "servicio" ? ' <span class="tag">SRV</span>' : "") + "</div>" +
-      '<div class="linea-tot">Bs ' + fmt(tl * (t.bcv || 0)) + "<small>$" + fmt(tl) + "</small></div>" +
+      '<div class="linea-tot">Bs ' + fmt(tl * bsPorU()) + "<small>" + txtU(tl) + "</small></div>" +
       '<div class="linea-ctrl"><input class="inp" type="number" inputmode="decimal" min="0" step="any" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}">' +
-      '<span class="pu">× $' + fmt(conIva) + (i.iva ? " (IVA " + fmt(i.iva).replace(",00", "") + "%)" : "") + "</span></div>" +
+      '<span class="pu">× ' + txtU(conIva) + (i.iva ? " (IVA " + fmt(i.iva).replace(",00", "") + "%)" : "") + "</span></div>" +
       '<div class="linea-acc"><button type="button" class="ico" title="Precio manual" onclick="precioManual(' + i.key + ')">✏️</button><button type="button" class="ico" title="Quitar" onclick="quitarLinea(' + i.key + ')">✕</button></div></div>';
   }).join("");
   pintarTotales();
 }
 function pintarTotales(){
-  const t = S.tasas || {}, x = totales(F.items, F.desc), bcv = t.bcv || 0;
+  const x = totales(F.items, F.desc), u = unidadU();
   let h = '<div><span>Subtotal</span><b>$' + fmt(x.sub) + "</b></div>";
   if (x.desc > 0) h += '<div><span>Descuento ' + (F.desc.tipo === "pct" ? fmt(F.desc.valor).replace(",00", "") + " %" : "") + ' <a href="#" onclick="quitarDescuento();return false;" style="color:var(--red);">quitar</a></span><b>− $' + fmt(x.desc) + "</b></div>";
   h += "<div><span>IVA</span><b>$" + fmt(x.ivaR) + "</b></div>";
-  h += '<div class="grande"><span>Total</span><b>Bs ' + fmt(r2(x.total * bcv)) + "</b></div>";
-  h += "<div><span>Total $ BCV</span><b>$" + fmt(x.total) + "</b></div>";
+  h += '<div class="grande"><span>Total</span><b>Bs ' + fmt(r2(x.total * bsPorU())) + "</b></div>";
+  h += "<div><span>Total $ " + (u === "div" ? "(divisas)" : "BCV") + "</span><b>$" + fmt(x.total) + "</b></div>";
   $("totales").innerHTML = h;
-  $("barraTot").innerHTML = "Bs " + fmt(r2(x.total * bcv)) + "<small>$" + fmt(x.total) + " BCV · " + F.items.length + " línea" + (F.items.length === 1 ? "" : "s") + "</small>";
+  $("barraTot").innerHTML = "Bs " + fmt(r2(x.total * bsPorU())) + "<small>" + txtU(x.total) + " · " + F.items.length + " línea" + (F.items.length === 1 ? "" : "s") + "</small>";
   $("btnDesc").classList.toggle("on", x.desc > 0);
   $("cliNom").textContent = F.cliente.nombre + (F.cliente.cedula ? " · " + F.cliente.cedula : "");
   $("btnCliente").classList.toggle("on", !!F.cliente.cedula);
@@ -445,9 +467,9 @@ function cambiarCant(key, v){
   const i = F.items.find(x => x.key === key); if (!i) return;
   i.cantidad = v === "" ? "" : r3(v);
   // sin repintar las líneas (no se pierde el cursor)
-  const t = S.tasas || {}, conIva = i.base * (1 + i.iva / 100), tl = conIva * (Number(i.cantidad) || 0);
+  const conIva = r2(i.base * (1 + i.iva / 100)), tl = r2(conIva * (Number(i.cantidad) || 0));   // como la muestra Ventas
   const fila = document.activeElement && document.activeElement.closest ? document.activeElement.closest(".linea") : null;
-  if (fila) fila.querySelector(".linea-tot").innerHTML = "Bs " + fmt(tl * (t.bcv || 0)) + "<small>$" + fmt(tl) + "</small>";
+  if (fila) fila.querySelector(".linea-tot").innerHTML = "Bs " + fmt(tl * bsPorU()) + "<small>" + txtU(tl) + "</small>";
   _vendidoLocal = null;
   pintarTotales();
 }
@@ -505,21 +527,22 @@ async function precioManual(key){
     if (!await pedirClave("Precio manual", "Escribe la clave sin internet para cambiar el precio de <b>" + esc(i.nombre) + "</b>:")) return;
     F.claveOk = true;
   }
-  const conIva = i.base * (1 + i.iva / 100), bcv = (S.tasas || {}).bcv || 0;
+  const conIva = r2(i.base * (1 + i.iva / 100)), bsU = bsPorU(), u = unidadU();
   const r = await modal({
     icono: "✏️", titulo: "Precio manual",
-    html: '<div class="m-txt"><b>' + esc(i.nombre) + "</b><br><span style=\"color:var(--text-dim);font-size:13px;\">Hoy: $" + fmt(conIva) + " · Bs " + fmt(conIva * bcv) + (i.iva ? " (con IVA " + fmt(i.iva).replace(",00", "") + "%)" : "") + "</span></div>" +
-      '<label class="lbl">Precio por unidad' + (i.iva ? " con IVA" : "") + '</label><div class="seg" style="margin-bottom:6px;"><button type="button" class="btn sm on" id="mpUsd" onclick="this.classList.add(\'on\');$(\'mpBs\').classList.remove(\'on\');$(\'mpVal\').placeholder=\'En $ BCV\'">En $</button><button type="button" class="btn sm" id="mpBs" onclick="this.classList.add(\'on\');$(\'mpUsd\').classList.remove(\'on\');$(\'mpVal\').placeholder=\'En Bs\'">En Bs</button></div>' +
-      '<input class="inp" id="mpVal" type="number" inputmode="decimal" min="0" step="any" placeholder="En $ BCV"><div class="m-err" id="mpErr"></div>',
+    html: '<div class="m-txt"><b>' + esc(i.nombre) + "</b><br><span style=\"color:var(--text-dim);font-size:13px;\">Hoy: " + txtU(conIva) + " · Bs " + fmt(conIva * bsU) + (i.iva ? " (con IVA " + fmt(i.iva).replace(",00", "") + "%)" : "") + "</span></div>" +
+      '<label class="lbl">Precio por unidad' + (i.iva ? " con IVA" : "") + '</label><div class="seg" style="margin-bottom:6px;"><button type="button" class="btn sm on" id="mpUsd" onclick="this.classList.add(\'on\');$(\'mpBs\').classList.remove(\'on\');$(\'mpVal\').placeholder=\'En $ ' + u + '\'">En $ ' + u + '</button><button type="button" class="btn sm" id="mpBs" onclick="this.classList.add(\'on\');$(\'mpUsd\').classList.remove(\'on\');$(\'mpVal\').placeholder=\'En Bs\'">En Bs</button></div>' +
+      '<input class="inp" id="mpVal" type="number" inputmode="decimal" min="0" step="any" placeholder="En $ ' + u + '"><div class="m-err" id="mpErr"></div>',
     botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Aplicar", v: true, cls: "green" }],
     foco: "mpVal",
     antes: (v) => {
       if (!v) return true;
       const x = Number($("mpVal").value);
       if (!(x > 0)) { $("mpErr").textContent = "Escribe un precio mayor que cero."; return false; }
-      let usd = $("mpBs").classList.contains("on") ? (bcv > 0 ? x / bcv : 0) : x;
-      i.base = usd / (1 + i.iva / 100);
+      const usd = $("mpBs").classList.contains("on") ? (bsU > 0 ? x / bsU : 0) : x;   // en la unidad de la pantalla
       i.manual = true; i.tipoIdx = -1;
+      i.libro = libroDePantalla(usd / (1 + i.iva / 100));   // en los libros (con TasaBin, divisas)
+      i.base = basePantalla(i.libro, true);
       return true;
     }
   });
@@ -535,9 +558,9 @@ async function abrirDescuento(){
   let tipo = F.desc.tipo === "monto" ? "monto" : "pct";
   const r = await modal({
     icono: "🏷️", titulo: "Descuento",
-    html: '<div class="m-txt" style="color:var(--text-dim);font-size:13px;">Total sin descuento: $' + fmt(x.total) + "</div>" +
-      '<div class="seg" style="margin-top:10px;"><button type="button" class="btn sm' + (tipo === "pct" ? " on" : "") + '" id="dPct" onclick="this.classList.add(\'on\');$(\'dMon\').classList.remove(\'on\');$(\'dVal\').placeholder=\'Porcentaje (%)\'">%</button><button type="button" class="btn sm' + (tipo === "monto" ? " on" : "") + '" id="dMon" onclick="this.classList.add(\'on\');$(\'dPct\').classList.remove(\'on\');$(\'dVal\').placeholder=\'Monto en $ BCV\'">$</button></div>' +
-      '<input class="inp" id="dVal" type="number" inputmode="decimal" min="0" step="any" style="margin-top:8px;" placeholder="' + (tipo === "pct" ? "Porcentaje (%)" : "Monto en $ BCV") + '" value="' + (F.desc.valor > 0 ? F.desc.valor : "") + '"><div class="m-err" id="dErr"></div>',
+    html: '<div class="m-txt" style="color:var(--text-dim);font-size:13px;">Total sin descuento: ' + txtU(x.total) + "</div>" +
+      '<div class="seg" style="margin-top:10px;"><button type="button" class="btn sm' + (tipo === "pct" ? " on" : "") + '" id="dPct" onclick="this.classList.add(\'on\');$(\'dMon\').classList.remove(\'on\');$(\'dVal\').placeholder=\'Porcentaje (%)\'">%</button><button type="button" class="btn sm' + (tipo === "monto" ? " on" : "") + '" id="dMon" onclick="this.classList.add(\'on\');$(\'dPct\').classList.remove(\'on\');$(\'dVal\').placeholder=\'Monto en $ ' + unidadU() + '\'">$</button></div>' +
+      '<input class="inp" id="dVal" type="number" inputmode="decimal" min="0" step="any" style="margin-top:8px;" placeholder="' + (tipo === "pct" ? "Porcentaje (%)" : "Monto en $ " + unidadU()) + '" value="' + (F.desc.valor > 0 ? F.desc.valor : "") + '"><div class="m-err" id="dErr"></div>',
     botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Aplicar", v: true, cls: "green" }],
     foco: "dVal",
     antes: (v) => {
@@ -545,7 +568,7 @@ async function abrirDescuento(){
       const val = Number($("dVal").value) || 0, pct = $("dPct").classList.contains("on");
       if (!(val > 0)) { $("dErr").textContent = "Escribe el descuento."; return false; }
       if (pct && val > 100) { $("dErr").textContent = "El porcentaje no puede pasar de 100."; return false; }
-      if (!pct && val > x.total + 0.001) { $("dErr").textContent = "El descuento no puede pasar del total ($" + fmt(x.total) + ")."; return false; }
+      if (!pct && val > x.total + 0.001) { $("dErr").textContent = "El descuento no puede pasar del total (" + txtU(x.total) + ")."; return false; }
       F.desc = { tipo: pct ? "pct" : "monto", valor: val };
       return true;
     }
@@ -587,8 +610,64 @@ async function abrirClientes(){
   return r;
 }
 
+// ══ MONEDA DE LA VENTA (igual que Ventas) ══
+//  · TasaBin APAGADO ("off"): todo en $ BCV; los $ en efectivo valen a tasa Divisas efectivo (H9).
+//  · TasaBin ENCENDIDO: los precios del sistema están en $ divisas (la base, la "unidad de los libros").
+//      venta en Bs a BCV ("bcv"): en pantalla $ BCV = divisas × Divisas ÷ BCV; los Bs a tasa BCV.
+//      Venta en Dólares ("div"): en pantalla $ divisas; los $ a la par y los Bs a tasa Divisas.
+//  El servidor recibe cada línea en la unidad de los libros (como Ventas) y cobra con las mismas reglas.
+function binOn(){ return !!(S.tasas && S.tasas.binOn); }
+function tBcv(){ return Number((S.tasas || {}).bcv) || 0; }
+function tDiv(){ const t = S.tasas || {}; return Number(t.div) > 0 ? Number(t.div) : tBcv(); }   // ON: tasa Divisas (H7)
+function tDivOff(){ const t = S.tasas || {}; return !binOn() && Number(t.div) > 0 ? Number(t.div) : 0; }   // OFF: Divisas de los $ en efectivo (H9)
+function tasaUsd(){ return binOn() ? tDiv() : (tDivOff() || tBcv()); }
+function modoVenta(){ return !binOn() ? "off" : (F.dolares ? "div" : "bcv"); }
+function unidadU(){ return modoVenta() === "div" ? "div" : "BCV"; }   // unidad de la pantalla
+function unidadL(){ return modoVenta() === "off" ? "BCV" : "div"; }   // unidad de los libros
+function bsPorU(){ return modoVenta() === "div" ? tDiv() : tBcv(); }  // Bs que vale $1 de la pantalla
+function factorCxC(){ return (tBcv() > 0 && tDiv() > 0) ? Math.round(tBcv() / tDiv() * 1e6) / 1e6 : 1; }
+const txtU = v => "$" + fmt(v) + " " + unidadU();
+const txtL = v => "$" + fmt(v) + " " + unidadL();
+// Base de una línea en la pantalla, a partir de su base en los libros (la que manda el sistema)
+function basePantalla(libro, manual){
+  const x = Number(libro) || 0;
+  if (modoVenta() !== "bcv" || !(tBcv() > 0) || !(tDiv() > 0)) return manual ? x : r2(x);
+  return manual ? x * tDiv() / tBcv() : r2(x * tDiv() / tBcv());
+}
+// Base en los libros de lo que el cajero ve en pantalla (precio manual)
+function libroDePantalla(base){
+  const x = Number(base) || 0;
+  return (modoVenta() === "bcv" && tBcv() > 0 && tDiv() > 0) ? x * tBcv() / tDiv() : x;
+}
+// Las líneas de la factura con las tasas y la moneda de ahora (la base en los libros no cambia)
+function repreciar(){ F.items.forEach(i => { i.base = basePantalla(i.libro, i.manual); }); }
+// Venta en Dólares (solo con TasaBin encendido): toda la factura cambia de moneda, como en Ventas
+function cambiarMoneda(){
+  if (!binOn()) return;
+  F.dolares = !F.dolares;
+  repreciar(); pintarSelectores(); buscar(); pintarFactura();
+  if (F.desc.tipo === "monto") { F.desc = { tipo: "ninguno", valor: 0 }; pintarTotales(); aviso({ icono: "🏷️", titulo: "Se quitó el descuento", html: "El descuento era un monto en $ " + (F.dolares ? "BCV" : "divisas") + ". Si sigue, vuelve a ponerlo en " + (F.dolares ? "$ divisas" : "$ BCV") + "." }); }
+  toast(F.dolares ? "💵 Venta en Dólares" : "🧾 Venta en Bs a tasa BCV");
+}
+// Total en los libros, igual que lo suma el servidor (registrarVentaDesdeHTML)
+function valorLibro(items, desc){
+  let sub = 0, iva = 0;
+  (items || []).forEach(i => { const q = Number(i.cantidad) || 0, p = Number(i.libro) || 0; sub += p * q; iva += p * ((Number(i.iva) || 0) / 100) * q; });
+  const f = totales(items, desc).f;
+  return r2(sub - Math.round(sub * f * 100) / 100 + Math.round(iva * (1 - f) * 100) / 100);
+}
+// Descuento por monto en la unidad del servidor: el MISMO factor de la pantalla aplicado a los libros (como Ventas)
+function descuentoServidor(items, desc){
+  const v = Number(desc && desc.valor) || 0;
+  if (!desc || desc.tipo !== "monto" || !(v > 0)) return v;
+  const x = totales(items, { tipo: "ninguno" }), tp = x.total;
+  if (!(tp > 0)) return v;
+  let tl = 0;
+  (items || []).forEach(i => { tl += (Number(i.libro) || 0) * (1 + (Number(i.iva) || 0) / 100) * (Number(i.cantidad) || 0); });
+  return Math.min(v, tp) / tp * tl;
+}
+
 // ══ COBRAR ══
-function tasaUsd(){ const t = S.tasas || {}; return t.div > 0 ? t.div : t.bcv; }   // los $ en efectivo, a tasa Divisas
 function metodos(){ return (S.datos.metodos || []); }
 function metodoCredito(){ const m = metodos().find(x => x.tipo === "CRED"); return m ? m.metodo : ""; }
 async function abrirPago(){
@@ -597,19 +676,24 @@ async function abrirPago(){
   if (malas.length) { aviso({ icono: "🔢", titulo: "Falta una cantidad", html: "La línea <b>" + esc(malas[0].nombre) + "</b> no tiene cantidad. Escríbela o quita la línea con ✕." }); return; }
   const t = S.tasas || {};
   if (!(t.bcv > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa", html: "Este equipo no tiene tasa BCV. Actualiza los datos con internet, o ponla en ⚙️ → Cambiar tasa." }); return; }
+  if (binOn() && !(Number(t.div) > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa Divisas", html: "Este negocio trabaja con TasaBin y el equipo no tiene la tasa Divisas. Actualiza los datos con internet, o ponla en ⚙️ → Cambiar tasa." }); return; }
   if (t.fecha !== hoyTxt() && S.tasaOkHoy !== hoyTxt()) {
     const r = await modal({ icono: "💱", titulo: "¿La tasa sigue igual?",
-      html: '<div class="m-txt">La tasa de este equipo es del <b>' + fechaCorta(t.fecha) + "</b>: BCV <b>Bs " + fmt(t.bcv) + "</b> · Divisas <b>Bs " + (t.div > 0 ? fmt(t.div) : "—") + "</b>.<br><br>Si hoy es otra, cámbiala antes de cobrar (pide la clave sin internet).</div>",
-      botones: [{ txt: "🔒 Cambiar tasa", v: "cambiar" }, { txt: "Sí, cobrar con esa", v: "ok", cls: "green" }] });
+      html: '<div class="m-txt">Las tasas de este equipo son del <b>' + fechaCorta(t.fecha) + "</b>: " + textoTasas() + ".<br><br>Si hoy son otras, cámbialas antes de cobrar (pide la clave sin internet).</div>",
+      botones: [{ txt: "🔒 Cambiar tasa", v: "cambiar" }, { txt: "Sí, cobrar con esas", v: "ok", cls: "green" }] });
     if (r === "cambiar") { await cambiarTasa(null); return; }
     if (r !== "ok") return;
     S.tasaOkHoy = hoyTxt();
   }
-  const tot = totales(F.items, F.desc).total;
-  P = { lineas: [], cred: { on: false, monto: "", editado: false }, vt: { on: false, lineas: [] }, seq: 0, verMet: false, dias: 0, total: tot };
-  $("pgTotal").textContent = "$" + fmt(tot) + " BCV";
-  $("pgTotalBs").innerHTML = "Bs " + fmt(r2(tot * t.bcv)) + "<br><span style=\"font-size:11px;\">a tasa BCV " + fmt(t.bcv) + "</span>";
-  $("pgHint").innerHTML = "Los <b>Bs</b> van a tasa BCV <b>Bs " + fmt(t.bcv) + "</b> · los <b>$</b> a tasa Divisas <b>Bs " + fmt(tasaUsd()) + "</b>" + (t.div > 0 ? "" : " (este negocio no tiene tasa Divisas: los $ van a la BCV)") + ".";
+  repreciar();
+  const tot = totales(F.items, F.desc).total, m = modoVenta();
+  P = { modo: m, lineas: [], cred: { on: false, monto: "", editado: false }, vt: { on: false, lineas: [] }, seq: 0, verMet: false, dias: 0, total: tot, desbloq: false };
+  $("pgTotal").textContent = txtU(tot);
+  $("pgTotalBs").innerHTML = "Bs " + fmt(r2(tot * bsPorU())) + '<br><span style="font-size:11px;">a tasa ' + (m === "div" ? "Divisas " : "BCV ") + fmt(bsPorU()) + "</span>";
+  $("pgHint").innerHTML = m === "div"
+    ? "💵 <b>Venta en Dólares</b>: los $ van a la par · los Bs a tasa Divisas <b>Bs " + fmt(tDiv()) + "</b>."
+    : "Venta en <b>$ BCV</b>: los Bs van a tasa BCV <b>Bs " + fmt(tBcv()) + "</b> · los $ a la tasa que elijas en cada línea" +
+      (m === "off" && !tDivOff() ? " (este negocio no tiene tasa Divisas: los $ valen a la BCV)" : "") + ".";
   $("pgRef").value = ""; $("pgObs").value = "";
   $("pgForm").classList.remove("oculto"); $("pgOk").classList.add("oculto");
   $("pgCerrar").disabled = false; btnLibre($("pgGuardar"));
@@ -620,26 +704,55 @@ async function abrirPago(){
   $("mPago").classList.remove("oculto");
 }
 function cerrarPago(){ $("mPago").classList.add("oculto"); P = null; }
-// Cuánto cubre / vale cada línea (OFF: la unidad es el $ BCV; los $ valen a tasa Divisas, igual que el servidor)
+// ── Cuánto cubre (en la pantalla) y cuánto vale (en los libros) cada línea: las mismas cuentas de Ventas ──
+function pgTasaLinea(l){   // Bs por $ a la que se aceptan los dólares de la línea (solo $, y no en Venta en Dólares)
+  if (l.tipo !== "USD" || P.modo === "div") return 0;
+  if (l.tasaModo === "otra") return Number(l.tasaOtra) || 0;
+  if (l.tasaModo === "bcv") return tBcv();
+  return P.modo === "off" ? (tDivOff() || tBcv()) : tDiv();
+}
 function pgCubre(l){
-  const v = Number(l.monto) || 0, bcv = S.tasas.bcv; if (!(v > 0)) return 0;
-  return l.tipo === "BS" ? v / bcv : v * tasaUsd() / bcv;
+  const v = Number(l.monto) || 0; if (!(v > 0)) return 0;
+  if (l.tipo === "BS") return v / bsPorU();
+  if (P.modo === "div") return v;
+  return tBcv() > 0 ? v * pgTasaLinea(l) / tBcv() : 0;
 }
 function pgVale(l){
-  const v = Number(l.monto) || 0, bcv = S.tasas.bcv; if (!(v > 0)) return 0;
-  return l.tipo === "BS" ? v / bcv : r2(v * tasaUsd() / bcv);
+  const v = Number(l.monto) || 0; if (!(v > 0)) return 0;
+  if (l.tipo === "BS") return P.modo === "off" ? v / tBcv() : v / tDiv();
+  if (P.modo === "off") { const t = tDivOff() || pgTasaLinea(l); return tBcv() > 0 ? r2(v * t / tBcv()) : 0; }   // igual que el servidor (equivBCV)
+  return v;
+}
+function pgTasaVueltoUSD(){
+  const l = P.lineas.find(x => x.tipo === "USD" && pgTasaLinea(x) > 0);
+  if (l) return pgTasaLinea(l);
+  return P.modo === "off" ? (tDivOff() || tBcv()) : tDiv();
+}
+function pgCubreVt(v){
+  const x = Number(v.monto) || 0; if (!(x > 0)) return 0;
+  if (v.tipo === "BS") return x / bsPorU();
+  if (P.modo === "div") return x;
+  return tBcv() > 0 ? x * pgTasaVueltoUSD() / tBcv() : 0;
+}
+function pgValeVt(v){
+  const x = Number(v.monto) || 0; if (!(x > 0)) return 0;
+  if (v.tipo === "BS") return P.modo === "off" ? x / tBcv() : x / tDiv();
+  if (P.modo === "off") { const t = tDivOff() || pgTasaVueltoUSD(); return tBcv() > 0 ? r2(x * t / tBcv()) : 0; }
+  return x;
 }
 function pgCredValor(){ return P.cred.on ? r2(Number(P.cred.monto) || 0) : 0; }
 function pgEstado(){
   let cub = 0, vale = 0;
   P.lineas.forEach(l => { cub += pgCubre(l); vale += pgVale(l); });
-  const cred = pgCredValor(), cubT = cub + cred, N = P.total;
-  const pendX = N - cubT, pend = r2(pendX);
+  const cred = pgCredValor(), credVale = P.modo === "bcv" ? r2(cred * factorCxC()) : cred;
+  const cubT = cub + cred, N = P.total;
+  const pendX = N - cubT, pend = r2(pendX);   // > 0 falta · < 0 sobra
   let vtCub = 0, vtVale = 0;
-  if (P.vt.on) P.vt.lineas.forEach(v => { vtCub += pgCubre(v); vtVale += pgVale(v); });
+  if (P.vt.on) P.vt.lineas.forEach(v => { vtCub += pgCubreVt(v); vtVale += pgValeVt(v); });
   const quedaX = -pendX - vtCub, queda = r2(quedaX);
-  const dif = r2(vale + cred - vtVale - N);
-  return { cub: r2(cub), cred, cubT: r2(cubT), pend, pendX, vtCub: r2(vtCub), vtVale: r2(vtVale), queda, quedaX, vale: r2(vale), dif, hay: P.lineas.length > 0 || P.cred.on };
+  const valorVenta = valorLibro(F.items, F.desc);
+  const dif = r2(vale + credVale - vtVale - valorVenta);
+  return { cub: r2(cub), cred, credVale, cubT: r2(cubT), pend, pendX, vtCub: r2(vtCub), vtVale: r2(vtVale), queda, quedaX, vale: r2(vale), valorVenta, dif, hay: P.lineas.length > 0 || P.cred.on };
 }
 // ── Métodos de pago como en Ventas (mismo agrupado y mismas etiquetas) ──
 const PGU_GRUPOS = {
@@ -704,17 +817,26 @@ function pgFilasMetodos(fn, usados, conCredito){
   return html;
 }
 function pgPintarMetodos(){ $("pgMetodos").innerHTML = pgFilasMetodos("pgAgregar", P.lineas.map(l => l.metodo), true); }
+// Tasa de los $ de una línea (no en Venta en Dólares): BCV · Divisas · Otra (con clave, si Configuración la pide)
+function pgTasasHTML(l){
+  if (l.tipo !== "USD" || P.modo === "div") return "";
+  const td = P.modo === "off" ? tDivOff() : tDiv();
+  const chip = (modo, txt, dis) => '<button type="button" class="btn sm' + (l.tasaModo === modo ? " on" : "") + '"' + (dis ? " disabled" : "") + ' onclick="pgElegirTasa(' + l.id + ",'" + modo + "')\">" + txt + "</button>";
+  return '<div class="pl-tasas"><span>Tasa:</span>' + chip("bcv", "BCV " + fmt(tBcv())) + chip("div", "Divisas " + (td > 0 ? fmt(td) : "—"), !(td > 0)) +
+    chip("otra", (S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq ? "🔒 " : "") + "Otra") +
+    (l.tasaModo === "otra" ? '<input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgT_' + l.id + '" placeholder="Bs por $" value="' + (Number(l.tasaOtra) > 0 ? l.tasaOtra : "") + '" oninput="pgTasaOtra(' + l.id + ',this.value)">' : "") + "</div>";
+}
 function pgPintarLineas(){
   let h = "";
   P.lineas.forEach(l => {
     const cls = l.tipo === "BS" ? "bs" : "usd";
     h += '<div class="pl ' + cls + '"><div class="pl-cab"><span>' + esc(pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo })) + '</span><button type="button" class="ico" onclick="pgQuitar(' + l.id + ')">✕</button></div>' +
       '<div class="pl-cuerpo"><span class="mon">' + (l.tipo === "BS" ? "Bs" : "$") + '</span><input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgM_' + l.id + '" placeholder="' + (l.tipo === "BS" ? "Monto en Bs" : "Monto en $") + '" value="' + esc(l.monto) + '" oninput="pgMonto(' + l.id + ',this.value)"></div>' +
-      '<div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
+      pgTasasHTML(l) + '<div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
   });
   if (P.cred.on) {
     h += '<div class="pl cred"><div class="pl-cab"><span>📝 Crédito · ' + esc(F.cliente.nombre) + '</span><button type="button" class="ico" onclick="pgCredito()">✕</button></div>' +
-      '<div class="pl-cuerpo"><span class="mon">$</span><input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgCred" placeholder="Monto a crédito ($ BCV)" value="' + esc(P.cred.monto) + '" oninput="P.cred.monto=this.value;P.cred.editado=true;pgActualizar()">' +
+      '<div class="pl-cuerpo"><span class="mon">$</span><input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgCred" placeholder="Monto a crédito ($ ' + unidadU() + ')" value="' + esc(P.cred.monto) + '" oninput="P.cred.monto=this.value;P.cred.editado=true;pgActualizar()">' +
       '<button type="button" class="btn sm" onclick="P.cred.editado=false;pgActualizar();$(\'pgCred\').value=P.cred.monto;">↺ Lo que falta</button></div><div class="pl-eq" id="pgE_cred"></div></div>';
   }
   $("pgLineas").innerHTML = h;
@@ -728,7 +850,7 @@ function pgPintarVuelto(){
 }
 function pgActualizar(){
   if (!P) return;
-  const bcv = S.tasas.bcv;
+  const m = P.modo;
   if (P.cred.on && !P.cred.editado) {
     let cub = 0; P.lineas.forEach(l => cub += pgCubre(l));
     const rest = r2(P.total - cub);
@@ -738,44 +860,58 @@ function pgActualizar(){
   P.lineas.forEach(l => {
     const el = $("pgE_" + l.id); if (!el) return;
     if (!(Number(l.monto) > 0)) { el.innerHTML = ""; return; }
-    el.innerHTML = l.tipo === "BS"
-      ? "cubre <b>$" + fmt(pgCubre(l)) + " BCV</b> (Bs " + fmt(l.monto) + " ÷ " + fmt(bcv) + ")"
-      : "cubre <b>$" + fmt(pgCubre(l)) + " BCV</b> (a tasa Divisas Bs " + fmt(tasaUsd()) + " = Bs " + fmt(r2(Number(l.monto) * tasaUsd())) + ")";
+    let t = "cubre <b>" + txtU(pgCubre(l)) + "</b>";
+    if (m !== "div" && l.tipo === "BS") t += " (Bs " + fmt(l.monto) + " ÷ " + fmt(tBcv()) + ")";
+    if (m === "div" && l.tipo === "BS") t += " (Bs " + fmt(l.monto) + " ÷ " + fmt(tDiv()) + ")";
+    if (l.tipo === "USD" && m !== "div") t += " (a Bs " + fmt(pgTasaLinea(l)) + ")";
+    if (m === "bcv") t += " · vale <b>" + txtL(pgVale(l)) + "</b>";
+    else if (m === "off" && l.tipo === "USD") t += " · vale <b>" + txtL(pgVale(l)) + "</b>" + (tDivOff() > 0 ? " (a Divisas Bs " + fmt(tDivOff()) + ")" : "");
+    el.innerHTML = t;
   });
-  const ec = $("pgE_cred"); if (ec) { const c = pgCredValor(); ec.innerHTML = c > 0 ? "queda a deber <b>$" + fmt(c) + " BCV</b>" : ""; }
-  P.vt.lineas.forEach((v, k) => { const el = $("pgVE_" + k); if (el) el.innerHTML = Number(v.monto) > 0 ? "devuelve <b>$" + fmt(pgCubre(v)) + " BCV</b>" + (v.tipo === "USD" ? " (a tasa Divisas Bs " + fmt(tasaUsd()) + ")" : "") : ""; });
+  const ec = $("pgE_cred");
+  if (ec) { const c = pgCredValor(); ec.innerHTML = c > 0 ? (m === "bcv" ? "queda a deber <b>" + txtU(c) + "</b>, fijo en BCV · hoy vale <b>$" + fmt(r2(c * factorCxC())) + " div</b>" : "queda a deber <b>" + txtU(c) + "</b>") : ""; }
+  P.vt.lineas.forEach((v, k) => { const el = $("pgVE_" + k); if (el) el.innerHTML = Number(v.monto) > 0 ? "devuelve <b>" + txtU(pgCubreVt(v)) + "</b>" + (m !== "div" ? " · vale " + txtL(pgValeVt(v)) : "") : ""; });
   const st = pgEstado();
-  // Balance
-  const bs = v => " · Bs " + fmt(r2(v * bcv));
+  const bs = v => " · Bs " + fmt(r2(v * bsPorU()));
   let h = "";
   if (st.hay) {
-    if (st.pend > TOL) h = '<div class="bal falta">⚠️ Falta $' + fmt(st.pend) + " BCV" + bs(st.pendX) + "</div>";
-    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran $' + fmt(-st.pend) + " BCV" + bs(-st.pendX) + '</div><div style="text-align:center;margin-top:8px;"><button type="button" class="btn" onclick="pgVueltoAbrir()">💸 Dar vuelto</button></div>';
+    if (st.pend > TOL) h = '<div class="bal falta">⚠️ Falta ' + txtU(st.pend) + bs(st.pendX) + "</div>";
+    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran ' + txtU(-st.pend) + bs(-st.pendX) + '</div><div style="text-align:center;margin-top:8px;"><button type="button" class="btn" onclick="pgVueltoAbrir()">💸 Dar vuelto</button></div>';
     else if (P.vt.on && st.pend < -TOL) {
       if (Math.abs(st.queda) <= TOL) h = '<div class="bal ok">✅ Pago exacto con vuelto</div>';
-      else if (st.queda > 0) h = '<div class="bal sobra">Faltan $' + fmt(st.queda) + " BCV por devolver" + bs(st.queda) + "</div>";
-      else h = '<div class="bal falta">⚠️ El vuelto pasa de lo que sobra por $' + fmt(-st.queda) + " BCV</div>";
+      else if (st.queda > 0) h = '<div class="bal sobra">Faltan ' + txtU(st.queda) + " por devolver" + bs(st.queda) + "</div>";
+      else h = '<div class="bal falta">⚠️ El vuelto pasa de lo que sobra por ' + txtU(-st.queda) + "</div>";
     } else h = '<div class="bal ok">✅ Pago exacto</div>';
     if (st.pend <= TOL && Math.abs(st.dif) > 0.01 && !(st.pend < -TOL && !P.vt.on)) {
       const favor = st.dif > 0;
-      h += '<div class="dif ' + (favor ? "afavor" : "encontra") + '">💹 Diferencial ' + (favor ? "a favor" : "en contra") + ": <b>$" + fmt(Math.abs(st.dif)) + " BCV</b>. Lo recibido vale $" + fmt(r2(st.vale + st.cred - st.vtVale)) + " y la venta vale $" + fmt(P.total) + ".</div>";
+      h += '<div class="dif ' + (favor ? "afavor" : "encontra") + '">💹 Diferencial ' + (favor ? "a favor" : "en contra") + ": <b>" + txtL(Math.abs(st.dif)) + "</b>. Lo recibido vale " + txtL(r2(st.vale + st.credVale - st.vtVale)) + " y la venta vale " + txtL(st.valorVenta) + "." + pgMotivoDif() + "</div>";
     }
   }
   $("pgBal").innerHTML = h;
-  $("pgVtSobra").textContent = st.pend < -TOL ? "Sobran $" + fmt(-st.pend) + " BCV · Bs " + fmt(r2(-st.pendX * bcv)) : "";
+  $("pgVtSobra").textContent = st.pend < -TOL ? "Sobran " + txtU(-st.pend) + " · Bs " + fmt(r2(-st.pendX * bsPorU())) : "";
   const plegar = st.hay && st.pend <= TOL && !P.verMet;
   $("pgMetodos").classList.toggle("oculto", plegar);
   $("pgMas").classList.toggle("oculto", !plegar);
   const vm = $("pgVtMetodos"); if (vm && P.vt.on) vm.classList.toggle("oculto", P.vt.lineas.length >= 2 || (P.vt.lineas.length > 0 && Math.abs(st.queda) <= TOL));
   $("pgDias").classList.toggle("oculto", !(P.cred.on && $("selDias").options.length > 1));
 }
+function pgMotivoDif(){
+  const lu = P.lineas.filter(l => l.tipo === "USD" && Number(l.monto) > 0);
+  if (P.modo === "bcv") {
+    if (lu.some(l => l.tasaModo === "bcv")) return " Cobraste dólares a tasa BCV: cada $1 cubrió $1 BCV y vale $1 div.";
+    if (lu.some(l => l.tasaModo === "otra")) return " Aceptaste dólares a una tasa distinta de la Divisas.";
+    if (P.vt.on) return " El vuelto se dio por un valor distinto de lo que sobraba.";
+  }
+  if (P.modo === "off" && lu.length && tDivOff() > 0) return " Los $ en efectivo valen a tasa Divisas (Bs " + fmt(tDivOff()) + "), no a la tasa con que se cobraron.";
+  return "";
+}
 function pgAutocompletar(l){
   let otros = 0; P.lineas.forEach(x => { if (x.id !== l.id) otros += pgCubre(x); });
   if (P.cred.on && P.cred.editado) otros += pgCredValor();
-  const bcv = S.tasas.bcv, falta = r2(P.total - otros);
+  const N = P.total, falta = Math.max(0, r2(N - otros));
   let v = 0;
-  if (l.tipo === "BS") v = r2(r2(P.total * bcv) - otros * bcv);   // en Bs exactos: suman el total del ticket
-  else v = falta > 0 ? r2(falta * bcv / tasaUsd()) : 0;
+  if (l.tipo === "BS") v = P.modo === "div" ? r2(falta * tDiv()) : r2(r2(N * tBcv()) - otros * tBcv());   // en Bs exactos: suman el total del ticket
+  else v = P.modo === "div" ? r2(falta) : (pgTasaLinea(l) > 0 ? r2(falta * tBcv() / pgTasaLinea(l)) : 0);
   l.monto = v > 0.004 ? v.toFixed(2) : "";
   const inp = $("pgM_" + l.id); if (inp) inp.value = l.monto;
 }
@@ -784,13 +920,31 @@ function pgAgregar(i){
   const ya = P.lineas.find(l => l.metodo === m.metodo);
   if (ya) { const inp = $("pgM_" + ya.id); if (inp) { inp.focus(); inp.select(); } return; }
   if (P.lineas.length >= 3) { aviso({ icono: "💳", titulo: "Máximo 3 métodos", html: "Una venta se puede cobrar con hasta 3 métodos de pago. Quita uno con ✕ para usar otro." }); return; }
-  const l = { id: ++P.seq, metodo: m.metodo, tipo: m.tipo, monto: "" };
+  const l = { id: ++P.seq, metodo: m.metodo, tipo: m.tipo, monto: "", tasaModo: P.modo === "off" ? (tDivOff() > 0 ? "div" : "bcv") : "div", tasaOtra: "" };
   P.lineas.push(l);
   pgPintarMetodos(); pgPintarLineas(); pgAutocompletar(l); pgActualizar();
   setTimeout(() => { const inp = $("pgM_" + l.id); if (inp) { inp.focus(); inp.select(); } }, 30);
 }
 function pgQuitar(id){ P.lineas = P.lineas.filter(l => l.id !== id); pgPintarMetodos(); pgPintarLineas(); pgActualizar(); }
 function pgMonto(id, v){ const l = P.lineas.find(x => x.id === id); if (l) { l.monto = v; pgActualizar(); } }
+async function pgElegirTasa(id, modo){
+  const l = P.lineas.find(x => x.id === id); if (!l) return;
+  if (modo === "otra" && S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq) {
+    if (!await pedirClave("Otra tasa de cobro", "Escribe la clave sin internet para cobrar los dólares a otra tasa:")) return;
+  }
+  if (modo === "otra") P.desbloq = true;
+  l.tasaModo = modo;
+  pgPintarLineas();
+  if (modo === "otra") setTimeout(() => { const t = $("pgT_" + id); if (t) t.focus(); }, 30);
+  else pgAutocompletar(l);
+  pgActualizar();
+}
+function pgTasaOtra(id, val){
+  const l = P.lineas.find(x => x.id === id); if (!l) return;
+  l.tasaOtra = val;
+  if (Number(val) > 0) pgAutocompletar(l);
+  pgActualizar();
+}
 async function pgCredito(){
   if (P.cred.on) { P.cred = { on: false, monto: "", editado: false }; }
   else {
@@ -811,8 +965,8 @@ function pgVtAgregar(i){
   const m = metodos()[i]; if (!m || P.vt.lineas.length >= 2 || P.vt.lineas.some(v => v.metodo === m.metodo)) return;
   const v = { metodo: m.metodo, tipo: m.tipo, monto: "" };
   P.vt.lineas.push(v);
-  const st = pgEstado(), resto = Math.max(0, st.quedaX), bcv = S.tasas.bcv;   // sin redondear: el vuelto en Bs sale exacto
-  const x = v.tipo === "BS" ? r2(resto * bcv) : r2(resto * bcv / tasaUsd());
+  const st = pgEstado(), resto = Math.max(0, st.quedaX);   // sin redondear: el vuelto en Bs sale exacto
+  const x = v.tipo === "BS" ? r2(resto * bsPorU()) : (P.modo === "div" ? r2(resto) : r2(resto * tBcv() / pgTasaVueltoUSD()));
   v.monto = x > 0.004 ? x.toFixed(2) : "";
   pgPintarVuelto(); pgActualizar();
   const k = P.vt.lineas.length - 1;
@@ -821,13 +975,17 @@ function pgVtAgregar(i){
 function pgVtQuitar(k){ P.vt.lineas.splice(k, 1); pgPintarVuelto(); pgActualizar(); }
 
 async function pgConfirmar(){
-  const bcv = S.tasas.bcv, tu = tasaUsd();
+  const m = P.modo;
   const pagos = [];
   for (const l of P.lineas) {
-    const v = r2(Number(l.monto) || 0);
-    if (!(v > 0)) { aviso({ icono: "💳", titulo: "Falta un monto", html: "La línea <b>" + esc(l.metodo) + "</b> no tiene monto. Escribe cuánto entra por ahí, o quítala con ✕." }); return; }
-    if (l.tipo === "BS") pagos.push({ metodo: l.metodo, monto: v, tipo: "BS" });
-    else pagos.push({ metodo: l.metodo, monto: v, tipo: "USD", tasaDivisas: tu, equivBCV: r2(v * tu / bcv) });
+    const v = r2(Number(l.monto) || 0), d = pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo });
+    if (!(v > 0)) { aviso({ icono: "💳", titulo: "Falta un monto", html: "La línea <b>" + esc(d) + "</b> no tiene monto. Escribe cuánto entra por ahí, o quítala con ✕." }); return; }
+    if (l.tipo === "BS") { pagos.push({ metodo: l.metodo, monto: v, tipo: "BS" }); continue; }
+    if (m === "div") { pagos.push({ metodo: l.metodo, monto: v, tipo: "USD" }); continue; }
+    const t = pgTasaLinea(l);
+    if (!(t > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa", html: "La línea <b>" + esc(d) + "</b> cobra dólares y no tiene tasa. Elige BCV o Divisas, o escribe la otra tasa." }); return; }
+    const tVal = m === "off" ? (tDivOff() || t) : t;   // OFF: al servidor los $ van a lo que valen (Divisas efectivo)
+    pagos.push({ metodo: l.metodo, monto: v, tipo: "USD", tasaDivisas: tVal, equivBCV: r2(v * tVal / tBcv()) });
   }
   if (P.cred.on) {
     const c = pgCredValor();
@@ -842,26 +1000,27 @@ async function pgConfirmar(){
       const x = r2(Number(v.monto) || 0);
       if (!(x > 0)) { aviso({ icono: "💸", titulo: "Falta el monto del vuelto", html: "Elegiste <b>" + esc(v.metodo) + "</b> para el vuelto pero el monto quedó vacío. Escríbelo o quita esa línea." }); return; }
       const lv = { metodo: v.metodo, tipo: v.tipo, monto: x };
-      if (v.tipo === "BS") lv.tasa = r2(bcv); else lv.equivBCV = r2(x * tu / bcv);
+      if (v.tipo === "BS") lv.tasa = r2(bsPorU());
+      else if (m === "off") lv.equivBCV = r2(pgValeVt(v));
       vuelto.push(lv);
     }
     if (!vuelto.length) { aviso({ icono: "💸", titulo: "Falta de dónde sale el vuelto", html: "Abriste el vuelto pero no elegiste de qué método sale. Elígelo, o toca <b>Quitar vuelto</b>." }); return; }
   }
   const st = pgEstado();
-  const bs = v => " (Bs " + fmt(r2(v * bcv)) + ")";
+  const bs = v => " (Bs " + fmt(r2(v * bsPorU())) + ")";
   if (st.pend > TOL) {
-    if (!await confirmar({ icono: "⚠️", titulo: "Falta dinero", colorOk: "naranja", ok: "Sí, guardar", html: "El pago cubre $" + fmt(st.cubT) + " de $" + fmt(P.total) + ": <b>falta $" + fmt(st.pend) + " BCV</b>" + bs(st.pendX) + ".<br><br>Si la guardas así, esa diferencia queda como diferencial cambiario en contra. Si queda a deber, toca <b>A crédito</b>.<br><br>¿Guardar igualmente?" })) return;
+    if (!await confirmar({ icono: "⚠️", titulo: "Falta dinero", colorOk: "naranja", ok: "Sí, guardar", html: "El pago cubre " + txtU(st.cubT) + " de " + txtU(P.total) + ": <b>falta " + txtU(st.pend) + "</b>" + bs(st.pendX) + ".<br><br>Si la guardas así, esa diferencia queda como diferencial cambiario en contra. Si queda a deber, toca <b>A crédito</b>.<br><br>¿Guardar igualmente?" })) return;
   } else if (st.pend < -TOL && !P.vt.on) {
-    const r = await modal({ icono: "💰", titulo: "Sobra dinero", html: '<div class="m-txt">El pago cubre $' + fmt(st.cubT) + ": <b>sobran $" + fmt(-st.pend) + " BCV</b>" + bs(-st.pendX) + ".<br><br>¿Le das vuelto al cliente, o queda como diferencial cambiario a favor ($" + fmt(st.dif) + ")?</div>",
+    const r = await modal({ icono: "💰", titulo: "Sobra dinero", html: '<div class="m-txt">El pago cubre ' + txtU(st.cubT) + ": <b>sobran " + txtU(-st.pend) + "</b>" + bs(-st.pendX) + ".<br><br>¿Le das vuelto al cliente, o queda como diferencial cambiario a favor (" + txtL(st.dif) + ")?</div>",
       botones: [{ txt: "💸 Dar vuelto", v: "vuelto" }, { txt: "Queda como diferencial a favor", v: "ok", cls: "green" }] });
     if (r === "vuelto") { pgVueltoAbrir(); return; }
     if (r !== "ok") return;
   } else if (P.vt.on && st.queda < -TOL) {
-    if (!await confirmar({ icono: "⚠️", titulo: "El vuelto pasa de lo que sobra", colorOk: "naranja", ok: "Sí, guardar", html: "Sobraban $" + fmt(-st.pend) + " y el vuelto devuelve $" + fmt(st.vtCub) + ": <b>$" + fmt(-st.queda) + " BCV de más</b>.<br><br>Esa diferencia queda como diferencial cambiario en contra. ¿Guardar igualmente?" })) return;
+    if (!await confirmar({ icono: "⚠️", titulo: "El vuelto pasa de lo que sobra", colorOk: "naranja", ok: "Sí, guardar", html: "Sobraban " + txtU(-st.pend) + " y el vuelto devuelve " + txtU(st.vtCub) + ": <b>" + txtU(-st.queda) + " de más</b>.<br><br>Esa diferencia queda como diferencial cambiario en contra. ¿Guardar igualmente?" })) return;
   } else if (P.vt.on && st.queda > TOL) {
-    if (!await confirmar({ icono: "⚠️", titulo: "Falta vuelto por dar", colorOk: "naranja", ok: "Sí, guardar", html: "Sobraban $" + fmt(-st.pend) + " y el vuelto solo devuelve $" + fmt(st.vtCub) + ": quedan <b>$" + fmt(st.queda) + " BCV</b>" + bs(st.queda) + " que se registran como diferencial a favor. ¿Guardar igualmente?" })) return;
+    if (!await confirmar({ icono: "⚠️", titulo: "Falta vuelto por dar", colorOk: "naranja", ok: "Sí, guardar", html: "Sobraban " + txtU(-st.pend) + " y el vuelto solo devuelve " + txtU(st.vtCub) + ": quedan <b>" + txtU(st.queda) + "</b>" + bs(st.queda) + " que se registran como diferencial a favor. ¿Guardar igualmente?" })) return;
   } else if (st.dif < -0.01) {
-    if (!await confirmar({ icono: "⚠️", titulo: "Diferencial en contra", colorOk: "naranja", ok: "Sí, guardar", html: "Lo recibido vale $" + fmt(r2(st.vale + st.cred - st.vtVale)) + " y la venta vale $" + fmt(P.total) + ": <b>$" + fmt(-st.dif) + " BCV en contra</b>. ¿Guardar igualmente?" })) return;
+    if (!await confirmar({ icono: "⚠️", titulo: "Diferencial en contra", colorOk: "naranja", ok: "Sí, guardar", html: "Lo recibido vale " + txtL(r2(st.vale + st.credVale - st.vtVale)) + " y la venta vale " + txtL(st.valorVenta) + ": <b>" + txtL(-st.dif) + " en contra</b>." + pgMotivoDif() + "<br><br>¿Guardar igualmente?" })) return;
   }
   await pgGuardar(pagos, vuelto);
 }
@@ -878,22 +1037,26 @@ async function pgGuardar(pagos, vuelto){
   const btn = $("pgGuardar");
   btnOcupado(btn, "Guardando…"); $("pgCerrar").disabled = true;
   if (!S.turno) { btnLibre(btn); $("pgCerrar").disabled = false; cerrarPago(); irA("vender"); return; }
-  const t = S.tasas, ahora = new Date();
+  const t = S.tasas, ahora = new Date(), m = P.modo, totBs = r2(P.total * bsPorU());
   const v = {
     id: uuid(), numero: "", creada: ahoraTxt(ahora), fecha: hoyTxt(ahora),
     numeroTicket: 0, provisional: false, turno: S.turno.id,   // el número lo pone guardarVentaNueva (apartado o provisional)
     caja: S.datos.caja, equipo: S.datos.equipo,
-    tasas: { bcv: t.bcv, div: tasaUsd() },
-    items: F.items.map(i => ({ tipo: i.tipo, codigo: i.codigo, nombre: i.nombre, codigoBarras: i.codigoBarras, cantidad: Number(i.cantidad), precio: i.base, iva: i.iva, manual: !!i.manual })),
+    // tasas con que se cobró: div = Divisas (TasaBin encendido) o Divisas de los $ en efectivo (apagado)
+    tasas: { bcv: t.bcv, div: binOn() ? tDiv() : tDivOff(), binOn: binOn() },
+    modo: m, unidad: m === "div" ? "div" : "BCV",   // venta en $ BCV o Venta en Dólares
+    // precio = base en los libros (lo que recibe el sistema) · pu = base en pantalla (el ticket)
+    items: F.items.map(i => ({ tipo: i.tipo, codigo: i.codigo, nombre: i.nombre, codigoBarras: i.codigoBarras, cantidad: Number(i.cantidad), precio: i.libro, pu: i.base, iva: i.iva, manual: !!i.manual })),
     pago: Object.assign({
       pagos: pagos, vuelto: vuelto,
       referencia: $("pgRef").value.trim(), observaciones: $("pgObs").value.trim(),
       clienteCedula: F.cliente.cedula || "", clienteNombre: F.cliente.nombre || "Genérico",
       clienteDireccion: F.cliente.direccion || "", clienteTelefono: F.cliente.telefono || "",
-      descuentoTipo: F.desc.tipo, descuentoValor: Number(F.desc.valor) || 0,
-      diasCredito: P.cred.on ? (Number(P.dias) || 0) : 0
+      descuentoTipo: F.desc.tipo, descuentoValor: Number(F.desc.valor) || 0, descuentoValorServ: descuentoServidor(F.items, F.desc),
+      diasCredito: P.cred.on ? (Number(P.dias) || 0) : 0,
+      objetivoVenta: m === "off" ? "" : (m === "div" ? "DIVISAS" : "BCV"), totalPantallaUSD: P.total
     }, vendedorDeLaVenta()),
-    total: P.total, totalBs: r2(P.total * t.bcv),
+    total: P.total, totalBs: totBs, totalBcv: m === "div" ? (t.bcv > 0 ? r2(totBs / t.bcv) : 0) : P.total,
     estado: "por_subir", intentos: 0, msg: "", avisos: [], numeroFactura: "", subidaEn: 0
   };
   try { await guardarVentaNueva(v); }
@@ -907,7 +1070,7 @@ async function pgGuardar(pagos, vuelto){
   btnLibre(btn); $("pgCerrar").disabled = false;
   $("pgForm").classList.add("oculto"); $("pgOk").classList.remove("oculto");
   $("pgOkNum").textContent = ((S.datos.impresion || {}).nombreDoc || "Nota de Entrega") + " N° " + nroTicket(v);
-  $("pgOkTxt").innerHTML = "Total Bs " + fmt(v.totalBs) + " · $" + fmt(v.total) + " BCV<br>" + (S.online !== false ? "Se registra en el sistema en un momento." : "Se registra sola en el sistema cuando vuelva el internet.") +
+  $("pgOkTxt").innerHTML = "Total Bs " + fmt(v.totalBs) + " · $" + fmt(v.total) + " " + v.unidad + "<br>" + (S.online !== false ? "Se registra en el sistema en un momento." : "Se registra sola en el sistema cuando vuelva el internet.") +
     (v.provisional ? "<br>🔢 Número <b>provisional</b>: el sistema le da su número al subirla." : "");
   limpiarVenta();
   pintarEstado(); pintarBanners();
@@ -925,10 +1088,12 @@ function pgTerminar(imprimir){
 // ══ TICKET (mismo formato que Ventas: generarTicket) ══
 function htmlTicket(v){
   const d = S.datos || {}, cfg = Object.assign({ formato: "ticket80", moneda: "BS", mostrarEquiv: true, nombreDoc: "Nota de Entrega", pieLinea1: "***Gracias por su compra***", pieLinea2: "Puede solicitar su factura en caja." }, d.impresion || {});
-  const enBS = cfg.moneda !== "USD", tasa = v.tasas.bcv || 1, conv = usd => enBS ? fmt(usd * tasa) : fmt(usd), sym = enBS ? "Bs." : "$";
+  // Venta en Dólares (TasaBin): los $ de la pantalla pasan a Bs con la Divisas, que es lo que paga el cliente
+  const enDiv = v.unidad === "div", tasa = (enDiv ? v.tasas.div : v.tasas.bcv) || 1;
+  const enBS = cfg.moneda !== "USD", conv = usd => enBS ? fmt(usd * tasa) : fmt(usd), sym = enBS ? "Bs." : "$";
   const fmtT = formatoTicket(), mostrarPU = fmtT !== "58";
   const nroT = v.numeroFactura || nroTicket(v);
-  const its = v.items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, base: i.precio, iva: i.iva }));
+  const its = v.items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, base: i.pu != null ? i.pu : i.precio, iva: i.iva }));
   const x = totales(its, { tipo: v.pago.descuentoTipo, valor: v.pago.descuentoValor });
   const p = v.pago, esGen = !p.clienteCedula || p.clienteNombre === "Genérico";
   const filasProds = its.map(it => {
@@ -955,7 +1120,7 @@ function htmlTicket(v){
   if ((modo === "vendedor" || modo === "ambos") && p.vendedorNombre) per.push("Vendedor: " + esc(p.vendedorNombre));
   const logo = (cfg.imprimirLogo !== false && String(cfg.logo || "").indexOf("data:image") === 0)
     ? '<div style="text-align:center;padding-top:6px;"><img src="' + cfg.logo + '" alt="" style="max-width:' + (cfg.formato === "ticket58" ? "34mm" : "46mm") + ";max-height:" + (cfg.formato === "ticket58" ? "16mm" : "20mm") + ';object-fit:contain;filter:grayscale(100%);"></div>' : "";
-  const equiv = cfg.mostrarEquiv && enBS ? '<tr><td>Total $ BCV:</td><td style="text-align:right;">$' + fmt(x.total) + "</td></tr>" : "";
+  const equiv = cfg.mostrarEquiv && enBS ? '<tr><td>' + (enDiv ? "Total $:" : "Total $ BCV:") + '</td><td style="text-align:right;">$' + fmt(x.total) + "</td></tr>" : "";
   const desc = x.desc > 0 ? '<tr><td>Descuento:</td><td style="text-align:right;">- ' + sym + " " + conv(x.desc) + "</td></tr>" : "";
   const formaPago = cfg.mostrarFormaPago !== false ? '<hr class="sep"><div style="font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Forma de pago</div><table style="margin-bottom:5px;">' + filasPago + "</table>" : "";
   const obs = p.observaciones ? '<div style="border-top:1px dashed #ccc;padding:5px 0;font-size:9px;"><strong>Obs:</strong> ' + esc(p.observaciones) + "</div>" : "";
@@ -1105,11 +1270,13 @@ function resumenTurno(t){
     x.neto = r2(x.neto + m);
   };
   vs.forEach(v => {
-    totalUsd += Number(v.total) || 0; totalBs += Number(v.totalBs) || 0;
-    const sinDesc = totales(v.items.map(i => ({ cantidad: i.cantidad, base: i.precio, iva: i.iva })), { tipo: "ninguno" }).total;
-    desc += Math.max(0, sinDesc - (Number(v.total) || 0));
+    // Todo en $ BCV: una Venta en Dólares (TasaBin) se pasa con sus tasas (divisas × Divisas ÷ BCV)
+    const fx = (v.unidad === "div" && v.tasas && v.tasas.bcv > 0) ? (Number(v.tasas.div) || 0) / v.tasas.bcv : 1;
+    totalUsd += v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0; totalBs += Number(v.totalBs) || 0;
+    const sinDesc = totales(v.items.map(i => ({ cantidad: i.cantidad, base: i.pu != null ? i.pu : i.precio, iva: i.iva })), { tipo: "ninguno" }).total;
+    desc += Math.max(0, sinDesc - (Number(v.total) || 0)) * fx;
     if (v.estado !== "subida") sinSubir++;
-    (v.pago.pagos || []).forEach(p => { if (p.tipo === "CRED") credito += Number(p.monto) || 0; else sumar(p, Number(p.monto) || 0); });
+    (v.pago.pagos || []).forEach(p => { if (p.tipo === "CRED") credito += (Number(p.monto) || 0) * fx; else sumar(p, Number(p.monto) || 0); });
     (v.pago.vuelto || []).forEach(p => sumar(p, -(Number(p.monto) || 0)));
   });
   const metodos = Object.values(met).sort((a, b) => (a.tipo === b.tipo ? 0 : a.tipo === "BS" ? -1 : 1) || a.desc.localeCompare(b.desc));
@@ -1287,7 +1454,8 @@ function estadoHTML(v){
 function pintarVentas(){
   const hoy = hoyTxt();
   const deHoy = S.ventas.filter(v => v.fecha === hoy);
-  const sumBs = deHoy.reduce((s, v) => s + (Number(v.totalBs) || 0), 0), sumUsd = deHoy.reduce((s, v) => s + (Number(v.total) || 0), 0);
+  const bcvDe = v => v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0;   // en $ BCV (una Venta en Dólares, pasada con sus tasas)
+  const sumBs = deHoy.reduce((s, v) => s + (Number(v.totalBs) || 0), 0), sumUsd = deHoy.reduce((s, v) => s + bcvDe(v), 0);
   const c = cuentas();
   // Por método (hoy): lo cobrado menos el vuelto
   const porMet = {};
@@ -1304,7 +1472,7 @@ function pintarVentas(){
   $("resumen").innerHTML = h;
   // Por cajero (hoy)
   const porCj = {};
-  deHoy.forEach(v => { const k = v.pago.cajeroNombre || "Sin cajero"; const x = porCj[k] = porCj[k] || { n: 0, bs: 0, usd: 0 }; x.n++; x.bs += Number(v.totalBs) || 0; x.usd += Number(v.total) || 0; });
+  deHoy.forEach(v => { const k = v.pago.cajeroNombre || "Sin cajero"; const x = porCj[k] = porCj[k] || { n: 0, bs: 0, usd: 0 }; x.n++; x.bs += Number(v.totalBs) || 0; x.usd += bcvDe(v); });
   const cjs = Object.keys(porCj);
   $("porCajero").innerHTML = cjs.length ? '<div class="card" style="margin-bottom:10px;"><div class="card-tit">🧾 Hoy por cajero</div><table class="cie-tabla">' +
     cjs.map(k => "<tr><td><b>" + esc(k) + "</b> · " + porCj[k].n + " venta" + (porCj[k].n === 1 ? "" : "s") + '</td><td class="r">Bs ' + fmt(porCj[k].bs) + ' <span style="color:var(--text-dim);font-weight:600;">· $' + fmt(porCj[k].usd) + "</span></td></tr>").join("") + "</table></div>" : "";
@@ -1328,7 +1496,7 @@ function pintarVentas(){
   if (!lst.length) { $("listaVentas").innerHTML = '<div class="vacio">No hay ventas aquí.</div>'; return; }
   $("listaVentas").innerHTML = lst.slice(0, 300).map(v => {
     const p = v.pago;
-    const items = v.items.map(i => "<tr><td>" + fmtCant(i.cantidad) + " × " + esc(i.nombre) + (i.manual ? " ✏️" : "") + '</td><td class="r">$' + fmt(i.precio * (1 + i.iva / 100) * i.cantidad) + "</td></tr>").join("");
+    const items = v.items.map(i => "<tr><td>" + fmtCant(i.cantidad) + " × " + esc(i.nombre) + (i.manual ? " ✏️" : "") + '</td><td class="r">$' + fmt((i.pu != null ? i.pu : i.precio) * (1 + i.iva / 100) * i.cantidad) + "</td></tr>").join("");
     const pagos = (p.pagos || []).map(q => "<tr><td>" + esc(q.metodo) + '</td><td class="r">' + (q.tipo === "BS" ? "Bs " : "$") + fmt(q.monto) + "</td></tr>").join("") +
       (p.vuelto || []).map(q => "<tr><td>Vuelto (" + esc(q.metodo) + ')</td><td class="r">− ' + (q.tipo === "BS" ? "Bs " : "$") + fmt(q.monto) + "</td></tr>").join("");
     let msg = "";
@@ -1339,9 +1507,9 @@ function pintarVentas(){
     if (v.numeroFactura && String(v.numeroTicket || "") !== String(v.numeroFactura)) msg = '<div class="vt-msg av">⚠️ El ticket salió ' + (v.numeroTicket ? "con el #" + esc(v.numeroTicket) : "provisional") + " y quedó registrada con el <b>#" + esc(v.numeroFactura) + "</b>. Reimprímelo si el cliente lo necesita.</div>" + msg;
     return '<div class="vt-item" id="vt_' + v.id + '"><div class="vt-cab" onclick="this.parentNode.classList.toggle(\'abierto\')"><div style="min-width:0;"><div class="n">' + esc(nroL) + " · " + fechaCorta(v.fecha) + " " + horaDe(v.creada) + (v.pago.cajeroNombre ? ' <span style="color:var(--text-dim);font-weight:600;">· ' + esc(v.pago.cajeroNombre) + "</span>" : "") + "</div>" +
       '<div class="s">' + esc(p.clienteNombre || "Genérico") + (p.clienteCedula ? " · " + esc(p.clienteCedula) : "") + "</div>" + estadoHTML(v) + "</div>" +
-      '<div class="m">Bs ' + fmt(v.totalBs) + '<div style="font-size:11px;color:var(--text-dim);font-weight:600;">$' + fmt(v.total) + "</div></div></div>" +
+      '<div class="m">Bs ' + fmt(v.totalBs) + '<div style="font-size:11px;color:var(--text-dim);font-weight:600;">$' + fmt(v.total) + (v.unidad === "div" ? " div" : "") + "</div></div></div>" +
       '<div class="vt-det">' + msg + "<table>" + items + "</table><table>" + pagos + "</table>" +
-      '<div style="font-size:12px;color:var(--text-dim);">Tasa BCV Bs ' + fmt(v.tasas.bcv) + (v.tasas.div ? " · Divisas Bs " + fmt(v.tasas.div) : "") + (p.descuentoTipo !== "ninguno" && p.descuentoValor ? " · descuento " + (p.descuentoTipo === "pct" ? fmt(p.descuentoValor) + " %" : "$" + fmt(p.descuentoValor)) : "") + (p.referencia ? " · Ref: " + esc(p.referencia) : "") + "</div>" +
+      '<div style="font-size:12px;color:var(--text-dim);">' + (v.unidad === "div" ? "💵 Venta en Dólares · " : "") + 'Tasa BCV Bs ' + fmt(v.tasas.bcv) + (v.tasas.div ? " · Divisas Bs " + fmt(v.tasas.div) : "") + (p.descuentoTipo !== "ninguno" && p.descuentoValor ? " · descuento " + (p.descuentoTipo === "pct" ? fmt(p.descuentoValor) + " %" : "$" + fmt(p.descuentoValor)) : "") + (p.referencia ? " · Ref: " + esc(p.referencia) : "") + "</div>" +
       '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;"><button type="button" class="btn sm" onclick="imprimirPorId(\'' + v.id + '\')">🖨️ Reimprimir</button>' +
       ((v.estado === "pendiente" || v.estado === "invalida") ? '<button type="button" class="btn sm green" onclick="reintentar(\'' + v.id + '\',this)">🔁 Reintentar</button>' : "") + "</div></div></div>";
   }).join("");
@@ -1371,7 +1539,8 @@ function pintarAjustes(){
   const u = (S.ses && S.ses.usuario) || {};
   $("infoSesion").innerHTML = "<span>Usuario</span><b>" + esc(u.nombre || u.usuario || "—") + (u.usuario ? " · " + esc(u.usuario) : "") + "</b>" +
     "<span>Desde</span><b>" + (S.ses && S.ses.desde ? fechaCorta(hoyTxt(new Date(S.ses.desde))) + " " + pad(new Date(S.ses.desde).getHours()) + ":" + pad(new Date(S.ses.desde).getMinutes()) : "—") + "</b>";
-  $("infoTasas").innerHTML = "<span>BCV</span><b>Bs " + fmt(t.bcv) + "</b><span>Divisas ($ en efectivo)</span><b>" + (t.div > 0 ? "Bs " + fmt(t.div) : "—") + "</b><span>De</span><b>" + fechaCorta(t.fecha) + (t.origen === "manual" ? " (puesta a mano)" : " (del sistema)") + "</b>";
+  $("infoTasas").innerHTML = "<span>BCV</span><b>Bs " + fmt(t.bcv) + "</b><span>" + (t.binOn ? "Divisas (TasaBin)" : "Divisas ($ en efectivo)") + "</span><b>" + (t.div > 0 ? "Bs " + fmt(t.div) + (t.binOn && t.bcv > 0 ? " · brecha " + fmt((t.div / t.bcv - 1) * 100) + " %" : "") : "—") + "</b>" +
+    "<span>TasaBin</span><b>" + (t.binOn ? "encendido (precios en divisas · se puede vender en Bs o en Dólares)" : "apagado") + "</b><span>De</span><b>" + fechaCorta(t.fecha) + (t.origen === "manual" ? " (puesta a mano)" : " (del sistema)") + "</b>";
   $("chkDosCopias").checked = !!S.pref.dosCopias; $("chkClaro").checked = !!S.pref.claro; $("selTamTicket").value = S.pref.tamTicket || "auto";
 }
 async function guardarPref(){
@@ -1417,21 +1586,41 @@ function recargarSiSePuede(){
 }
 async function cambiarTasa(btn){
   if (!await pedirClave("Cambiar tasa", "La tasa cambia lo que se cobra en Bs. Escribe la clave sin internet:")) return;
-  const t = S.tasas || {};
+  const t = S.tasas || {}, on = !!t.binOn;
+  const brechaHoy = on && t.bcv > 0 && t.div > 0 ? r2((t.div / t.bcv - 1) * 100) : 0;
   const r = await modal({
-    icono: "💱", titulo: "Tasas para cobrar sin internet",
-    html: '<div class="m-txt" style="font-size:13px;color:var(--text-dim);">Ahora: BCV Bs ' + fmt(t.bcv) + " · Divisas Bs " + (t.div > 0 ? fmt(t.div) : "—") + ". Cuando vuelva el internet, el equipo toma las del sistema.</div>" +
+    icono: "💱", titulo: "Tasas para cobrar",
+    html: '<div class="m-txt" style="font-size:13px;color:var(--text-dim);">Ahora: ' + textoTasas() + ". Cuando haya internet, el equipo toma las del sistema.</div>" +
       '<label class="lbl">Tasa BCV (Bs por $)</label><input class="inp" id="tBcv" type="number" inputmode="decimal" min="0" step="any" placeholder="Bs ' + fmt(t.bcv) + '">' +
-      '<label class="lbl">Tasa Divisas — los $ en efectivo (Bs por $)</label><input class="inp" id="tDiv" type="number" inputmode="decimal" min="0" step="any" placeholder="' + (t.div > 0 ? "Bs " + fmt(t.div) : "Opcional") + '"><div class="m-err" id="tErr"></div>',
+      (on
+        ? '<label class="lbl">% de brecha cambiaria</label><input class="inp" id="tBre" type="number" inputmode="decimal" min="0" step="any" placeholder="' + (brechaHoy > 0 ? fmt(brechaHoy) + " %" : "Ej. 11,11") + '">' +
+          '<label class="lbl">Tasa Divisas (Bs por $) — o escríbela directo, sin brecha</label><input class="inp" id="tDiv" type="number" inputmode="decimal" min="0" step="any" placeholder="Bs ' + fmt(t.div) + '"><div class="act-nota" id="tHint"></div>'
+        : '<label class="lbl">Tasa Divisas — los $ en efectivo (Bs por $)</label><input class="inp" id="tDiv" type="number" inputmode="decimal" min="0" step="any" placeholder="' + (t.div > 0 ? "Bs " + fmt(t.div) : "Opcional") + '">') +
+      '<div class="m-err" id="tErr"></div>',
     botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Guardar", v: true, cls: "green" }],
     foco: "tBcv",
+    alAbrir: () => {
+      if (!on) return;
+      const calc = () => {   // con % de brecha, la Divisas se calcula (BCV × (1 + %))
+        const b = $("tBcv").value === "" ? t.bcv : Number($("tBcv").value), pct = Number($("tBre").value) || 0;
+        $("tDiv").disabled = pct > 0;
+        $("tHint").innerHTML = pct > 0 && b > 0 ? "Divisas = BCV × " + fmt(1 + pct / 100) + " = <b>Bs " + fmt(r2(b * (1 + pct / 100))) + "</b>" : "";
+      };
+      ["tBcv", "tBre"].forEach(id => $(id).addEventListener("input", calc));
+    },
     antes: (v) => {
       if (!v) return true;
-      const b = $("tBcv").value === "" ? t.bcv : Number($("tBcv").value), dv = $("tDiv").value === "" ? t.div : Number($("tDiv").value);
+      const b = $("tBcv").value === "" ? t.bcv : Number($("tBcv").value);
       if (!(b > 0)) { $("tErr").textContent = "Escribe la tasa BCV."; return false; }
       if (t.bcv > 0 && (b > t.bcv * 1.5 || b < t.bcv * 0.6)) { $("tErr").textContent = "La tasa BCV cambia demasiado (más de 50 %). Revisa el número."; return false; }
+      let dv;
+      if (on) {
+        const pct = Number($("tBre").value) || 0;
+        dv = pct > 0 ? r2(b * (1 + pct / 100)) : ($("tDiv").value === "" ? (brechaHoy > 0 ? r2(b * (1 + brechaHoy / 100)) : t.div) : Number($("tDiv").value));
+        if (!(dv > 0)) { $("tErr").textContent = "Escribe el % de brecha o la tasa Divisas."; return false; }
+      } else dv = $("tDiv").value === "" ? t.div : Number($("tDiv").value);
       if (dv && dv < b * 0.9) { $("tErr").textContent = "La tasa Divisas no puede quedar por debajo de la BCV."; return false; }
-      S.tasas = { bcv: b, div: dv || 0, fecha: hoyTxt(), origen: "manual" };
+      S.tasas = Object.assign({}, t, { bcv: b, div: dv || 0, fecha: hoyTxt(), origen: "manual" });
       return true;
     }
   });
