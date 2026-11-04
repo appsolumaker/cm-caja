@@ -6,9 +6,12 @@
 //  (cj_subir → la misma subida de la caja sin internet: una sola vez, con lo que se cobró).
 //  Archivos: app.js (la caja) · api.js (habla con el sistema) · sesion.js (entrar, equipo, pase)
 //            numeros.js (números apartados) · estilos.css · sw.js (abre sin internet)
-//  Por ahora solo tasaBin APAGADO (Etapa 1: encendido): los Bs a tasa BCV y los $ a tasa Divisas (H9).
+//  Etapa 1A: tasaBin encendido (venta en Bs a BCV y Venta en Dólares), igual que Ventas.
+//  Etapa 1B (2.2): la pantalla de Vender se ve como Ventas (lista, factura en tabla con TIPO por línea, precio
+//  manual en la línea, Ajustes con el descuento, teléfono en 2 pestañas), la tasa se puede ocultar, y los
+//  clientes se buscan y se crean desde la caja (sin internet quedan en el equipo y se crean al subir la venta).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.1.1 · 4-11-2026";
+const APP_VER = "2.2 · 4-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -141,6 +144,7 @@ async function arrancar(){
   S.pref = Object.assign(S.pref, await kvGet("pref") || {});
   S.turno = await kvGet("turno") || null;
   S.cierres = await kvGet("cierres") || [];
+  S.clientesNuevos = await kvGet("clientesNuevos") || [];   // creados sin internet: se crean en el sistema al subir su venta
   S.ventas = (await ventasTodas()) || [];
   aplicarTema();
   await entrarConPase();     // sesion.js: si vino del sistema con un pase, ya entra con ese usuario
@@ -199,6 +203,11 @@ async function descargarDatos(){
   const antes = F.items.length ? { total: totales(F.items, F.desc).total, u: unidadU() } : null;
   S.datos = d; S.permisoMal = ""; S.datosMal = "";
   await kvSet("datos", d);
+  if ((S.clientesNuevos || []).length) {   // los clientes creados sin internet que el sistema ya tiene salen de la lista de este equipo
+    const ya = new Set((d.clientes || []).map(c => cedNorm(c.cedula)));
+    S.clientesNuevos = S.clientesNuevos.filter(c => !ya.has(cedNorm(c.cedula)));
+    await kvSet("clientesNuevos", S.clientesNuevos);
+  }
   // TasaBin encendido: div = tasa Divisas (H7). Apagado: div = Divisas de los $ en efectivo (H9).
   const on = d.binOn === true;
   S.tasas = { bcv: Number(d.tasa) || 0, div: on ? (Number(d.tasaBinance) || Number(d.tasa) || 0) : (Number(d.tasaDivisas) || 0),
@@ -240,36 +249,72 @@ async function actualizarDatos(btn, silencioso){
 function mostrarVista(v){
   S.vista = v;
   ["activar", "vender", "ventas", "ajustes", "turno", "cierre"].forEach(x => $("v" + x.charAt(0).toUpperCase() + x.slice(1)).classList.toggle("on", x === v));
+  document.body.classList.toggle("v-vender", v === "vender");
   const nv = (v === "turno" || v === "cierre") ? "vender" : v;
-  document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.v === nv));
-  $("nav").classList.toggle("oculto", v === "activar");
+  document.querySelectorAll("#menuVta .menu-vta-item[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === nv));
 }
 function irA(v){
+  cerrarMenuVta();
   if (!S.datos) return;
   if (v === "vender" && !S.turno) { mostrarVista("turno"); pintarTurno(); return; }   // primero, abrir turno
   mostrarVista(v);
   if (v === "ventas") pintarVentas();
   if (v === "ajustes") pintarAjustes();
-  if (v === "vender") setTimeout(() => { const b = $("busca"); if (b && window.innerWidth >= 900) b.focus(); }, 50);
+  if (v === "vender") setTimeout(() => { const b = $("busca"); if (b && window.innerWidth > 820) b.focus(); }, 50);
 }
 function pintarTodo(){
   pintarCabecera(); pintarEstado(); pintarBanners();
   if (S.vista === "turno") pintarTurno();
-  pintarSelectores(); buscar(); pintarFactura();
+  pintarCategorias(); pintarSelectores(); buscar(); pintarFactura();
   if (S.vista === "ventas") pintarVentas();
   if (S.vista === "ajustes") pintarAjustes();
 }
+// Barra de arriba, como en Ventas: cajero del turno, tasa (se puede ocultar) y el menú
 function pintarCabecera(){
   const d = S.datos;
   if (!d) return;
-  $("pillTurno").classList.toggle("oculto", !S.turno);
-  if (S.turno) $("turnoNom").textContent = S.turno.cajeroNombre + " · Cerrar turno";
-  $("tTit").innerHTML = esc(d.negocio || "Mi negocio") + "<small>Caja " + esc(d.caja) + " · equipo " + esc(d.equipo || "") + (S.ses && S.ses.usuario ? " · " + esc(S.ses.usuario.nombre || S.ses.usuario.usuario) : "") + "</small>";
+  $("tbTit").textContent = "🛒 Punto de Venta · Caja " + d.caja;
+  $("badgeCajero").classList.toggle("oculto", !S.turno);
+  if (S.turno) $("cajeroNombre").textContent = S.turno.cajeroNombre;
+  $("menuCierre").classList.toggle("oculto", !S.turno);
+  const u = S.ses && S.ses.usuario;
+  $("menuInfo").innerHTML = "<b>" + esc(d.negocio || "Mi negocio") + "</b><br>Caja " + esc(d.caja) + " · equipo " + esc(d.equipo || "") + (d.nombreEquipo ? " (" + esc(d.nombreEquipo) + ")" : "") +
+    (u ? "<br>Usuario: " + esc(u.nombre || u.usuario) : "") + (S.turno ? "<br>Turno de " + esc(S.turno.cajeroNombre) + " desde las " + horaDe(S.turno.apertura) : "");
+  pintarTasa();
+}
+function tasaVieja(){ const t = S.tasas || {}; return !!(t.fecha && t.fecha !== hoyTxt()); }
+function pintarTasa(){
+  const t = S.tasas || {}, oc = !!S.pref.tasaOculta;
+  $("tasaDisplay").innerHTML = oc ? "••••••" : (tasaVieja() ? '<span class="vieja">⚠️ ' + fechaCorta(t.fecha).slice(0, 5) + " · </span>" : "") + "Bs " + fmt(t.bcv);
+  $("btnOcultarTasa").title = oc ? "Mostrar tasa" : "Ocultar tasa";
+}
+async function toggleTasaVisible(){
+  S.pref.tasaOculta = !S.pref.tasaOculta;
+  pintarTasa();
+  const c = $("chkTasaOculta"); if (c) c.checked = !!S.pref.tasaOculta;
+  try { await kvSet("pref", S.pref); } catch (e) {}
+}
+// Tocar la tasa: las tasas del equipo y, con la clave sin internet, cambiarlas
+async function verTasas(){
   const t = S.tasas || {};
-  const vieja = t.fecha && t.fecha !== hoyTxt();
-  $("tasaBar").innerHTML = "💱 " + textoTasas() +
-    (vieja ? ' · <span class="vieja">⚠️ tasa del ' + fechaCorta(t.fecha) + '</span>' : (t.origen === "manual" ? ' · <span class="vieja">puesta a mano</span>' : "")) +
-    '<span class="flex1"></span><span>Datos del ' + fechaCorta(hoyTxt(new Date(d.descargadoEn))) + " " + pad(new Date(d.descargadoEn).getHours()) + ":" + pad(new Date(d.descargadoEn).getMinutes()) + "</span>";
+  const r = await modal({ icono: "💱", titulo: "Tasas para cobrar",
+    html: '<div class="m-txt">' + textoTasas() + "<br><span style=\"color:var(--text-dim);font-size:13px;\">Del " + fechaCorta(t.fecha) + (t.origen === "manual" ? " · puesta a mano" : " · del sistema") +
+      (tasaVieja() ? ' · <b style="color:var(--amber);">no es de hoy</b>' : "") + "</span><br><br>Con internet el equipo toma las tasas del sistema solo. Si hoy son otras y no hay internet, cámbialas con la clave sin internet.</div>",
+    botones: [{ txt: "Cerrar", v: false }, { txt: "🔒 Cambiar tasa", v: true, cls: "green" }] });
+  if (r) cambiarTasa(null);
+}
+// ── Menú ☰ (como en Ventas) ──
+function abrirMenuVta(){
+  const b = $("btnMenuVta"), m = $("menuVta");
+  if (b && m) { const r = b.getBoundingClientRect(); m.style.top = Math.round(r.bottom + 6) + "px"; m.style.right = Math.max(6, Math.round(window.innerWidth - r.right)) + "px"; }
+  $("menuVtaFondo").classList.add("visible"); m.classList.add("visible");
+}
+function cerrarMenuVta(){ $("menuVtaFondo").classList.remove("visible"); $("menuVta").classList.remove("visible"); }
+function menuVtaAccion(a){
+  cerrarMenuVta();
+  if (a === "actualizar") { actualizarDatos(null, false); toast("🔄 Actualizando datos…"); return; }
+  if (a === "cierre") { irCierre(); return; }
+  irA(a);
 }
 function cuentas(){
   let por = 0, mal = 0;
@@ -280,19 +325,23 @@ function cuentas(){
 function pintarEstado(){
   const p = $("pillEstado"), c = cuentas();
   p.classList.remove("on", "off", "pend", "mal");
-  let t = S.online === true ? "Con internet" : S.online === false ? "Sin internet" : "Revisando…";
+  let t = S.online === true ? "Con internet" : S.online === false ? "Sin internet" : "Revisando…", k = "";
   if (S.online === true) p.classList.add("on"); else if (S.online === false) p.classList.add("off");
   if (S.sincronizando) t = "Subiendo…";
-  if (c.mal) { p.classList.add("mal"); t += " · " + c.mal + " con problema"; }
-  else if (c.por) { p.classList.add("pend"); t += " · " + c.por + " por subir"; }
+  if (c.mal) { p.classList.add("mal"); t += " · " + c.mal + " con problema"; k = c.mal + "⚠️"; }
+  else if (c.por) { p.classList.add("pend"); t += " · " + c.por + " por subir"; k = c.por + "⬆"; }
   else if (S.ventas.length) t += " · todo subido";
-  $("pillTxt").textContent = t;
+  $("pillTxt").textContent = t; $("pillCorto").textContent = k;
+  pintarNumFactura();
+  p.title = t + " — tocar para ver las ventas de este equipo";
 }
 function pintarBanners(){
+  pintarNumFactura();
   let h = "";
   if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a></div>';
   if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + "</div>";
   if (S.sesionMal) h += '<div class="banner av">🔐 ' + esc(S.sesionMal) + ' <a href="#" onclick="pedirEntrarOtraVez();return false;" style="color:inherit;font-weight:800;">Entrar</a></div>';
+  if (S.datos && tasaVieja() && S.tasaOkHoy !== hoyTxt()) h += '<div class="banner av">💱 Las tasas de este equipo son del <b>' + fechaCorta(S.tasas.fecha) + '</b>. Con internet se actualizan solas; si no hay, revísalas antes de cobrar: <a href="#" onclick="verTasas();return false;" style="color:inherit;font-weight:800;">ver tasas</a>.</div>';
   if (S.turno && S.num && !S.num.lista.length && S.online === false) h += '<div class="banner av">🔢 Este equipo no tiene números de factura apartados: los tickets salen <b>provisionales</b> y el sistema les da su número al subirlos.</div>';
   if (_verNueva) h += '<div class="banner av">🔄 Hay una versión nueva de la caja. Se actualiza sola cuando termines esta venta.</div>';
   const c = cuentas();
@@ -329,48 +378,94 @@ function catalogo(){
 }
 let _cat = null, _catDe = 0;
 function cat(){ if (!_cat || _catDe !== (S.datos && S.datos.descargadoEn)) { _cat = catalogo(); _catDe = S.datos && S.datos.descargadoEn; } return _cat; }
+// Productos | Servicios (solo si el negocio tiene servicios), como en Ventas
+function vtaVista(v){
+  S.vtaVista = v === "servicios" ? "servicios" : "productos";
+  $("segProd").classList.toggle("on", S.vtaVista === "productos"); $("segServ").classList.toggle("on", S.vtaVista === "servicios");
+  $("selCat").classList.toggle("oculto", S.vtaVista === "servicios"); $("mvCats").classList.toggle("oculto", S.vtaVista === "servicios");
+  buscar();
+}
+function pintarCategorias(){
+  const d = S.datos || {}, sel = $("selCat"), act = sel.value;
+  const cats = [...new Set((d.productos || []).map(p => String(p.categoria || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">🏷️ Todas las categorías</option>' + cats.map(c => '<option value="' + esc(c) + '">' + esc(c) + "</option>").join("");
+  sel.value = cats.indexOf(act) >= 0 ? act : "";
+  $("mvCats").innerHTML = ['<button type="button" class="mv-cat" data-v="">Todas</button>'].concat(cats.map(c => '<button type="button" class="mv-cat" data-v="' + esc(c) + '">' + esc(c) + "</button>")).join("");
+  $("mvCats").classList.toggle("mv-sin", cats.length < 1);
+  $("mvCats").querySelectorAll(".mv-cat").forEach(b => b.onclick = () => { sel.value = b.dataset.v; buscar(); });
+  $("vtaSeg").classList.toggle("oculto", !(d.servicios || []).length);
+  if (!(d.servicios || []).length && S.vtaVista === "servicios") S.vtaVista = "productos";
+}
 function resultados(q){
-  const n = norm(q);
-  const todos = cat();
-  if (!n) return todos.slice(0, 40);
-  const exactos = todos.filter(p => norm(p.codigo) === n || norm(p.codigoBarras) === n);
+  const n = norm(q), serv = S.vtaVista === "servicios", c = $("selCat").value;
+  const todos = cat().filter(p => (p.tipo === "servicio") === serv && (serv || !c || String(p.categoria || "").trim() === c));
+  if (!n) return todos;
+  const exactos = todos.filter(p => norm(p.codigo) === n || norm(p.codigoBarras) === n || (p.codRepuesto && norm(p.codRepuesto) === n));
   const palabras = n.split(/\s+/);
   const resto = todos.filter(p => exactos.indexOf(p) < 0 && palabras.every(w =>
-    norm(p.nombre).indexOf(w) >= 0 || norm(p.codigo).indexOf(w) >= 0 || norm(p.codigoBarras).indexOf(w) >= 0 || norm(p.marca).indexOf(w) >= 0));
-  return exactos.concat(resto).slice(0, 40);
+    norm(p.nombre).indexOf(w) >= 0 || norm(p.codigo).indexOf(w) >= 0 || norm(p.codigoBarras).indexOf(w) >= 0 || norm(p.marca).indexOf(w) >= 0 || norm(p.codRepuesto).indexOf(w) >= 0));
+  return exactos.concat(resto);
 }
+// Precio en $ BCV de una base de los libros (con TasaBin: base en divisas × Divisas ÷ BCV), como la lista de Ventas
+function baseBCV(libro){ const x = Number(libro) || 0; return binOn() && tBcv() > 0 && tDiv() > 0 ? x * tDiv() / tBcv() : x; }
+// Semáforo de existencia con los niveles del producto (o los generales), como en Ventas
+function semaforo(ex, p){
+  const d = S.datos || {};
+  const gB = Number(d.invNivelBajo) || 5, gA = Number(d.invNivelNormal) || 10;
+  const bajo = Number(p.nivelBajo) > 0 ? Number(p.nivelBajo) : gB;
+  let alto = Number(p.nivelAlto) > 0 ? Number(p.nivelAlto) : gA;
+  if (alto <= bajo) alto = bajo + 1;
+  if (ex <= 0) return "color:#7a8a9a;background:rgba(122,138,154,0.18);";
+  if (ex <= bajo) return "color:var(--sk-low);background:var(--sk-low-bg);";
+  if (ex < alto) return "color:var(--sk-mid);background:var(--sk-mid-bg);";
+  return "color:var(--green);background:var(--green-dim);";
+}
+function cuantasEnFactura(cod){ let q = 0; F.items.forEach(i => { if (String(i.codigo) === String(cod)) q += Number(i.cantidad) || 0; }); return r3(q); }
+const LISTA_MAX = 300;
 function buscar(){
   const box = $("listaProd");
   if (!S.datos) { box.innerHTML = ""; return; }
-  const q = $("busca").value, lst = resultados(q), t = S.tasas || {};
-  if (!norm(q) && window.innerWidth < 900) { box.innerHTML = '<div class="vacio">Escribe el nombre o el código, o pasa el lector de códigos.</div>'; box._lst = []; return; }
-  if (!lst.length) { box.innerHTML = '<div class="vacio">No hay productos con «' + esc(q) + '».</div>'; box._lst = []; return; }
+  const q = $("busca").value, todos = resultados(q), lst = todos.slice(0, LISTA_MAX), on = binOn();
+  $("vtaContador").textContent = todos.length > LISTA_MAX ? "Mostrando " + LISTA_MAX + " de " + todos.length + ": escribe para buscar" : "";
+  if (!lst.length) { box.innerHTML = '<div class="vacio">' + (norm(q) ? "No hay " + (S.vtaVista === "servicios" ? "servicios" : "productos") + " con «" + esc(q) + "»." : "No hay productos en los datos de este equipo.") + "</div>"; box._lst = []; return; }
   box.innerHTML = lst.map((p, k) => {
-    const pr = precioDe(p, F.tipoPrecio), conIva = r2(basePantalla(pr.base) * (1 + pr.iva / 100));
-    let ex = "";
-    if (p.tipo === "servicio") ex = '<span class="tag">SERVICIO</span>';
-    else { const e = existenciaLocal(p); ex = '<span class="ex ' + (e <= 0 ? "cero" : e <= 5 ? "bajo" : "") + '">' + fmtCant(e) + "</span>"; }
-    return '<div class="prod" data-k="' + k + '" onclick="clicProducto(this,' + k + ')" ondblclick="agregarDeLista(' + k + ')"><div style="min-width:0;"><div class="prod-nom">' + esc(p.nombre) + "</div>" +
-      '<div class="prod-sub">' + esc(p.codigoBarras || p.codigo) + (p.marca ? " · " + esc(p.marca) : "") + " " + ex + "</div></div>" +
-      '<div class="prod-pr"><b>Bs ' + fmt(conIva * bsPorU()) + "</b><span>" + txtU(conIva) + "</span></div></div>";
+    const pr = precioDe(p, F.tipoPrecio), conIva = r2(r2(baseBCV(pr.base)) * (1 + pr.iva / 100)), div = on ? r2(pr.base * (1 + pr.iva / 100)) : 0;
+    let info = "";
+    if (p.tipo === "servicio") info = '<div style="margin-top:4px;"><span class="serv-tag">Servicio</span></div>';
+    else {
+      const ex = existenciaLocal(p);
+      info = (p.categoria ? '<div class="prod-barcode">🏷️ ' + esc(p.categoria) + "</div>" : "") + (p.marca ? '<div class="prod-barcode">Marca: ' + esc(p.marca) + "</div>" : "") +
+        (S.datos.buscarRepuesto && p.codRepuesto ? '<div class="prod-barcode">Cód. Producto: ' + esc(p.codRepuesto) + "</div>" : "") +
+        (p.codigoBarras && String(p.codigoBarras) !== String(p.codigo) ? '<div class="prod-barcode">Cód. de Barras: ' + esc(p.codigoBarras) + "</div>" : "") +
+        '<div style="margin-top:4px;"><span class="prod-stock" style="' + semaforo(ex, p) + '">' + (ex <= 0 ? "Sin stock" : fmtCant(ex) + " uds") + "</span></div>";
+    }
+    const q2 = cuantasEnFactura(p.codigo);
+    return '<div class="prod-item" data-k="' + k + '" onclick="clicProducto(this,' + k + ')" ondblclick="agregarDeLista(' + k + ')"><div class="prod-fila">' +
+      '<div style="flex:1;min-width:0;"><div class="prod-cod">ID: ' + esc(p.codigo) + '</div><div class="prod-nom">' + esc(p.nombre) + "</div>" + info + "</div>" +
+      '<div class="prod-pr"><div class="p1">$ ' + fmt(conIva) + " <small>BCV</small></div><div class=\"p2\">Bs " + fmt(r2(conIva * tBcv())) + "</div>" + (div > 0 ? '<div class="p3">$ ' + fmt(div) + " <small>div</small></div>" : "") + "</div>" +
+      '<button type="button" class="mv-add" data-cod="' + esc(p.codigo) + '" title="Agregar a la factura" onclick="event.stopPropagation();agregarDeLista(' + k + ')" ondblclick="event.stopPropagation()">+' + (q2 > 0 ? '<span class="mv-q">' + fmtCant(q2) + "</span>" : "") + "</button>" +
+      "</div></div>";
   }).join("");
   box._lst = lst;
+  $("mvCats").querySelectorAll(".mv-cat").forEach(b => b.classList.toggle("on", b.dataset.v === $("selCat").value));
 }
+function limpiarBusqueda(){ $("busca").value = ""; buscar(); $("busca").focus(); }
 function buscarEnter(){
-  const lst = $("listaProd")._lst || [], q = norm($("busca").value);
+  const q = norm($("busca").value);
   if (!q) return;
-  const ex = lst.filter(p => norm(p.codigo) === q || norm(p.codigoBarras) === q);
-  if (ex.length === 1) { agregar(ex[0]); return; }
+  const exacto = cat().filter(p => norm(p.codigo) === q || norm(p.codigoBarras) === q || (p.codRepuesto && norm(p.codRepuesto) === q));
+  if (exacto.length === 1) { agregar(exacto[0]); return; }
+  const lst = $("listaProd")._lst || [];
   if (lst.length === 1) { agregar(lst[0]); return; }
-  if (!lst.length) aviso({ icono: "🔎", titulo: "No está en la lista", html: "No hay ningún producto con «" + esc($("busca").value) + "» en los datos de este equipo. Si es nuevo, toca <b>⚙️ → 🔄 Actualizar datos</b> (con internet)." });
+  if (!lst.length) aviso({ icono: "🔎", titulo: "No está en la lista", html: "No hay ningún producto con «" + esc($("busca").value) + "» en los datos de este equipo. Si es nuevo, toca <b>☰ Menú → 🔄 Actualizar datos</b> (con internet)." });
 }
 function agregarDeLista(k){ const p = ($("listaProd")._lst || [])[k]; if (p) agregar(p); }
 // Como en Ventas: un clic marca el producto y el doble clic lo agrega. En pantalla táctil, un toque lo agrega.
 const ES_TACTIL = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
 function clicProducto(el, k){
-  if (ES_TACTIL) { agregarDeLista(k); return; }
-  document.querySelectorAll("#listaProd .prod.sel").forEach(x => x.classList.remove("sel"));
-  el.classList.add("sel");
+  if (ES_TACTIL && window.innerWidth > 820) { agregarDeLista(k); return; }
+  document.querySelectorAll("#listaProd .prod-item.highlight").forEach(x => x.classList.remove("highlight"));
+  el.classList.add("highlight");
 }
 async function agregar(p){
   if (p.tipo !== "servicio") {
@@ -389,33 +484,47 @@ async function agregar(p){
     cantidad: 1, libro: pr.base, base: basePantalla(pr.base), iva: pr.iva, manual: false, tipoIdx: F.tipoPrecio });   // libro: base del sistema (divisas con TasaBin) · base: en pantalla
   $("busca").value = "";
   buscar(); pintarFactura();
-  toast("✅ " + p.nombre);
-  if (window.innerWidth >= 900) $("busca").focus();
+  const n = String(p.nombre || ""); toast("✅ " + (n.length > 34 ? n.slice(0, 33) + "…" : n) + "  ×" + fmtCant(cuantasEnFactura(p.codigo)));
+  if (window.innerWidth > 820) $("busca").focus();
 }
 
 // ══ LA VENTA (factura) ══
+function pintarNumFactura(){
+  const el = $("numFactura"); if (!el) return;
+  const N = S.num; el.value = N && N.lista && N.lista.length ? String(N.lista[0]) : (S.turno ? "Provisional" : "—");
+}
 function pintarSelectores(){
   const d = S.datos; if (!d) return;
-  // Tipo de precio
-  const tp = (d.tiposPrecios || []).map((n, i) => ({ n, i })).filter(o => o.i === 0 || (d.productos || []).some(p => p.precios && p.precios[o.i] && Number(p.precios[o.i].base) > 0));
-  $("selTipoPrecio").innerHTML = tp.map(o => '<option value="' + o.i + '"' + (o.i === F.tipoPrecio ? " selected" : "") + ">💲 " + esc(o.n) + "</option>").join("");
-  $("selTipoPrecio").classList.toggle("oculto", tp.length < 2);
+  pintarNumFactura();
+  $("fechaVenta").value = fechaCorta(hoyTxt());
+  // Tipo de precio para lo que se agregue (los que tienen precio en algún producto)
+  const tp = tiposConPrecio();
+  $("selTipoPrecio").innerHTML = tp.map(o => '<option value="' + o.i + '"' + (o.i === F.tipoPrecio ? " selected" : "") + ">" + esc(o.n) + "</option>").join("");
+  $("precioBar").classList.toggle("oculto", tp.length < 2);
   // Venta en Dólares (solo con TasaBin encendido)
-  const bd = $("btnDolares");
-  if (bd) { bd.classList.toggle("oculto", !binOn()); bd.classList.toggle("on", !!F.dolares); bd.innerHTML = F.dolares ? "💵 Venta en Dólares ✓" : "💵 Venta en Dólares"; }
+  $("badgeDolares").classList.toggle("oculto", !binOn());
+  $("chkDolares").checked = !!F.dolares;
   // Vendedor
   const sel = $("selVend"), badge = $("badgeVend");
-  sel.classList.add("oculto"); badge.classList.add("oculto");
+  $("vendBar").classList.add("oculto"); badge.classList.add("oculto");
   if (d.trabajoVendedores && d.modoCajas === "cajero") {
     if (F.vend === "") F.vend = d.vendedorCajaId ? String(d.vendedorCajaId) : "directa";
-    sel.innerHTML = '<option value="directa">🏪 Venta directa</option>' + (d.vendedores || []).map(v => '<option value="' + esc(v.id) + '">🧑‍💼 ' + esc(v.nombre) + "</option>").join("");
+    sel.innerHTML = '<option value="directa">🏪 Venta directa (sin comisión)</option>' + (d.vendedores || []).map(v => '<option value="' + esc(v.id) + '">🧑‍💼 ' + esc(v.nombre) + "</option>").join("");
     sel.value = F.vend; if (sel.value !== F.vend) { F.vend = "directa"; sel.value = "directa"; }
-    sel.classList.remove("oculto");
+    $("vendBar").classList.remove("oculto");
   } else if (d.trabajoVendedores && d.vendedor && d.vendedor.nombre) {
-    badge.textContent = "🧑‍💼 " + d.vendedor.nombre; badge.classList.remove("oculto");
-  } else if (d.cajero && d.cajero.nombre) {
-    badge.textContent = "🧾 " + d.cajero.nombre; badge.classList.remove("oculto");
+    badge.innerHTML = "<label>Vendedor:</label><b>🧑‍💼 " + esc(d.vendedor.nombre) + "</b>"; badge.classList.remove("oculto");
   }
+  // Descuento
+  $("tipoDescuento").value = F.desc.tipo;
+  const vd = $("valorDescuento");
+  vd.disabled = F.desc.tipo === "ninguno";
+  if (document.activeElement !== vd) vd.value = F.desc.valor > 0 ? F.desc.valor : "";
+  $("lblDescVal").textContent = F.desc.tipo === "pct" ? "%" : F.desc.tipo === "monto" ? "$ " + unidadU() : "";
+}
+function tiposConPrecio(){
+  const d = S.datos || {};
+  return (d.tiposPrecios || []).map((n, i) => ({ n, i })).filter(o => o.i === 0 || (d.productos || []).some(p => p.precios && p.precios[o.i] && Number(p.precios[o.i].base) > 0));
 }
 function cambiarTipoPrecio(v){
   F.tipoPrecio = Number(v) || 0;
@@ -435,45 +544,130 @@ function totales(items, desc){
   const descB = Math.round(sub * f * 100) / 100, ivaR = Math.round(iva * (1 - f) * 100) / 100;
   return { sub: r2(sub), iva: r2(iva), desc: descB, ivaR: ivaR, total: Math.round((sub - descB + ivaR) * 100) / 100, f: f };
 }
+const totLinea = i => r2((Number(i.base) || 0) * (1 + (Number(i.iva) || 0) / 100) * (Number(i.cantidad) || 0));   // como Ventas: sin redondear el P.U.
+// La factura en una tabla, como en Ventas: Cód · Nombre · Cant · P.U. ($ sin IVA) · IVA% · Total · Tipo · ✕
 function pintarFactura(){
-  const box = $("lineas");
   _vendidoLocal = null;
   repreciar();
-  if (!F.items.length) box.innerHTML = '<div class="vacio">Busca un producto o pasa el lector de códigos.<br>Toca un producto para agregarlo.</div>';
-  else box.innerHTML = F.items.map(i => {
-    const conIva = r2(i.base * (1 + i.iva / 100)), tl = r2(conIva * (Number(i.cantidad) || 0));   // como la muestra Ventas
-    return '<div class="linea"><div class="linea-nom">' + esc(i.nombre) + (i.manual ? '<span class="man">✏️ PRECIO MANUAL</span>' : "") + (i.tipo === "servicio" ? ' <span class="tag">SRV</span>' : "") + "</div>" +
-      '<div class="linea-tot">Bs ' + fmt(tl * bsPorU()) + "<small>" + txtU(tl) + "</small></div>" +
-      '<div class="linea-ctrl"><input class="inp" type="number" inputmode="decimal" min="0" step="any" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}">' +
-      '<span class="pu">× ' + txtU(conIva) + (i.iva ? " (IVA " + fmt(i.iva).replace(",00", "") + "%)" : "") + "</span></div>" +
-      '<div class="linea-acc"><button type="button" class="ico" title="Precio manual" onclick="precioManual(' + i.key + ')">✏️</button><button type="button" class="ico" title="Quitar" onclick="quitarLinea(' + i.key + ')">✕</button></div></div>';
+  const tps = tiposConPrecio(), c = cat();
+  $("tablaFactura").innerHTML = !F.items.length ? '<tr class="fac-vacia"><td colspan="8"><span class="solo-pc">Busca un producto o pasa el lector de códigos. Doble clic en un producto para agregarlo.</span><span class="solo-movil">La factura está vacía. Agrega productos desde la pestaña 🛒 Productos.</span></td></tr>' : F.items.map(i => {
+    const srv = i.tipo === "servicio", p = c.find(x => x.codigo === i.codigo && x.tipo === i.tipo);
+    let opts = srv ? '<option value="0"' + (!i.manual ? " selected" : "") + ">Servicio</option>"
+      : tps.filter(o => o.i === 0 || (p && p.precios && p.precios[o.i] && Number(p.precios[o.i].base) > 0)).map(o => '<option value="' + o.i + '"' + (!i.manual && i.tipoIdx === o.i ? " selected" : "") + ">" + esc(o.n) + "</option>").join("");
+    opts += '<option value="manual"' + (i.manual ? " selected" : "") + ">Manual</option>";
+    const cant = '<td><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',-1)" title="Una menos">−</button><input type="number" min="0" step="any" id="q_' + i.key + '" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}"><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',1)" title="Una más">+</button></td>';
+    const cod = '<td><span style="font-size:11px;">' + esc(i.codigoBarras || i.codigo) + "</span>" + (srv ? ' <span class="srv">SRV</span>' : "") + "</td>";
+    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + esc(i.nombre) + "</td>";
+    const fin = '<td><select onchange="cambiarTipoLinea(' + i.key + ',this)">' + opts + '</select></td><td><button type="button" class="btn-del" onclick="quitarLinea(' + i.key + ')" title="Quitar">✕</button></td>';
+    if (i.manual) return '<tr data-key="' + i.key + '">' + cod + nom + cant +
+      '<td><input type="number" class="man" min="0" step="any" id="pu_' + i.key + '" value="' + r2(i.base).toFixed(2) + '" oninput="manualPU(' + i.key + ',this.value)"></td>' +
+      '<td><input type="number" class="man" min="0" max="100" step="any" id="iv_' + i.key + '" value="' + (Number(i.iva) || 0) + '" style="width:55px;color:var(--sk-mid);" oninput="manualIVA(' + i.key + ',this.value)"></td>' +
+      '<td><input type="number" class="man" step="any" id="tt_' + i.key + '" value="' + totLinea(i).toFixed(2) + '" style="width:80px;color:var(--green);font-weight:700;font-size:13px;" oninput="manualTot(' + i.key + ',this.value)"></td>' + fin + "</tr>";
+    return '<tr data-key="' + i.key + '">' + cod + nom + cant +
+      '<td style="color:var(--green);font-weight:700;">$' + fmt(i.base) + '</td><td style="color:var(--text-dim);">' + fmtCant(i.iva) + "%</td>" +
+      '<td style="font-weight:700;" id="tt_' + i.key + '">$' + fmt(totLinea(i)) + "</td>" + fin + "</tr>";
   }).join("");
   pintarTotales();
 }
 function pintarTotales(){
-  const x = totales(F.items, F.desc), u = unidadU();
-  let h = '<div><span>Subtotal</span><b>$' + fmt(x.sub) + "</b></div>";
-  if (x.desc > 0) h += '<div><span>Descuento ' + (F.desc.tipo === "pct" ? fmt(F.desc.valor).replace(",00", "") + " %" : "") + ' <a href="#" onclick="quitarDescuento();return false;" style="color:var(--red);">quitar</a></span><b>− $' + fmt(x.desc) + "</b></div>";
-  h += "<div><span>IVA</span><b>$" + fmt(x.ivaR) + "</b></div>";
-  h += '<div class="grande"><span>Total</span><b>Bs ' + fmt(r2(x.total * bsPorU())) + "</b></div>";
-  h += "<div><span>Total $ " + (u === "div" ? "(divisas)" : "BCV") + "</span><b>$" + fmt(x.total) + "</b></div>";
-  $("totales").innerHTML = h;
-  $("barraTot").innerHTML = "Bs " + fmt(r2(x.total * bsPorU())) + "<small>" + txtU(x.total) + " · " + F.items.length + " línea" + (F.items.length === 1 ? "" : "s") + "</small>";
-  $("btnDesc").classList.toggle("on", x.desc > 0);
-  $("cliNom").textContent = F.cliente.nombre + (F.cliente.cedula ? " · " + F.cliente.cedula : "");
-  $("btnCliente").classList.toggle("on", !!F.cliente.cedula);
+  const x = totales(F.items, F.desc), bs = r2(x.total * bsPorU());
+  $("subTotal").textContent = fmt(x.sub);
+  $("ivaTotal").textContent = fmt(x.ivaR);
+  $("rowDesc").classList.toggle("oculto", !(x.desc > 0));
+  $("descMonto").textContent = fmt(x.desc);
+  $("totalUSD").textContent = fmt(x.total);
+  $("totalU").textContent = binOn() ? (unidadU() === "div" ? "div" : "BCV") : "";
+  $("totalBS").textContent = fmt(bs);
+  // Teléfono: el total abajo y cuántos productos van
+  const n = F.items.length;
+  $("mvTotUSD").textContent = "$ " + fmt(x.total) + (binOn() ? " " + unidadU() : "");
+  $("mvTotBS").textContent = "Bs " + fmt(bs);
+  $("mvCnt").textContent = n ? String(n) : "";
+  $("mvCntTxt").textContent = n ? (n === 1 ? "1 producto" : n + " productos") : "Factura vacía";
+  document.querySelectorAll("#listaProd .mv-add").forEach(b => { const q = cuantasEnFactura(b.dataset.cod); b.innerHTML = "+" + (q > 0 ? '<span class="mv-q">' + fmtCant(q) + "</span>" : ""); });
+  // Cliente
+  $("nombreClienteDisplay").textContent = F.cliente.nombre + (F.cliente.cedula ? " · " + F.cliente.cedula : "");
+  $("btnLimpiarCli").classList.toggle("oculto", !F.cliente.cedula);
+  if (!n && document.body.classList.contains("mv-fac") && window.innerWidth <= 820 && _mvAntes > 0) mvTab("productos");
+  _mvAntes = n;
 }
+let _mvAntes = 0;
+const itemDe = key => F.items.find(x => x.key === key);
 function cambiarCant(key, v){
-  const i = F.items.find(x => x.key === key); if (!i) return;
+  const i = itemDe(key); if (!i) return;
   i.cantidad = v === "" ? "" : r3(v);
-  // sin repintar las líneas (no se pierde el cursor)
-  const conIva = r2(i.base * (1 + i.iva / 100)), tl = r2(conIva * (Number(i.cantidad) || 0));   // como la muestra Ventas
-  const fila = document.activeElement && document.activeElement.closest ? document.activeElement.closest(".linea") : null;
-  if (fila) fila.querySelector(".linea-tot").innerHTML = "Bs " + fmt(tl * bsPorU()) + "<small>" + txtU(tl) + "</small>";
-  _vendidoLocal = null;
+  const t = $("tt_" + key);   // sin repintar la tabla (no se pierde el cursor)
+  if (t) { if (t.tagName === "INPUT") t.value = totLinea(i).toFixed(2); else t.textContent = "$" + fmt(totLinea(i)); }
   pintarTotales();
 }
+function pasoCant(key, d){
+  const i = itemDe(key); if (!i) return;
+  const nv = r3((Number(i.cantidad) || 0) + d);
+  if (nv <= 0) return;   // a cero no baja: para quitar el producto está la ✕
+  const inp = $("q_" + key); if (inp) inp.value = nv;
+  cambiarCant(key, nv);
+}
 function quitarLinea(key){ F.items = F.items.filter(x => x.key !== key); pintarFactura(); buscar(); }
+// Tipo de precio de una línea (Detal, Mayor… o Manual), como el selector TIPO de Ventas
+async function cambiarTipoLinea(key, sel){
+  const i = itemDe(key); if (!i) return;
+  const val = sel.value, antes = i.manual ? "manual" : String(i.tipoIdx >= 0 ? i.tipoIdx : 0);
+  if (val === "manual") {
+    if (S.datos.pideClave && S.datos.pideClave.manual && !F.claveOk) {
+      if (!await pedirClave("Precio manual", "Escribe la clave sin internet para cambiar el precio de <b>" + esc(i.nombre) + "</b>:")) { sel.value = antes; return; }
+      F.claveOk = true;
+    }
+    // Con TasaBin y un solo producto se pregunta en qué moneda va el precio (como Ventas)
+    if (binOn() && F.items.length === 1) {
+      const enDiv = await elegirMonedaManual();
+      if (enDiv === null) { sel.value = antes; return; }
+      if (enDiv !== !!F.dolares) { cambiarMoneda(true); }
+    }
+    i.manual = true; i.tipoIdx = -1;
+    pintarFactura();
+    setTimeout(() => { const inp = $("pu_" + key); if (inp) { inp.focus(); inp.select(); } }, 60);
+    return;
+  }
+  const ti = Number(val) || 0, p = cat().find(x => x.codigo === i.codigo && x.tipo === i.tipo);
+  i.manual = false; i.tipoIdx = ti;
+  if (p) { const pr = precioDe(p, ti); i.libro = pr.base; i.iva = pr.iva; }
+  pintarFactura(); buscar();
+}
+function elegirMonedaManual(){
+  const act = F.dolares ? "div" : "bcv";
+  return modal({ icono: "💱", titulo: "¿En qué moneda va el precio?",
+    html: '<div class="m-txt" style="margin-bottom:12px;">Ahora la factura está en <b>' + (F.dolares ? "Divisas (Venta en Dólares)" : "$ BCV") + "</b>. Si eliges la otra moneda, se " + (F.dolares ? "desmarca" : "marca") + " <b>💵 Venta en Dólares</b> y el precio actual se convierte antes de que lo escribas.</div>" +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;"><button type="button" class="mm-op' + (act === "div" ? " on" : "") + '" data-m="div">💵 Divisas</button><button type="button" class="mm-op' + (act === "bcv" ? " on" : "") + '" data-m="bcv">🧾 $ BCV</button></div>',
+    botones: [{ txt: "Cancelar", v: null }],
+    alAbrir: (box, cerrar) => box.querySelectorAll(".mm-op").forEach(b => b.addEventListener("click", () => cerrar(b.dataset.m === "div"))) });
+}
+// Precio manual escrito en la línea (en la moneda de la pantalla; el P.U. va sin IVA, como en Ventas)
+function manualPU(key, v){
+  const i = itemDe(key); if (!i) return;
+  i.base = Number(v) || 0; i.libro = libroDePantalla(i.base);
+  const t = $("tt_" + key); if (t) t.value = totLinea(i).toFixed(2);
+  pintarTotales();
+}
+function manualIVA(key, v){
+  const i = itemDe(key); if (!i) return;
+  i.iva = Math.max(0, Math.min(100, Number(v) || 0));
+  const t = $("tt_" + key), q = Number(i.cantidad) || 0;
+  if (S.datos.ivaEncima || !t) { if (t) t.value = totLinea(i).toFixed(2); }
+  else {   // el total escrito se queda: cambia el precio sin IVA
+    const tot = Number(t.value) || 0;
+    i.base = q > 0 ? tot / q / (1 + i.iva / 100) : 0; i.libro = libroDePantalla(i.base);
+    const pu = $("pu_" + key); if (pu) pu.value = r2(i.base).toFixed(2);
+  }
+  pintarTotales();
+}
+function manualTot(key, v){
+  const i = itemDe(key); if (!i) return;
+  const q = Number(i.cantidad) || 0, tot = Number(v) || 0;
+  i.base = q > 0 ? tot / q / (1 + (Number(i.iva) || 0) / 100) : 0;   // sin redondear: el total escrito no se desvía
+  i.libro = libroDePantalla(i.base);
+  const pu = $("pu_" + key); if (pu) pu.value = r2(i.base).toFixed(2);
+  pintarTotales();
+}
 async function limpiarVentaConfirmar(){
   if (!F.items.length && !F.cliente.cedula && F.desc.tipo === "ninguno") return;
   const ok = await confirmar({ icono: "🗑️", titulo: "Vaciar la venta", html: "Se quitan los productos, el cliente y el descuento de esta venta. No se guarda nada.", ok: "Sí, vaciar", colorOk: "red" });
@@ -485,6 +679,17 @@ function limpiarVenta(){
   $("busca").value = "";
   pintarSelectores(); buscar(); pintarFactura();
   if (_verNueva && !_ventaGuardada) setTimeout(recargarSiSePuede, 300);
+}
+// ── Teléfono: pestañas y ajustes plegados (como Ventas) ──
+function mvTab(cual){
+  const fac = cual === "factura";
+  document.body.classList.toggle("mv-fac", fac);
+  $("mvTabProd").classList.toggle("on", !fac); $("mvTabFac").classList.toggle("on", fac);
+}
+function mvToggleAjustes(){
+  const on = !document.body.classList.contains("mv-aj");
+  document.body.classList.toggle("mv-aj", on);
+  $("mvAjFlecha").textContent = on ? "▾" : "▸";
 }
 
 // ── Clave sin internet (descuento, precio manual, cambiar tasa) ──
@@ -521,93 +726,180 @@ async function pedirClave(titulo, texto){
     }
   });
 }
-async function precioManual(key){
-  const i = F.items.find(x => x.key === key); if (!i) return;
-  if (S.datos.pideClave && S.datos.pideClave.manual && !F.claveOk) {
-    if (!await pedirClave("Precio manual", "Escribe la clave sin internet para cambiar el precio de <b>" + esc(i.nombre) + "</b>:")) return;
+// ── Descuento (en Ajustes, como en Ventas): Ninguno · Porcentaje · Monto ──
+async function cambiarTipoDesc(sel){
+  const v = sel.value;
+  if (v !== "ninguno" && S.datos.pideClave && S.datos.pideClave.descuento && !F.claveOk) {
+    if (!await pedirClave("Descuento", "Escribe la clave sin internet para hacer un descuento:")) { sel.value = F.desc.tipo; return; }
     F.claveOk = true;
   }
-  const conIva = r2(i.base * (1 + i.iva / 100)), bsU = bsPorU(), u = unidadU();
-  const r = await modal({
-    icono: "✏️", titulo: "Precio manual",
-    html: '<div class="m-txt"><b>' + esc(i.nombre) + "</b><br><span style=\"color:var(--text-dim);font-size:13px;\">Hoy: " + txtU(conIva) + " · Bs " + fmt(conIva * bsU) + (i.iva ? " (con IVA " + fmt(i.iva).replace(",00", "") + "%)" : "") + "</span></div>" +
-      '<label class="lbl">Precio por unidad' + (i.iva ? " con IVA" : "") + '</label><div class="seg" style="margin-bottom:6px;"><button type="button" class="btn sm on" id="mpUsd" onclick="this.classList.add(\'on\');$(\'mpBs\').classList.remove(\'on\');$(\'mpVal\').placeholder=\'En $ ' + u + '\'">En $ ' + u + '</button><button type="button" class="btn sm" id="mpBs" onclick="this.classList.add(\'on\');$(\'mpUsd\').classList.remove(\'on\');$(\'mpVal\').placeholder=\'En Bs\'">En Bs</button></div>' +
-      '<input class="inp" id="mpVal" type="number" inputmode="decimal" min="0" step="any" placeholder="En $ ' + u + '"><div class="m-err" id="mpErr"></div>',
-    botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Aplicar", v: true, cls: "green" }],
-    foco: "mpVal",
-    antes: (v) => {
-      if (!v) return true;
-      const x = Number($("mpVal").value);
-      if (!(x > 0)) { $("mpErr").textContent = "Escribe un precio mayor que cero."; return false; }
-      const usd = $("mpBs").classList.contains("on") ? (bsU > 0 ? x / bsU : 0) : x;   // en la unidad de la pantalla
-      i.manual = true; i.tipoIdx = -1;
-      i.libro = libroDePantalla(usd / (1 + i.iva / 100));   // en los libros (con TasaBin, divisas)
-      i.base = basePantalla(i.libro, true);
-      return true;
-    }
-  });
-  if (r) pintarFactura();
+  F.desc = { tipo: v, valor: v === F.desc.tipo ? F.desc.valor : 0 };
+  pintarSelectores(); pintarTotales();
+  if (v !== "ninguno") setTimeout(() => $("valorDescuento").focus(), 30);
 }
-async function abrirDescuento(){
-  if (!F.items.length) { aviso({ icono: "🏷️", titulo: "La venta está vacía", html: "Agrega los productos primero y después el descuento." }); return; }
-  if (S.datos.pideClave && S.datos.pideClave.descuento && !F.claveOk) {
-    if (!await pedirClave("Descuento", "Escribe la clave sin internet para hacer un descuento:")) return;
-    F.claveOk = true;
-  }
-  const x = totales(F.items, { tipo: "ninguno" });
-  let tipo = F.desc.tipo === "monto" ? "monto" : "pct";
-  const r = await modal({
-    icono: "🏷️", titulo: "Descuento",
-    html: '<div class="m-txt" style="color:var(--text-dim);font-size:13px;">Total sin descuento: ' + txtU(x.total) + "</div>" +
-      '<div class="seg" style="margin-top:10px;"><button type="button" class="btn sm' + (tipo === "pct" ? " on" : "") + '" id="dPct" onclick="this.classList.add(\'on\');$(\'dMon\').classList.remove(\'on\');$(\'dVal\').placeholder=\'Porcentaje (%)\'">%</button><button type="button" class="btn sm' + (tipo === "monto" ? " on" : "") + '" id="dMon" onclick="this.classList.add(\'on\');$(\'dPct\').classList.remove(\'on\');$(\'dVal\').placeholder=\'Monto en $ ' + unidadU() + '\'">$</button></div>' +
-      '<input class="inp" id="dVal" type="number" inputmode="decimal" min="0" step="any" style="margin-top:8px;" placeholder="' + (tipo === "pct" ? "Porcentaje (%)" : "Monto en $ " + unidadU()) + '" value="' + (F.desc.valor > 0 ? F.desc.valor : "") + '"><div class="m-err" id="dErr"></div>',
-    botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Aplicar", v: true, cls: "green" }],
-    foco: "dVal",
-    antes: (v) => {
-      if (!v) return true;
-      const val = Number($("dVal").value) || 0, pct = $("dPct").classList.contains("on");
-      if (!(val > 0)) { $("dErr").textContent = "Escribe el descuento."; return false; }
-      if (pct && val > 100) { $("dErr").textContent = "El porcentaje no puede pasar de 100."; return false; }
-      if (!pct && val > x.total + 0.001) { $("dErr").textContent = "El descuento no puede pasar del total (" + txtU(x.total) + ")."; return false; }
-      F.desc = { tipo: pct ? "pct" : "monto", valor: val };
-      return true;
-    }
-  });
-  if (r) pintarTotales();
-}
-function quitarDescuento(){ F.desc = { tipo: "ninguno", valor: 0 }; pintarTotales(); }
+function cambiarValorDesc(val){ F.desc.valor = Math.max(0, Number(val) || 0); pintarTotales(); }
+function quitarDescuento(){ F.desc = { tipo: "ninguno", valor: 0 }; pintarSelectores(); pintarTotales(); }
 
-// ── Clientes ──
-async function abrirClientes(){
-  const lst = (S.datos.clientes || []);
-  const pintar = q => {
-    const n = norm(q);
-    const f = lst.filter(c => !n || norm(c.nombre).indexOf(n) >= 0 || norm(c.cedula).indexOf(n) >= 0).slice(0, 60);
-    $("mCliLista").innerHTML = '<div class="prod" data-ced=""><div class="prod-nom">👤 Genérico</div></div>' +
-      f.map(c => '<div class="prod" data-ced="' + esc(c.cedula) + '"><div style="min-width:0;"><div class="prod-nom">' + esc(c.nombre) + '</div><div class="prod-sub">' + esc(c.cedula) + (c.telefono ? " · " + esc(c.telefono) : "") + "</div></div></div>").join("") +
-      (f.length ? "" : '<div class="vacio">Ningún cliente con «' + esc(q) + '». Sin internet solo se pueden usar los clientes que ya existen.</div>');
+// ── Clientes (como el modal de Ventas: buscar, elegir o crearlo ahí mismo) ──
+const cedNorm = c => String(c == null ? "" : c).trim().replace(/\.0$/, "").toUpperCase();
+// Los del sistema + los creados en este equipo que el sistema todavía no tiene
+function clientesTodos(){
+  const sis = (S.datos && S.datos.clientes) || [], ya = new Set(sis.map(c => cedNorm(c.cedula)));
+  return sis.concat((S.clientesNuevos || []).filter(c => !ya.has(cedNorm(c.cedula))).map(c => Object.assign({ local: true }, c)));
+}
+function clienteDe(ced){ const k = cedNorm(ced); return k ? clientesTodos().find(c => cedNorm(c.cedula) === k) || null : null; }
+function limpiarCliente(){ F.cliente = { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }; pintarTotales(); }
+function ponerCliente(c){
+  F.cliente = c ? { cedula: String(c.cedula || ""), nombre: c.nombre || "Genérico", direccion: c.direccion || "", telefono: c.telefono || "", nuevo: !!c.local } : { cedula: "", nombre: "Genérico", direccion: "", telefono: "" };
+  pintarTotales();
+  if (P) { pgPintarMetodos(); pgPintarLineas(); pgActualizar(); }
+}
+// Un cliente que llegó del sistema (buscado o creado con internet) queda en los datos del equipo
+async function guardarClienteSistema(c){
+  if (!S.datos || !c) return;
+  const k = cedNorm(c.cedula), l = S.datos.clientes || (S.datos.clientes = []);
+  const i = l.findIndex(x => cedNorm(x.cedula) === k);
+  const x = { cedula: String(c.cedula), nombre: c.nombre, direccion: c.direccion || "", telefono: c.telefono || "" };
+  if (i >= 0) l[i] = x; else l.push(x);
+  S.clientesNuevos = (S.clientesNuevos || []).filter(y => cedNorm(y.cedula) !== k);
+  try { await kvSet("datos", S.datos); await kvSet("clientesNuevos", S.clientesNuevos); } catch (e) {}
+}
+// Elegir el cliente. modo "registrar": viene de ✅ Registrar Venta (al elegir sigue al pago)
+async function abrirClientes(modo){
+  let sel = -1, lista = [], remotos = [], tRem = null, qRem = "", remListo = "", elegido;   // elegido: undefined = cerró sin elegir · null = Genérico
+  const pintar = () => {
+    const q = $("cliBusca").value, n = norm(q), l = clientesTodos();
+    lista = (!n ? l.slice(-80).reverse() : l.filter(c => norm(c.nombre).indexOf(n) >= 0 || norm(c.cedula).indexOf(n) >= 0).slice(0, 80));
+    remotos.forEach(r => { if (!lista.some(c => cedNorm(c.cedula) === cedNorm(r.cedula)) && (norm(r.nombre).indexOf(n) >= 0 || norm(r.cedula).indexOf(n) >= 0)) lista.push(Object.assign({ remoto: true }, r)); });
+    sel = lista.length ? Math.min(Math.max(sel, 0), lista.length - 1) : -1;
+    $("cliTabla").innerHTML = lista.length ? lista.map((c, k) => '<tr data-k="' + k + '"' + (k === sel ? ' class="sel"' : "") + "><td>" + esc(c.cedula) + "</td><td>" + esc(c.nombre) +
+      (c.remoto ? '<span class="cli-sist">del sistema</span>' : c.local ? '<span class="cli-loc">nuevo · por subir</span>' : "") + "</td><td>" + esc(c.direccion || "") + "</td><td>" + esc(c.telefono || "") + "</td></tr>").join("")
+      : '<tr><td colspan="4" class="vacio" style="cursor:default;">' + (n ? "Ningún cliente con «" + esc(q) + "» en este equipo." + (remListo === n ? " Tampoco está en el sistema." : S.online !== false && navigator.onLine !== false && n.length >= 3 ? " Buscando en el sistema…" : "") : "Todavía no hay clientes en este equipo.") + "</td></tr>";
+    // "No existe… créalo aquí" (con lo que se escribió ya puesto), como en Ventas
+    const card = $("cliCrear");
+    if (card.dataset.mano !== "1") {
+      const ver = !!n && !lista.length;
+      card.classList.toggle("oculto", !ver);
+      if (ver) {
+        const esCed = /\d{4,}/.test(q) && !/[a-zñáéíóú]{3,}/i.test(q);
+        $("cliCrearTxt").innerHTML = "No existe un cliente con <b>" + esc(q.trim()) + "</b>. Créalo aquí:";
+        $("qcCed").value = esCed ? q.trim() : ""; $("qcNom").value = esCed ? "" : q.trim();
+      }
+    }
+    // Con internet: si en el equipo no está, se busca en el sistema (por si lo crearon después de descargar)
+    clearTimeout(tRem);
+    if (n.length >= 3 && !lista.length && S.online !== false && navigator.onLine !== false && qRem !== n) {
+      tRem = setTimeout(async () => {
+        qRem = n;
+        try {
+          const r = await api("cj_cliente", { op: "buscar", q: q.trim() }, 20000);
+          if (r && r.ok && Array.isArray(r.clientes)) remotos = r.clientes;
+        } catch (e) {}
+        remListo = n;
+        if ($("cliBusca") && norm($("cliBusca").value) === n) pintar();
+      }, 500);
+    }
   };
-  const r = await modal({
-    icono: "👤", titulo: "Cliente", ancho: true,
-    html: '<input class="inp" id="mCliBusca" type="search" placeholder="Nombre o cédula" autocomplete="off"><div class="lista-prod" id="mCliLista" style="max-height:50vh;"></div>',
-    botones: [{ txt: "Cerrar", v: null }],
-    foco: "mCliBusca",
+  const v = await modal({
+    titulo: "👥 Clientes", clase: "clientes",
+    html: '<div class="cli-barra"><button type="button" class="cli-gen" id="cliGen">🧾 Genérico (Sin cliente)</button>' +
+      '<input class="cli-busca" id="cliBusca" type="search" placeholder="🔍 Cédula o nombre..." autocomplete="off">' +
+      '<button type="button" class="cli-mas" id="cliMas" title="Crear cliente nuevo">➕</button></div>' +
+      '<div class="form-section oculto" id="cliCrear" style="border-color:var(--border-g);"><div id="cliCrearTxt" style="font-size:13px;font-weight:700;margin-bottom:8px;">Cliente nuevo:</div>' +
+      '<div class="form-grid fg2"><div class="fg"><label>Cédula *</label><input id="qcCed" placeholder="Ej: V-12345678" maxlength="20"></div><div class="fg"><label>Nombre *</label><input id="qcNom" placeholder="Nombre y apellido" maxlength="80"></div>' +
+      '<div class="fg"><label>Teléfono</label><input id="qcTel" placeholder="Opcional" maxlength="30"></div><div class="fg"><label>Dirección</label><input id="qcDir" placeholder="Opcional" maxlength="120"></div></div>' +
+      '<div class="m-err" id="qcErr"></div><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn-m gray" id="qcCancel">Cancelar</button><button type="button" class="btn-m green" id="qcGuardar">💾 Guardar y continuar</button></div></div>' +
+      '<div style="max-height:46vh;overflow:auto;border-radius:6px;"><table class="modal-table"><thead><tr><th>Cédula</th><th>Nombre</th><th>Dirección</th><th>Teléfono</th></tr></thead><tbody id="cliTabla"></tbody></table></div>',
+    nota: ES_TACTIL ? "Toca un cliente para elegirlo" : "Doble clic para seleccionar",
+    botones: [{ txt: "✅ Seleccionar", v: "sel", cls: "green" }],
+    foco: "cliBusca",
+    antes: (b) => { if (b !== "sel") return true; if (!lista[sel]) { toast("Elige un cliente de la lista"); return false; } return true; },
     alAbrir: (box, cerrar) => {
-      pintar("");
-      $("mCliBusca").addEventListener("input", e => pintar(e.target.value));
-      $("mCliLista").addEventListener("click", e => {
-        const d = e.target.closest("[data-ced]"); if (!d) return;
-        const ced = d.dataset.ced;
-        cerrar(ced === "" ? { cedula: "", nombre: "Genérico" } : lst.find(c => String(c.cedula) === ced));
+      const elegir = c => { elegido = c; cerrar("listo"); };
+      pintar();
+      $("cliBusca").addEventListener("input", () => { sel = 0; pintar(); });
+      $("cliBusca").addEventListener("keydown", e => {
+        const marcar = () => { $("cliTabla").querySelectorAll("tr[data-k]").forEach(x => x.classList.toggle("sel", Number(x.dataset.k) === sel)); const t = $("cliTabla").querySelector("tr.sel"); if (t) t.scrollIntoView({ block: "nearest" }); };
+        if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(sel + 1, lista.length - 1); marcar(); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(sel - 1, 0); marcar(); }
+        else if (e.key === "Enter") { e.preventDefault(); if (lista[sel]) elegir(lista[sel]); else if (!$("cliCrear").classList.contains("oculto")) ($("qcCed").value ? $("qcNom") : $("qcCed")).focus(); }
+      });
+      $("cliTabla").addEventListener("click", e => {
+        const tr = e.target.closest("tr[data-k]"); if (!tr) return;
+        sel = Number(tr.dataset.k);
+        if (ES_TACTIL) { elegir(lista[sel]); return; }
+        $("cliTabla").querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel")); tr.classList.add("sel");   // sin repintar: el doble clic sigue funcionando
+      });
+      $("cliTabla").addEventListener("dblclick", e => { const tr = e.target.closest("tr[data-k]"); if (tr) elegir(lista[Number(tr.dataset.k)]); });
+      $("cliGen").addEventListener("click", () => elegir(null));
+      $("cliMas").addEventListener("click", () => {
+        const card = $("cliCrear"); card.dataset.mano = "1"; card.classList.remove("oculto");
+        $("cliCrearTxt").textContent = "Cliente nuevo:"; ["qcCed", "qcNom", "qcTel", "qcDir"].forEach(id => $(id).value = ""); $("qcErr").textContent = "";
+        $("qcCed").focus();
+      });
+      $("qcCancel").addEventListener("click", () => { const card = $("cliCrear"); card.dataset.mano = ""; card.classList.add("oculto"); $("cliBusca").focus(); });
+      ["qcCed", "qcNom", "qcTel", "qcDir"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("qcGuardar").click(); } }));
+      $("qcGuardar").addEventListener("click", async () => {
+        const c = await crearCliente($("qcGuardar"));
+        if (c) { toast(c.local ? "✅ Cliente creado en este equipo (se sube con la venta)" : "✅ Cliente creado"); elegir(c); }
       });
     }
   });
-  if (r) {
-    F.cliente = { cedula: r.cedula || "", nombre: r.nombre || "Genérico", direccion: r.direccion || "", telefono: r.telefono || "" };
-    pintarTotales();
-    if (P) { pgPintarMetodos(); pgActualizar(); }
+  clearTimeout(tRem);
+  if (v === "sel") elegido = lista[sel];
+  if (elegido === undefined) return null;
+  if (elegido && elegido.remoto) { await guardarClienteSistema(elegido); elegido = clienteDe(elegido.cedula) || elegido; }
+  ponerCliente(elegido);
+  if (modo === "registrar") setTimeout(() => abrirPago(), 30);
+  return F.cliente;
+}
+// Crea el cliente: con internet en el sistema (la misma función de Ventas); sin internet, en el equipo
+// (se crea en el sistema justo antes de registrar la venta que lo use).
+async function crearCliente(btn){
+  const err = $("qcErr");
+  const c = { cedula: $("qcCed").value.trim(), nombre: $("qcNom").value.trim().replace(/\s+/g, " "), telefono: $("qcTel").value.trim(), direccion: $("qcDir").value.trim() };
+  if (!c.cedula || !c.nombre) { err.textContent = "Para crear el cliente hacen falta la cédula y el nombre. El teléfono y la dirección son opcionales."; return null; }
+  if (/[^A-Za-z0-9.\-\s]/.test(c.cedula)) { err.textContent = "La cédula solo puede llevar letras, números, puntos y guiones."; return null; }
+  const ya = clienteDe(c.cedula);
+  if (ya) { err.textContent = ""; await aviso({ icono: "👤", titulo: "Ese cliente ya existe", html: "La cédula <b>" + esc(c.cedula) + "</b> ya es de <b>" + esc(ya.nombre) + "</b>. Se eligió ese cliente." }); return ya; }
+  err.textContent = "";
+  btnOcupado(btn, "Guardando…");
+  try {
+    if (S.online === false || navigator.onLine === false) throw ErrRed("sin internet");
+    const r = await api("cj_cliente", { op: "crear", cliente: c }, 30000);
+    btnLibre(btn);
+    if (r && r.ok && r.cliente) {
+      await guardarClienteSistema(r.cliente);
+      if (r.existia) await aviso({ icono: "👤", titulo: "Ese cliente ya existía", html: "En el sistema la cédula <b>" + esc(r.cliente.cedula) + "</b> ya es de <b>" + esc(r.cliente.nombre) + "</b>. Se eligió ese cliente." });
+      return clienteDe(r.cliente.cedula) || r.cliente;
+    }
+    if (r && (r.codigo === "SESION" || r.codigo === "USUARIO" || r.codigo === "EQUIPO")) throw ErrRed(r.msg || "sin permiso");
+    err.textContent = (r && r.msg) || "El sistema no pudo crear el cliente.";
+    return null;
+  } catch (e) {
+    btnLibre(btn);
+    if (!e.red) { err.textContent = e.message; return null; }
+    // Sin internet (o sin sesión): queda en este equipo y se crea en el sistema al subir la venta
+    const l = { cedula: c.cedula, nombre: c.nombre, telefono: c.telefono, direccion: c.direccion, creado: ahoraTxt() };
+    S.clientesNuevos = (S.clientesNuevos || []).filter(x => cedNorm(x.cedula) !== cedNorm(c.cedula)).concat([l]);
+    try { await kvSet("clientesNuevos", S.clientesNuevos); } catch (x) {}
+    return Object.assign({ local: true }, l);
   }
-  return r;
+}
+// ✅ Registrar Venta, como en Ventas: si la factura está en Genérico, primero "¿A quién le vendes?"
+async function registrarVenta(){
+  if (!F.items.length) { aviso({ icono: "🧾", titulo: "La venta está vacía", html: "Agrega al menos un producto." }); return; }
+  if (!F.cliente.cedula) {
+    const r = await modal({ icono: "", titulo: "🧾 ¿A quién le vendes?", centrado: true,
+      html: '<div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;padding:6px 0;">' +
+        '<button type="button" class="cli-op" data-o="gen"><span class="co-ico">🧾</span><span><span class="co-tit">Genérico</span><span class="co-sub">Sin datos del cliente</span></span></button>' +
+        '<button type="button" class="cli-op prim" data-o="cli"><span class="co-ico">👤</span><span><span class="co-tit">Cliente</span><span class="co-sub">Buscarlo o registrarlo</span></span></button></div>',
+      botones: [],
+      alAbrir: (box, cerrar) => { box.querySelectorAll(".cli-op").forEach(b => b.addEventListener("click", () => cerrar(b.dataset.o))); setTimeout(() => { const p = box.querySelector(".cli-op.prim"); if (p) p.focus(); }, 50); } });
+    if (r === "cli") { abrirClientes("registrar"); return; }
+    if (r !== "gen") return;
+  }
+  abrirPago();
 }
 
 // ══ MONEDA DE LA VENTA (igual que Ventas) ══
@@ -688,14 +980,15 @@ async function abrirPago(){
   repreciar();
   const tot = totales(F.items, F.desc).total, m = modoVenta();
   P = { modo: m, lineas: [], cred: { on: false, monto: "", editado: false }, vt: { on: false, lineas: [] }, seq: 0, verMet: false, dias: 0, total: tot, desbloq: false };
-  $("pgTotal").textContent = txtU(tot);
-  $("pgTotalBs").innerHTML = "Bs " + fmt(r2(tot * bsPorU())) + '<br><span style="font-size:11px;">a tasa ' + (m === "div" ? "Divisas " : "BCV ") + fmt(bsPorU()) + "</span>";
+  $("pgTotal").innerHTML = "$ " + fmt(tot) + "<small>" + unidadU() + "</small>";
+  $("pgTotalBs").textContent = "Bs " + fmt(r2(tot * bsPorU()));
   $("pgHint").innerHTML = m === "div"
     ? "💵 <b>Venta en Dólares</b>: los $ van a la par · los Bs a tasa Divisas <b>Bs " + fmt(tDiv()) + "</b>."
     : "Venta en <b>$ BCV</b>: los Bs van a tasa BCV <b>Bs " + fmt(tBcv()) + "</b> · los $ a la tasa que elijas en cada línea" +
       (m === "off" && !tDivOff() ? " (este negocio no tiene tasa Divisas: los $ valen a la BCV)" : "") + ".";
   $("pgRef").value = ""; $("pgObs").value = "";
   $("pgForm").classList.remove("oculto"); $("pgOk").classList.add("oculto");
+  $("pgPie").classList.remove("oculto"); $("pgPieOk").classList.add("oculto"); $("pgX").classList.remove("oculto"); $("pgTit").textContent = "💳 Pago del cliente";
   $("pgCerrar").disabled = false; btnLibre($("pgGuardar"));
   const pl = (S.datos.plazosCredito || []).filter(p => p.activo && p.dias > 0);
   $("selDias").innerHTML = pl.map(p => '<option value="' + p.dias + '">' + p.dias + " días</option>").join("") + '<option value="0">Sin plazo</option>';
@@ -703,7 +996,7 @@ async function abrirPago(){
   pgPintarMetodos(); pgPintarLineas(); pgPintarVuelto(); pgActualizar();
   $("mPago").classList.remove("oculto");
 }
-function cerrarPago(){ $("mPago").classList.add("oculto"); P = null; }
+function cerrarPago(){ $("mPago").classList.add("oculto"); P = null; if (window.innerWidth > 820) setTimeout(() => $("busca").focus(), 30); }
 // ── Cuánto cubre (en la pantalla) y cuánto vale (en los libros) cada línea: las mismas cuentas de Ventas ──
 function pgTasaLinea(l){   // Bs por $ a la que se aceptan los dólares de la línea (solo $, y no en Venta en Dólares)
   if (l.tipo !== "USD" || P.modo === "div") return 0;
@@ -821,23 +1114,23 @@ function pgPintarMetodos(){ $("pgMetodos").innerHTML = pgFilasMetodos("pgAgregar
 function pgTasasHTML(l){
   if (l.tipo !== "USD" || P.modo === "div") return "";
   const td = P.modo === "off" ? tDivOff() : tDiv();
-  const chip = (modo, txt, dis) => '<button type="button" class="btn sm' + (l.tasaModo === modo ? " on" : "") + '"' + (dis ? " disabled" : "") + ' onclick="pgElegirTasa(' + l.id + ",'" + modo + "')\">" + txt + "</button>";
-  return '<div class="pl-tasas"><span>Tasa:</span>' + chip("bcv", "BCV " + fmt(tBcv())) + chip("div", "Divisas " + (td > 0 ? fmt(td) : "—"), !(td > 0)) +
+  const chip = (modo, txt, dis) => '<button type="button" class="off-chip' + (l.tasaModo === modo ? " on" : "") + '"' + (dis ? " disabled" : "") + ' onclick="pgElegirTasa(' + l.id + ",'" + modo + "')\">" + txt + "</button>";
+  return '<div class="pl-tasas"><span class="pl-tlbl">Tasa:</span>' + chip("bcv", "BCV " + fmt(tBcv())) + chip("div", "Divisas " + (td > 0 ? fmt(td) : "—"), !(td > 0)) +
     chip("otra", (S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq ? "🔒 " : "") + "Otra") +
-    (l.tasaModo === "otra" ? '<input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgT_' + l.id + '" placeholder="Bs por $" value="' + (Number(l.tasaOtra) > 0 ? l.tasaOtra : "") + '" oninput="pgTasaOtra(' + l.id + ',this.value)">' : "") + "</div>";
+    (l.tasaModo === "otra" ? '<input type="number" inputmode="decimal" min="0" step="any" id="pgT_' + l.id + '" placeholder="Bs por $" value="' + (Number(l.tasaOtra) > 0 ? l.tasaOtra : "") + '" oninput="pgTasaOtra(' + l.id + ',this.value)">' : "") + "</div>";
 }
 function pgPintarLineas(){
   let h = "";
   P.lineas.forEach(l => {
     const cls = l.tipo === "BS" ? "bs" : "usd";
-    h += '<div class="pl ' + cls + '"><div class="pl-cab"><span>' + esc(pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo })) + '</span><button type="button" class="ico" onclick="pgQuitar(' + l.id + ')">✕</button></div>' +
-      '<div class="pl-cuerpo"><span class="mon">' + (l.tipo === "BS" ? "Bs" : "$") + '</span><input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgM_' + l.id + '" placeholder="' + (l.tipo === "BS" ? "Monto en Bs" : "Monto en $") + '" value="' + esc(l.monto) + '" oninput="pgMonto(' + l.id + ',this.value)"></div>' +
-      pgTasasHTML(l) + '<div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
+    h += '<div class="pl ' + cls + '"><div class="pl-cab"><span>' + esc(pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo })) + '</span><button type="button" class="pgu-x" onclick="pgQuitar(' + l.id + ')" title="Quitar">✕</button></div>' +
+      '<div class="pl-cuerpo"><span class="mon">' + (l.tipo === "BS" ? "Bs" : "$") + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgM_' + l.id + '" placeholder="' + (l.tipo === "BS" ? "Monto en Bs" : "Monto en $") + '" value="' + esc(l.monto) + '" oninput="pgMonto(' + l.id + ',this.value)">' +
+      pgTasasHTML(l) + '</div><div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
   });
   if (P.cred.on) {
-    h += '<div class="pl cred"><div class="pl-cab"><span>📝 Crédito · ' + esc(F.cliente.nombre) + '</span><button type="button" class="ico" onclick="pgCredito()">✕</button></div>' +
-      '<div class="pl-cuerpo"><span class="mon">$</span><input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgCred" placeholder="Monto a crédito ($ ' + unidadU() + ')" value="' + esc(P.cred.monto) + '" oninput="P.cred.monto=this.value;P.cred.editado=true;pgActualizar()">' +
-      '<button type="button" class="btn sm" onclick="P.cred.editado=false;pgActualizar();$(\'pgCred\').value=P.cred.monto;">↺ Lo que falta</button></div><div class="pl-eq" id="pgE_cred"></div></div>';
+    h += '<div class="pl cred"><div class="pl-cab"><span>📝 Crédito · ' + esc(F.cliente.nombre) + '</span><button type="button" class="pgu-x" onclick="pgCredito()" title="Quitar el crédito">✕</button></div>' +
+      '<div class="pl-cuerpo"><span class="mon">$</span><input type="number" inputmode="decimal" min="0" step="any" id="pgCred" placeholder="Monto a crédito ($ ' + unidadU() + ')" value="' + esc(P.cred.monto) + '" oninput="P.cred.monto=this.value;P.cred.editado=true;pgActualizar()">' +
+      '<button type="button" class="btn-m gray" onclick="P.cred.editado=false;pgActualizar();$(\'pgCred\').value=P.cred.monto;">↺ Lo que falta</button></div><div class="pl-eq" id="pgE_cred"></div></div>';
   }
   $("pgLineas").innerHTML = h;
 }
@@ -845,8 +1138,8 @@ function pgPintarVuelto(){
   $("pgVuelto").classList.toggle("oculto", !P.vt.on);
   if (!P.vt.on) return;
   $("pgVtMetodos").innerHTML = P.vt.lineas.length >= 2 ? "" : pgFilasMetodos("pgVtAgregar", P.vt.lineas.map(v => v.metodo), false);
-  $("pgVtLineas").innerHTML = P.vt.lineas.map((v, k) => '<div class="pl vt"><div class="pl-cab"><span>💸 ' + esc(pguDesc(metodoDe(v.metodo) || { metodo: v.metodo, tipo: v.tipo })) + '</span><button type="button" class="ico" onclick="pgVtQuitar(' + k + ')">✕</button></div>' +
-    '<div class="pl-cuerpo"><span class="mon">' + (v.tipo === "BS" ? "Bs" : "$") + '</span><input class="inp" type="number" inputmode="decimal" min="0" step="any" id="pgVM_' + k + '" placeholder="Vuelto en ' + (v.tipo === "BS" ? "Bs" : "$") + '" value="' + esc(v.monto) + '" oninput="P.vt.lineas[' + k + '].monto=this.value;pgActualizar()"></div><div class="pl-eq" id="pgVE_' + k + '"></div></div>').join("");
+  $("pgVtLineas").innerHTML = P.vt.lineas.map((v, k) => '<div class="pl vt"><div class="pl-cab"><span>💸 ' + esc(pguDesc(metodoDe(v.metodo) || { metodo: v.metodo, tipo: v.tipo })) + '</span><button type="button" class="pgu-x" onclick="pgVtQuitar(' + k + ')" title="Quitar">✕</button></div>' +
+    '<div class="pl-cuerpo"><span class="mon">' + (v.tipo === "BS" ? "Bs" : "$") + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgVM_' + k + '" placeholder="Vuelto en ' + (v.tipo === "BS" ? "Bs" : "$") + '" value="' + esc(v.monto) + '" oninput="P.vt.lineas[' + k + '].monto=this.value;pgActualizar()"></div><div class="pl-eq" id="pgVE_' + k + '"></div></div>').join("");
 }
 function pgActualizar(){
   if (!P) return;
@@ -876,12 +1169,12 @@ function pgActualizar(){
   let h = "";
   if (st.hay) {
     if (st.pend > TOL) h = '<div class="bal falta">⚠️ Falta ' + txtU(st.pend) + bs(st.pendX) + "</div>";
-    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran ' + txtU(-st.pend) + bs(-st.pendX) + '</div><div style="text-align:center;margin-top:8px;"><button type="button" class="btn" onclick="pgVueltoAbrir()">💸 Dar vuelto</button></div>';
+    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran ' + txtU(-st.pend) + bs(-st.pendX) + '</div><div style="text-align:center;margin-top:8px;"><button type="button" class="pgu-mas" onclick="pgVueltoAbrir()">💸 Dar vuelto</button></div>';
     else if (P.vt.on && st.pend < -TOL) {
       if (Math.abs(st.queda) <= TOL) h = '<div class="bal ok">✅ Pago exacto con vuelto</div>';
       else if (st.queda > 0) h = '<div class="bal sobra">Faltan ' + txtU(st.queda) + " por devolver" + bs(st.queda) + "</div>";
       else h = '<div class="bal falta">⚠️ El vuelto pasa de lo que sobra por ' + txtU(-st.queda) + "</div>";
-    } else h = '<div class="bal ok">✅ Pago exacto</div>';
+    } else h = '<div class="bal ok">✅ Pago exacto: cubierto ' + txtU(P.total) + " de " + txtU(P.total) + "</div>";
     if (st.pend <= TOL && Math.abs(st.dif) > 0.01 && !(st.pend < -TOL && !P.vt.on)) {
       const favor = st.dif > 0;
       h += '<div class="dif ' + (favor ? "afavor" : "encontra") + '">💹 Diferencial ' + (favor ? "a favor" : "en contra") + ": <b>" + txtL(Math.abs(st.dif)) + "</b>. Lo recibido vale " + txtL(r2(st.vale + st.credVale - st.vtVale)) + " y la venta vale " + txtL(st.valorVenta) + "." + pgMotivoDif() + "</div>";
@@ -894,6 +1187,7 @@ function pgActualizar(){
   $("pgMas").classList.toggle("oculto", !plegar);
   const vm = $("pgVtMetodos"); if (vm && P.vt.on) vm.classList.toggle("oculto", P.vt.lineas.length >= 2 || (P.vt.lineas.length > 0 && Math.abs(st.queda) <= TOL));
   $("pgDias").classList.toggle("oculto", !(P.cred.on && $("selDias").options.length > 1));
+  $("pgLineasTit").classList.toggle("oculto", !(P.lineas.length || P.cred.on));
 }
 function pgMotivoDif(){
   const lu = P.lineas.filter(l => l.tipo === "USD" && Number(l.monto) > 0);
@@ -1052,6 +1346,7 @@ async function pgGuardar(pagos, vuelto){
       referencia: $("pgRef").value.trim(), observaciones: $("pgObs").value.trim(),
       clienteCedula: F.cliente.cedula || "", clienteNombre: F.cliente.nombre || "Genérico",
       clienteDireccion: F.cliente.direccion || "", clienteTelefono: F.cliente.telefono || "",
+      clienteNuevo: !!(F.cliente.cedula && F.cliente.nuevo),   // creado sin internet: el sistema lo crea antes de registrar la venta
       descuentoTipo: F.desc.tipo, descuentoValor: Number(F.desc.valor) || 0, descuentoValorServ: descuentoServidor(F.items, F.desc),
       diasCredito: P.cred.on ? (Number(P.dias) || 0) : 0,
       objetivoVenta: m === "off" ? "" : (m === "div" ? "DIVISAS" : "BCV"), totalPantallaUSD: P.total
@@ -1062,13 +1357,15 @@ async function pgGuardar(pagos, vuelto){
   try { await guardarVentaNueva(v); }
   catch (e) {
     btnLibre(btn); $("pgCerrar").disabled = false;
-    aviso({ icono: "❌", titulo: "La venta NO se guardó", html: "El equipo no pudo guardarla (" + esc(e.message) + "). No entregues el ticket: vuelve a tocar <b>Guardar venta</b>. Si sigue fallando, anótala en papel y avísale al administrador." });
+    aviso({ icono: "❌", titulo: "La venta NO se guardó", html: "El equipo no pudo guardarla (" + esc(e.message) + "). No entregues el ticket: vuelve a tocar <b>✅ Registrar</b>. Si sigue fallando, anótala en papel y avísale al administrador." });
     return;
   }
   S.ventas.push(v); _vendidoLocal = null;
   _ventaGuardada = v;
   btnLibre(btn); $("pgCerrar").disabled = false;
   $("pgForm").classList.add("oculto"); $("pgOk").classList.remove("oculto");
+  $("pgPie").classList.add("oculto"); $("pgPieOk").classList.remove("oculto"); $("pgX").classList.add("oculto"); $("pgTit").textContent = "✅ Venta guardada";
+  setTimeout(() => { const b = $("pgImprimir"); if (b) b.focus(); }, 40);
   $("pgOkNum").textContent = ((S.datos.impresion || {}).nombreDoc || "Nota de Entrega") + " N° " + nroTicket(v);
   $("pgOkTxt").innerHTML = "Total Bs " + fmt(v.totalBs) + " · $" + fmt(v.total) + " " + v.unidad + "<br>" + (S.online !== false ? "Se registra en el sistema en un momento." : "Se registra sola en el sistema cuando vuelva el internet.") +
     (v.provisional ? "<br>🔢 Número <b>provisional</b>: el sistema le da su número al subirla." : "");
@@ -1082,7 +1379,7 @@ function pgTerminar(imprimir){
   toast("✅ Venta guardada");
   sincronizar();
   if (_verNueva) setTimeout(recargarSiSePuede, 4000);   // después de mandar el ticket a la impresora
-  if (window.innerWidth >= 900) $("busca").focus();
+  if (window.innerWidth > 820) $("busca").focus();
 }
 
 // ══ TICKET (mismo formato que Ventas: generarTicket) ══
@@ -1533,7 +1830,7 @@ function pintarAjustes(){
   const d = S.datos || {}, t = S.tasas || {};
   $("infoEquipo").innerHTML = "<span>Negocio</span><b>" + esc(d.negocio) + "</b><span>Caja</span><b>" + esc(d.caja) + "</b><span>Equipo</span><b>" + esc(d.equipo) + (d.nombreEquipo ? " · " + esc(d.nombreEquipo) : "") + "</b>" +
     "<span>Datos del sistema</span><b>" + (d.descargadoEn ? fechaCorta(hoyTxt(new Date(d.descargadoEn))) + " " + pad(new Date(d.descargadoEn).getHours()) + ":" + pad(new Date(d.descargadoEn).getMinutes()) : "—") + "</b>" +
-    "<span>Productos</span><b>" + (d.productos || []).length + "</b><span>Clientes</span><b>" + (d.clientes || []).length + "</b>" +
+    "<span>Productos</span><b>" + (d.productos || []).length + "</b><span>Clientes</span><b>" + (d.clientes || []).length + ((S.clientesNuevos || []).length ? " · " + S.clientesNuevos.length + " creado(s) aquí, por subir" : "") + "</b>" +
     "<span>Clave sin internet</span><b>" + (d.claveSinInternet ? "✅ puesta" : "⚠️ no puesta") + "</b>" +
     "<span>Números de factura</span><b>" + numerosTexto() + "</b>";
   const u = (S.ses && S.ses.usuario) || {};
@@ -1541,11 +1838,11 @@ function pintarAjustes(){
     "<span>Desde</span><b>" + (S.ses && S.ses.desde ? fechaCorta(hoyTxt(new Date(S.ses.desde))) + " " + pad(new Date(S.ses.desde).getHours()) + ":" + pad(new Date(S.ses.desde).getMinutes()) : "—") + "</b>";
   $("infoTasas").innerHTML = "<span>BCV</span><b>Bs " + fmt(t.bcv) + "</b><span>" + (t.binOn ? "Divisas (TasaBin)" : "Divisas ($ en efectivo)") + "</span><b>" + (t.div > 0 ? "Bs " + fmt(t.div) + (t.binOn && t.bcv > 0 ? " · brecha " + fmt((t.div / t.bcv - 1) * 100) + " %" : "") : "—") + "</b>" +
     "<span>TasaBin</span><b>" + (t.binOn ? "encendido (precios en divisas · se puede vender en Bs o en Dólares)" : "apagado") + "</b><span>De</span><b>" + fechaCorta(t.fecha) + (t.origen === "manual" ? " (puesta a mano)" : " (del sistema)") + "</b>";
-  $("chkDosCopias").checked = !!S.pref.dosCopias; $("chkClaro").checked = !!S.pref.claro; $("selTamTicket").value = S.pref.tamTicket || "auto";
+  $("chkDosCopias").checked = !!S.pref.dosCopias; $("chkClaro").checked = !!S.pref.claro; $("selTamTicket").value = S.pref.tamTicket || "auto"; $("chkTasaOculta").checked = !!S.pref.tasaOculta;
 }
 async function guardarPref(){
-  S.pref.dosCopias = $("chkDosCopias").checked; S.pref.claro = $("chkClaro").checked; S.pref.tamTicket = $("selTamTicket").value;
-  aplicarTema();
+  S.pref.dosCopias = $("chkDosCopias").checked; S.pref.claro = $("chkClaro").checked; S.pref.tamTicket = $("selTamTicket").value; S.pref.tasaOculta = $("chkTasaOculta").checked;
+  aplicarTema(); pintarTasa();
   try { await kvSet("pref", S.pref); toast("✅ Cambios guardados"); } catch (e) {}
 }
 function aplicarTema(){
@@ -1636,15 +1933,18 @@ function modal(o){
   return new Promise(resolve => {
     const fondo = document.createElement("div");
     fondo.className = "mfondo";
-    fondo.innerHTML = '<div class="modal' + (o.ancho ? " ancho" : "") + '">' + (o.icono ? '<div class="m-ico">' + o.icono + "</div>" : "") +
-      '<div class="m-tit">' + esc(o.titulo || "") + "</div>" + (o.html || "") +
-      '<div class="m-btns">' + (o.botones || [{ txt: "Entendido", v: true, cls: "green" }]).map((b, k) =>
-        '<button type="button" class="btn ' + (b.cls || "") + '" data-k="' + k + '"' + (b.v === true ? ' data-v="ok"' : "") + ">" + b.txt + "</button>").join("") + "</div></div>";
+    const bots = o.botones || [{ txt: "Entendido", v: true, cls: "green" }];
+    const clsBtn = c => "btn-m " + ({ green: "green", naranja: "naranja", red: "rojo", rojo: "rojo" }[c] || "gray");
+    fondo.innerHTML = '<div class="modal' + (o.ancho ? " ancho" : "") + (o.clase ? " " + o.clase : "") + (o.centrado ? " centrado" : "") + '">' +
+      '<div class="mh"><h3>' + esc(o.titulo || "") + '</h3><button type="button" class="btn-m gray m-x" style="padding:6px 12px;" title="Cerrar">✕</button></div>' +
+      '<div class="mb">' + (o.icono ? '<div class="m-ico">' + o.icono + "</div>" : "") + (o.html || "") + "</div>" +
+      (bots.length || o.nota ? '<div class="mf">' + (o.nota ? '<span class="mf-nota">' + esc(o.nota) + "</span>" : "") + bots.map((b, k) =>
+        '<button type="button" class="' + clsBtn(b.cls) + '" data-k="' + k + '"' + (b.v === true ? ' data-v="ok"' : "") + ">" + b.txt + "</button>").join("") + "</div>" : "") + "</div>";
     document.body.appendChild(fondo);
     let hecho = false;
     const cerrar = v => { if (hecho) return; hecho = true; fondo.remove(); resolve(v); };
-    const bots = o.botones || [{ txt: "Entendido", v: true, cls: "green" }];
-    fondo.querySelectorAll(".m-btns .btn").forEach(el => el.addEventListener("click", async () => {
+    fondo.querySelector(".m-x").addEventListener("click", () => cerrar(null));
+    fondo.querySelectorAll(".mf .btn-m[data-k]").forEach(el => el.addEventListener("click", async () => {
       const b = bots[Number(el.dataset.k)];
       if (o.antes) {
         const txt = el.innerHTML;
@@ -1656,21 +1956,22 @@ function modal(o){
       }
       cerrar(b.v);
     }));
+    fondo.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); cerrar(null); } });
     if (o.alAbrir) o.alAbrir(fondo, cerrar);
     setTimeout(() => {   // si ya escribieron en otro campo del modal, no se les mueve el cursor
       if (fondo.contains(document.activeElement)) return;
-      const f = o.foco ? $(o.foco) : fondo.querySelector('.m-btns .btn[data-v="ok"]') || fondo.querySelector(".m-btns .btn");
+      const f = o.foco ? $(o.foco) : fondo.querySelector('.mf .btn-m[data-v="ok"]') || fondo.querySelector(".mf .btn-m:last-child");
       if (f) f.focus();
     }, 40);
   });
 }
-function aviso(o){ return modal({ icono: o.icono || "ℹ️", titulo: o.titulo, html: '<div class="m-txt">' + (o.html || "") + "</div>", botones: [{ txt: "Entendido", v: true, cls: "green" }] }); }
+function aviso(o){ return modal({ icono: o.icono || "ℹ️", titulo: o.titulo, html: '<div class="m-txt">' + (o.html || "") + "</div>", botones: [{ txt: "Entendido", v: true, cls: o.colorOk || "green" }] }); }
 function confirmar(o){
   return modal({ icono: o.icono || "❓", titulo: o.titulo, html: '<div class="m-txt">' + (o.html || "") + "</div>",
     botones: [{ txt: o.cancel || "Cancelar", v: false }, { txt: o.ok || "Aceptar", v: true, cls: o.colorOk || "green" }] });
 }
 let _toastT = null;
-function toast(t){ const el = $("toast"); el.textContent = t; el.classList.add("on"); clearTimeout(_toastT); _toastT = setTimeout(() => el.classList.remove("on"), 1800); }
+function toast(t){ const el = $("toast"); el.textContent = t; el.classList.remove("on"); void el.offsetWidth; el.classList.add("on"); clearTimeout(_toastT); _toastT = setTimeout(() => el.classList.remove("on"), 2500); }
 function btnOcupado(b, txt){ if (!b) return; if (b._txt == null) b._txt = b.innerHTML; b.disabled = true; b.innerHTML = '<span class="sp"></span>' + esc(txt || "Procesando…"); }
 function btnLibre(b, txt){ if (!b) return; b.disabled = false; if (txt != null) b.innerHTML = txt; else if (b._txt != null) b.innerHTML = b._txt; b._txt = null; }
 // Lector de códigos en la PC: el lector "escribe" el código y da Enter. Si el cursor no está en ningún campo
@@ -1683,7 +1984,7 @@ document.addEventListener("keydown", e => {
   const b = $("busca");
   if (e.key === "Enter") {
     if (b.value.trim()) { e.preventDefault(); buscarEnter(); return; }
-    const sel = document.querySelector("#listaProd .prod.sel");   // Enter con un producto marcado: lo agrega
+    const sel = document.querySelector("#listaProd .prod-item.highlight");   // Enter con un producto marcado: lo agrega
     if (sel) { e.preventDefault(); agregarDeLista(Number(sel.dataset.k)); }
     return;
   }

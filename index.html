@@ -8,22 +8,33 @@
 <title>Caja · ControlMaster</title>
 <link rel="stylesheet" href="estilos.css">
 </head>
-<body class="light">
+<body class="light entrando">
 
-<header class="top">
-  <div class="top-tit" id="tTit">Caja<small id="tSub">ControlMaster</small></div>
-  <div class="flex1"></div>
-  <button type="button" class="pill" id="btnSistema" onclick="irSistema(this)" title="Abrir el menú del sistema">🏠 Sistema</button>
-  <button type="button" class="pill turno oculto" id="pillTurno" onclick="irCierre()" title="Cerrar turno">🧾 <span id="turnoNom"></span></button>
-  <button type="button" class="pill" id="pillEstado" onclick="irA('ventas')"><span class="dot"></span><span id="pillTxt">Revisando…</span></button>
-  <nav class="nav" id="nav">
-    <button type="button" data-v="vender" class="on" onclick="irA('vender')">🛒 Vender</button>
-    <button type="button" data-v="ventas" onclick="irA('ventas')">🧾 Ventas</button>
-    <button type="button" data-v="ajustes" onclick="irA('ajustes')">⚙️</button>
-  </nav>
-  <button type="button" class="btn-tema" id="btnTema" title="Tema claro / oscuro" onclick="cambiarTema()">🌙</button>
-</header>
-<div class="tasabar" id="tasaBar"></div>
+<!-- BARRA DE ARRIBA (como Ventas) -->
+<div class="topbar">
+  <button type="button" class="btn-volver" id="btnSistema" onclick="irSistema(this)" title="Abrir el menú del sistema">🏠 Sistema</button>
+  <span class="topbar-title" id="tbTit">🛒 Punto de Venta</span>
+  <div class="sep"></div>
+  <div class="badge badge-vend oculto" id="badgeCajero" onclick="irCierre()" title="Cajero del turno · tocar para cerrar el turno">🧾 <span id="cajeroNombre">—</span> <span style="opacity:0.6;font-size:10px;">✎</span></div>
+  <div class="badge badge-tasa" id="badgeTasa">
+    <span class="badge-tasa-click" onclick="verTasas()" title="Ver / cambiar las tasas">💱 <span id="tasaDisplay">—</span></span>
+    <button type="button" class="btn-ocultar-tasa" id="btnOcultarTasa" onclick="toggleTasaVisible()" title="Ocultar tasa">👁️</button>
+  </div>
+  <button type="button" class="btn-tema btn-estado" id="pillEstado" onclick="irA('ventas')" title="Ventas de este equipo"><span class="dot"></span><span id="pillTxt">Revisando…</span><span id="pillCorto"></span></button>
+  <button type="button" class="btn-tema btn-menu-vta" id="btnMenuVta" onclick="abrirMenuVta()" title="Menú de la caja">☰ <span class="mv-lbl">Menú</span></button>
+  <button type="button" class="btn-tema" id="btnTema" title="Cambiar tema" onclick="cambiarTema()">🌙</button>
+</div>
+
+<div class="menu-vta-fondo" id="menuVtaFondo" onclick="cerrarMenuVta()"></div>
+<div class="menu-vta" id="menuVta">
+  <div class="menu-vta-info" id="menuInfo"></div>
+  <button type="button" class="menu-vta-item" data-v="vender" onclick="menuVtaAccion('vender')"><span class="mv-ico">🛒</span><span><span class="mv-tit">Vender</span><span class="mv-sub">La factura que estás armando</span></span></button>
+  <button type="button" class="menu-vta-item" data-v="ventas" onclick="menuVtaAccion('ventas')"><span class="mv-ico">🧾</span><span><span class="mv-tit">Ventas de este equipo</span><span class="mv-sub">Lo vendido hoy, lo que falta por subir y reimprimir tickets</span></span></button>
+  <button type="button" class="menu-vta-item" onclick="menuVtaAccion('actualizar')"><span class="mv-ico">🔄</span><span><span class="mv-tit">Actualizar datos</span><span class="mv-sub">Productos, precios, clientes y tasas del sistema (con internet)</span></span></button>
+  <button type="button" class="menu-vta-item" data-v="ajustes" onclick="menuVtaAccion('ajustes')"><span class="mv-ico">⚙️</span><span><span class="mv-tit">Ajustes del equipo</span><span class="mv-sub">Ticket, tasas, sesión y datos de este equipo</span></span></button>
+  <button type="button" class="menu-vta-item" id="menuCierre" onclick="menuVtaAccion('cierre')"><span class="mv-ico">🔒</span><span><span class="mv-tit">Cerrar turno</span><span class="mv-sub">Cuenta el dinero de la caja e imprime el cierre</span></span></button>
+</div>
+
 <div id="banners"></div>
 
 <!-- ENTRAR: activar el equipo, usuario y clave, descargar datos -->
@@ -37,33 +48,102 @@
   </div>
 </section>
 
-<!-- VENDER -->
+<!-- VENDER (igual que Ventas) -->
 <section class="vista" id="vVender">
-  <div class="wrap">
-    <div class="venta-grid">
-      <div class="card">
-        <div class="card-tit">🔎 Productos</div>
-        <input class="inp" id="busca" type="search" placeholder="Código, código de barras o nombre" autocomplete="off" oninput="buscar()" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarEnter();}">
-        <div class="lista-prod" id="listaProd"></div>
+  <!-- TELÉFONO: pestañas y barra del total (en la computadora no se ven) -->
+  <div class="mv-tabs">
+    <button type="button" class="mv-tab on" id="mvTabProd" onclick="mvTab('productos')">🛒 Productos</button>
+    <button type="button" class="mv-tab" id="mvTabFac" onclick="mvTab('factura')">🧾 Factura <span class="mv-cnt" id="mvCnt"></span></button>
+  </div>
+  <div class="mv-bar">
+    <div class="mv-tot"><b id="mvTotUSD">$ 0,00</b><span><span id="mvTotBS">Bs 0,00</span> · <span id="mvCntTxt">Factura vacía</span></span></div>
+    <button type="button" class="mv-ir" onclick="mvTab('factura')">Ver factura →</button>
+  </div>
+
+  <div class="layout">
+    <div class="col-izq">
+      <div class="vta-seg oculto" id="vtaSeg"><button type="button" class="vta-seg-b on" id="segProd" onclick="vtaVista('productos')">📦 Productos</button><button type="button" class="vta-seg-b" id="segServ" onclick="vtaVista('servicios')">🛠️ Servicios</button></div>
+      <div class="buscador">
+        <input type="text" id="busca" placeholder="🔍 ID, nombre, marca o cód. barras..." autocomplete="off" oninput="buscar()" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarEnter();}">
+        <button type="button" class="btn-clear-busq" onclick="limpiarBusqueda()" title="Borrar" tabindex="-1">✕</button>
       </div>
-      <div class="card">
-        <div class="card-tit">🧾 Venta <span class="flex1"></span><button type="button" class="btn sm" id="btnLimpiar" onclick="limpiarVentaConfirmar()">🗑️ Vaciar</button></div>
-        <div class="fila-cli">
-          <button type="button" class="chipbtn" id="btnCliente" onclick="abrirClientes()">👤 <span id="cliNom">Genérico</span></button>
-          <select class="inp" id="selVend" style="width:auto;flex:1;min-width:150px;" onchange="F.vend=this.value"></select>
-          <span class="chipbtn oculto" id="badgeVend"></span>
-          <select class="inp" id="selTipoPrecio" style="width:auto;" onchange="cambiarTipoPrecio(this.value)"></select>
-          <button type="button" class="chipbtn oculto" id="btnDolares" onclick="cambiarMoneda()" title="Toda la factura en $ divisas (TasaBin)">💵 Venta en Dólares</button>
+      <select id="selCat" class="sel-cat" onchange="buscar()"><option value="">🏷️ Todas las categorías</option></select>
+      <div class="mv-cats" id="mvCats"></div>
+      <div class="vta-contador" id="vtaContador"></div>
+      <div class="lista-scroll" id="listaProd"></div>
+      <div class="hint-dbl" id="hintLista">Doble clic para agregar a la factura</div>
+    </div>
+
+    <div class="col-der">
+      <div class="toprow">
+        <div class="badge-inp">
+          <label>N° Factura:</label>
+          <input type="text" id="numFactura" readonly tabindex="-1" style="opacity:0.7;cursor:not-allowed;width:88px;">
         </div>
-        <div id="lineas"></div>
-        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="btn sm" id="btnDesc" onclick="abrirDescuento()">🏷️ Descuento</button>
+        <div class="badge-inp">
+          <label>Fecha:</label>
+          <input type="text" id="fechaVenta" readonly tabindex="-1" style="width:92px;cursor:default;">
         </div>
-        <div class="tot" id="totales"></div>
-        <div class="barra-cobro">
-          <div class="t" id="barraTot">Bs 0,00<small>$0,00 BCV</small></div>
-          <div class="flex1"></div>
-          <button type="button" class="btn green" id="btnCobrar" onclick="abrirPago()" style="min-width:140px;font-size:16px;">💳 Cobrar</button>
+        <label class="badge-inp oculto" id="badgeDolares" style="cursor:pointer;gap:7px;">
+          <input type="checkbox" id="chkDolares" onchange="cambiarMoneda()" style="width:16px;height:16px;accent-color:var(--green);cursor:pointer;margin:0;">
+          <span style="font-size:12px;font-weight:700;color:var(--green);white-space:nowrap;">💵 Venta en Dólares</span>
+        </label>
+        <div class="vend-bar" id="vendBar">
+          <label>Vendedor:</label>
+          <select id="selVend" onchange="F.vend=this.value"></select>
+        </div>
+        <div class="badge-inp oculto" id="badgeVend"></div>
+        <div class="vend-bar" id="precioBar">
+          <label>Precio:</label>
+          <select id="selTipoPrecio" onchange="cambiarTipoPrecio(this.value)" title="El tipo de precio de los productos que agregues (y de las líneas que no tengan precio manual)"></select>
+        </div>
+        <div class="cliente-bar">
+          <label>Cliente:</label>
+          <span id="nombreClienteDisplay">Genérico</span>
+          <button type="button" class="btn-cli" onclick="abrirClientes()">👤 Elegir</button>
+          <button type="button" class="btn-cli-x oculto" id="btnLimpiarCli" onclick="limpiarCliente()" title="Quitar el cliente">✕</button>
+        </div>
+      </div>
+
+      <div class="factura-scroll">
+        <table class="tabla-fac">
+          <thead>
+            <tr>
+              <th>Cód.</th><th>Nombre</th><th>Cant.</th>
+              <th id="thPU">P.U.($)</th><th>IVA%</th><th id="thTot">Total($)</th><th>Tipo</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="tablaFactura"></tbody>
+        </table>
+      </div>
+
+      <div class="bottom-row">
+        <div class="acciones">
+          <button type="button" class="btn-primary" id="btnCobrar" onclick="registrarVenta()">✅ Registrar Venta</button>
+          <button type="button" class="btn-secondary" id="btnLimpiar" onclick="limpiarVentaConfirmar()">🗑️ Vaciar</button>
+        </div>
+        <button type="button" class="mv-aj-btn" onclick="mvToggleAjustes()"><span id="mvAjTxt">🏷️ Descuento, precio, N° y fecha</span><span id="mvAjFlecha">▸</span></button>
+        <div class="descuentos">
+          <div class="desc-title">Ajustes</div>
+          <div class="desc-row">
+            <label>Descuento:</label>
+            <select id="tipoDescuento" onchange="cambiarTipoDesc(this)">
+              <option value="ninguno">Ninguno</option>
+              <option value="pct">Porcentaje (%)</option>
+              <option value="monto">Monto ($)</option>
+            </select>
+          </div>
+          <div class="desc-row">
+            <label id="lblDescVal"></label>
+            <input type="number" id="valorDescuento" min="0" step="0.01" placeholder="—" disabled oninput="cambiarValorDesc(this.value)">
+          </div>
+        </div>
+        <div class="totales-box">
+          <div class="t-row">Subtotal: <span>$ <span id="subTotal">0,00</span></span></div>
+          <div class="t-row desc-color oculto" id="rowDesc">Descuento: -$ <span id="descMonto">0,00</span></div>
+          <div class="t-row">IVA: <span>$ <span id="ivaTotal">0,00</span></span></div>
+          <div class="t-total">$ <span id="totalUSD">0,00</span><span class="t-u" id="totalU"></span></div>
+          <div class="t-bs">Bs <span id="totalBS">0,00</span></div>
         </div>
       </div>
     </div>
@@ -90,6 +170,7 @@
 <!-- VENTAS DEL EQUIPO -->
 <section class="vista" id="vVentas">
   <div class="wrap">
+    <div class="vista-cab"><button type="button" class="btn" onclick="irA('vender')">← Volver a vender</button><h2>🧾 Ventas de este equipo</h2></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
       <button type="button" class="btn green" id="btnSubir" onclick="subirAhora(this)">⬆️ Subir ahora</button>
       <button type="button" class="btn" onclick="descargarRespaldo()">💾 Descargar respaldo</button>
@@ -111,6 +192,7 @@
 <!-- AJUSTES -->
 <section class="vista" id="vAjustes">
   <div class="wrap" style="max-width:640px;">
+    <div class="vista-cab"><button type="button" class="btn" onclick="irA('vender')">← Volver a vender</button><h2>⚙️ Ajustes del equipo</h2></div>
     <div class="card" style="margin-bottom:12px;">
       <div class="card-tit">🖥️ Este equipo</div>
       <div class="kv" id="infoEquipo"></div>
@@ -141,52 +223,57 @@
       </select>
       <label class="switch" style="margin-top:6px;"><input type="checkbox" id="chkDosCopias" onchange="guardarPref()"> Imprimir 2 copias del ticket</label>
       <label class="switch"><input type="checkbox" id="chkClaro" onchange="guardarPref()"> Tema claro</label>
+      <label class="switch"><input type="checkbox" id="chkTasaOculta" onchange="guardarPref()"> Ocultar la tasa en la barra de arriba</label>
       <div style="font-size:12px;color:var(--text-dim);margin-top:8px;" id="verApp"></div>
     </div>
   </div>
 </section>
 
-<!-- MODAL PAGO -->
+<!-- MODAL PAGO (como el de Ventas) -->
 <div class="mfondo oculto" id="mPago">
-  <div class="modal ancho">
-    <div id="pgForm">
-      <div class="pg-head">
-        <div><div style="font-size:12px;color:var(--text-dim);font-weight:700;">TOTAL A COBRAR</div><div class="tt" id="pgTotal"></div></div>
-        <div class="bs" id="pgTotalBs"></div>
+  <div class="modal ancho pago">
+    <div class="mh"><h3 id="pgTit">💳 Pago del cliente</h3><button type="button" class="btn-m gray" id="pgX" onclick="cerrarPago()" style="padding:6px 12px;">✕</button></div>
+    <div class="mb">
+      <div id="pgForm">
+        <div class="total-pago">
+          <div class="tp-lbl">Total a cobrar</div>
+          <div class="usd" id="pgTotal"></div>
+          <div class="bs" id="pgTotalBs"></div>
+        </div>
+        <div class="pgu-hint" id="pgHint"></div>
+        <div id="pgMetodos"></div>
+        <div class="oculto" id="pgMas"><button type="button" class="pgu-mas" onclick="P.verMet=true;pgActualizar()">＋ Otro método o crédito</button></div>
+        <div class="pgu-lineas-tit oculto" id="pgLineasTit">Pagos de esta venta</div>
+        <div id="pgLineas"></div>
+        <div id="pgDias" class="oculto">
+          <div class="fg" style="margin-top:8px;"><label for="selDias">Días de crédito</label>
+          <select id="selDias" onchange="P.dias=Number(this.value)||0"></select></div>
+        </div>
+        <div id="pgBal"></div>
+        <div id="pgVuelto" class="oculto pgu-vt">
+          <div class="pgu-vt-cab"><span>💸 Vuelto</span><span class="pgu-vt-sobra" id="pgVtSobra"></span><button type="button" class="btn-m gray" style="padding:4px 10px;font-size:12px;" onclick="pgVueltoCerrar()">Quitar vuelto</button></div>
+          <div id="pgVtMetodos"></div>
+          <div id="pgVtLineas"></div>
+        </div>
+        <div class="fg" style="margin-top:12px;"><label for="pgRef">Referencia (opcional)</label>
+        <input id="pgRef" placeholder="Nro. transferencia..." maxlength="60"></div>
+        <div class="fg" style="margin-top:10px;"><label for="pgObs">Observaciones (se imprime en el ticket)</label>
+        <textarea id="pgObs" rows="2" placeholder="Ej: Entregar en la tarde..." maxlength="200"></textarea></div>
       </div>
-      <div class="pg-hint" id="pgHint"></div>
-      <div id="pgMetodos"></div>
-      <div style="margin-top:6px;" class="oculto" id="pgMas"><button type="button" class="btn sm" onclick="P.verMet=true;pgActualizar()">＋ Otro método</button></div>
-      <div id="pgLineas"></div>
-      <div id="pgDias" class="oculto">
-        <label class="lbl" for="selDias">Días de crédito</label>
-        <select class="inp" id="selDias" onchange="P.dias=Number(this.value)||0"></select>
-      </div>
-      <div id="pgBal"></div>
-      <div id="pgVuelto" class="oculto" style="margin-top:10px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;"><b>💸 Vuelto</b><button type="button" class="btn sm" onclick="pgVueltoCerrar()">Quitar vuelto</button></div>
-        <div style="font-size:12px;color:var(--text-dim);margin:4px 0;" id="pgVtSobra"></div>
-        <div id="pgVtMetodos"></div>
-        <div id="pgVtLineas"></div>
-      </div>
-      <label class="lbl" for="pgRef">Referencia (opcional)</label>
-      <input class="inp" id="pgRef" placeholder="N° de operación, últimos dígitos…" maxlength="60">
-      <label class="lbl" for="pgObs">Observaciones (opcional)</label>
-      <input class="inp" id="pgObs" placeholder="Se imprimen en el ticket" maxlength="200">
-      <div class="m-btns">
-        <button type="button" class="btn" id="pgCerrar" onclick="cerrarPago()">Volver</button>
-        <button type="button" class="btn green" id="pgGuardar" onclick="pgConfirmar()">✅ Guardar venta</button>
+      <div id="pgOk" class="okpanel oculto">
+        <div style="font-size:42px;">✅</div>
+        <div class="m-tit">Venta guardada en este equipo</div>
+        <div class="num" id="pgOkNum"></div>
+        <div class="m-txt" id="pgOkTxt" style="color:var(--text-dim);font-size:13px;"></div>
       </div>
     </div>
-    <div id="pgOk" class="okpanel oculto">
-      <div style="font-size:42px;">✅</div>
-      <div class="m-tit">Venta guardada en este equipo</div>
-      <div class="num" id="pgOkNum"></div>
-      <div class="m-txt" id="pgOkTxt" style="color:var(--text-dim);font-size:13px;"></div>
-      <div class="m-btns">
-        <button type="button" class="btn" onclick="pgTerminar(false)">Sin imprimir</button>
-        <button type="button" class="btn green" onclick="pgTerminar(true)">🖨️ Imprimir ticket</button>
-      </div>
+    <div class="mf" id="pgPie">
+      <button type="button" class="btn-m gray" id="pgCerrar" onclick="cerrarPago()">Cancelar</button>
+      <button type="button" class="btn-m green" id="pgGuardar" onclick="pgConfirmar()">✅ Registrar</button>
+    </div>
+    <div class="mf oculto" id="pgPieOk">
+      <button type="button" class="btn-m gray" onclick="pgTerminar(false)">Sin imprimir</button>
+      <button type="button" class="btn-m green" id="pgImprimir" onclick="pgTerminar(true)">🖨️ Imprimir ticket</button>
     </div>
   </div>
 </div>
