@@ -2,9 +2,9 @@
 // Guarda la página en el equipo para que abra sin internet.
 // Con internet trae la versión nueva (y la guarda); sin internet usa la guardada.
 // Las llamadas al sistema (/caja/api, POST) no pasan por aquí.
-const CACHE = "cm-caja-web-v1";
+const CACHE = "cm-caja-web-v2";
 const BASE = new URL("./", self.location).pathname;   // /caja/
-const ARCHIVOS = ["./", "./index.html", "./estilos.css", "./app.js", "./api.js", "./sesion.js", "./numeros.js"];
+const ARCHIVOS = ["./", "./index.html", "./estilos.css", "./app.js", "./api.js", "./sesion.js", "./numeros.js", "./ordenes.js"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS)).then(() => self.skipWaiting()));

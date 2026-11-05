@@ -10,8 +10,13 @@
 //  Etapa 1B (2.2): la pantalla de Vender se ve como Ventas (lista, factura en tabla con TIPO por línea, precio
 //  manual en la línea, Ajustes con el descuento, teléfono en 2 pestañas), la tasa se puede ocultar, y los
 //  clientes se buscan y se crean desde la caja (sin internet quedan en el equipo y se crean al subir la venta).
+//  Etapa 1C (2.3): con internet la clave es la de Ventas (precio manual, B8) revisada en el sistema; sin internet,
+//  la clave sin internet. Existencias al día entre cajas (cada 2 min, solo si cambiaron; con Depósito, la tienda).
+//  Línea en rojo y avisos cuando no alcanza la existencia (se puede vender igual).
+//  Etapa 1D (2.4): entrada directa. Un equipo activado no pide usuario y clave: entra solo a la caja (sesión solo de
+//  esa caja, del último usuario que entró en el equipo) y los cajeros solo eligen su nombre y ponen su PIN.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.2 · 4-11-2026";
+const APP_VER = "2.5 · 4-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -54,7 +59,7 @@ const S = {
   vista: "vender"
 };
 const F = nuevaFactura();   // la venta que se está armando
-function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, dolares: false, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, seq: 0 }; }   // dolares: Venta en Dólares (TasaBin), se apaga en cada venta como en Ventas
+function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, dolares: false, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, claveCon: "", seq: 0, avisoEx: {}, orden: null }; }   // dolares: Venta en Dólares (TasaBin), se apaga en cada venta como en Ventas
 let P = null;              // el pago abierto
 let _ventaGuardada = null; // la que se acaba de guardar (para imprimir)
 
@@ -144,7 +149,9 @@ async function arrancar(){
   S.pref = Object.assign(S.pref, await kvGet("pref") || {});
   S.turno = await kvGet("turno") || null;
   S.cierres = await kvGet("cierres") || [];
-  S.clientesNuevos = await kvGet("clientesNuevos") || [];   // creados sin internet: se crean en el sistema al subir su venta
+  S.clientesNuevos = await kvGet("clientesNuevos") || [];
+  S.esperas = await kvGet("esperas") || [];       // Etapa 2: facturas en espera guardadas en este equipo (ordenes.js)
+  S.ordSoltar = await kvGet("ordSoltar") || [];   // Etapa 2: órdenes soltadas sin internet (se liberan al volver)   // creados sin internet: se crean en el sistema al subir su venta
   S.ventas = (await ventasTodas()) || [];
   aplicarTema();
   await entrarConPase();     // sesion.js: si vino del sistema con un pase, ya entra con ese usuario
@@ -163,14 +170,17 @@ function listo(){
   if (S.vista === "vender" && !S.turno) { mostrarVista("turno"); pintarTurno(); }
   if (_listoYa) { sincronizar(); return; }
   _listoYa = true;
+  ordIniciar();   // ordenes.js: 📋 Órdenes y su contador
   setTimeout(async () => { const r = await sincronizar(); if (!(r && r.subidas)) actualizarDatos(null, true); }, 800);
   setInterval(() => sincronizar(), 60000);                     // cada minuto: lo que haya por subir y los números al día
   setInterval(() => { if (S.online !== false) actualizarDatos(null, true); }, 20 * 60000);
+  setTimeout(existenciasAlDia, 15000);
+  setInterval(existenciasAlDia, 2 * 60000);   // existencias al día entre cajas (solo si cambiaron)
   window.addEventListener("online", () => { sincronizar(); revisarVersion(); });
   setTimeout(revisarVersion, 5000);
   setInterval(revisarVersion, 30 * 60000);
   window.addEventListener("offline", () => marcarOnline(false));
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) sincronizar(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { sincronizar(); setTimeout(existenciasAlDia, 1500); } });
 }
 async function primeraDescarga(btn){
   btnOcupado(btn, "Descargando…");
@@ -200,6 +210,7 @@ async function descargarDatos(){
     throw e;
   }
   d.descargadoEn = Date.now();
+  _exiFirma = "";   // las existencias vienen en los datos: la próxima consulta trae todo de nuevo
   const antes = F.items.length ? { total: totales(F.items, F.desc).total, u: unidadU() } : null;
   S.datos = d; S.permisoMal = ""; S.datosMal = "";
   await kvSet("datos", d);
@@ -250,6 +261,7 @@ function mostrarVista(v){
   S.vista = v;
   ["activar", "vender", "ventas", "ajustes", "turno", "cierre"].forEach(x => $("v" + x.charAt(0).toUpperCase() + x.slice(1)).classList.toggle("on", x === v));
   document.body.classList.toggle("v-vender", v === "vender");
+  $("btnIrVender").classList.toggle("oculto", !(v === "ventas" || v === "ajustes" || v === "cierre"));
   const nv = (v === "turno" || v === "cierre") ? "vender" : v;
   document.querySelectorAll("#menuVta .menu-vta-item[data-v]").forEach(b => b.classList.toggle("on", b.dataset.v === nv));
 }
@@ -279,7 +291,7 @@ function pintarCabecera(){
   $("menuCierre").classList.toggle("oculto", !S.turno);
   const u = S.ses && S.ses.usuario;
   $("menuInfo").innerHTML = "<b>" + esc(d.negocio || "Mi negocio") + "</b><br>Caja " + esc(d.caja) + " · equipo " + esc(d.equipo || "") + (d.nombreEquipo ? " (" + esc(d.nombreEquipo) + ")" : "") +
-    (u ? "<br>Usuario: " + esc(u.nombre || u.usuario) : "") + (S.turno ? "<br>Turno de " + esc(S.turno.cajeroNombre) + " desde las " + horaDe(S.turno.apertura) : "");
+    (u ? "<br>Usuario: " + esc(u.nombre || u.usuario) + (sesionDirecta() ? " (entrada directa)" : "") : "") + (S.turno ? "<br>Turno de " + esc(S.turno.cajeroNombre) + " desde las " + horaDe(S.turno.apertura) : "");
   pintarTasa();
 }
 function tasaVieja(){ const t = S.tasas || {}; return !!(t.fecha && t.fecha !== hoyTxt()); }
@@ -353,17 +365,43 @@ function pintarBanners(){
 let _vendidoLocal = null;   // código → cantidad vendida en este equipo que el sistema todavía no tenía al descargar
 function vendidoLocal(){
   if (_vendidoLocal) return _vendidoLocal;
-  const m = {}, desde = S.datos ? S.datos.descargadoEn : 0;
+  const m = {}, desde = S.datos ? (S.datos.exiEn || S.datos.descargadoEn) : 0;   // exiEn: última vez que llegaron las existencias del sistema
   S.ventas.forEach(v => {
     if (v.estado === "invalida") return;
-    if (v.subidaEn && v.subidaEn <= desde) return;   // ya estaba en los datos descargados
+    if (v.subidaEn && v.subidaEn <= desde) return;   // ya estaba en las existencias que mandó el sistema
     v.items.forEach(i => { if (i.tipo !== "servicio") m[i.codigo] = (m[i.codigo] || 0) + (Number(i.cantidad) || 0); });
   });
   return (_vendidoLocal = m);
 }
-function existenciaLocal(p){
-  const enFactura = F.items.filter(i => i.tipo !== "servicio" && i.codigo === p.codigo).reduce((s, i) => s + (Number(i.cantidad) || 0), 0);
-  return r3((Number(p.existencia) || 0) - (vendidoLocal()[p.codigo] || 0) - enFactura);
+// Con el Depósito encendido, la caja vende de la TIENDA (como Ventas): tienda = existencia − depósito
+const claveCod = v => { const t = String(v == null ? "" : v).trim(); if (!t) return ""; const n = Number(t); return isNaN(n) ? t.toLowerCase() : String(n); };
+function enDeposito(p){ const d = S.datos && S.datos.deposito; return d ? Number(d[claveCod(p.codigo)]) || 0 : 0; }
+// Lo que queda para vender sin contar la factura en pantalla
+function disponible(p){ return r3((Number(p.existencia) || 0) - enDeposito(p) - (vendidoLocal()[p.codigo] || 0)); }
+function enFactura(cod){ return F.items.filter(i => i.tipo !== "servicio" && String(i.codigo) === String(cod)).reduce((s, i) => s + (Number(i.cantidad) || 0), 0); }
+function existenciaLocal(p){ return r3(disponible(p) - enFactura(p.codigo)); }
+// ── Existencias al día entre cajas: con internet, cada 2 minutos, solo si cambiaron (la misma consulta de Ventas) ──
+let _exiFirma = "", _exiOcupado = false;
+async function existenciasAlDia(){
+  if (!S.datos || !S.eq || _exiOcupado || !hayInternet() || document.hidden || S.vista === "activar") return;
+  _exiOcupado = true;
+  const t0 = Date.now();
+  try {
+    const r = await api("cj_existencias", { firma: _exiFirma }, 30000);
+    if (r && r.ok) { _exiFirma = r.firma || ""; if (r.cambio) await aplicarExistencias(r, t0); }
+  } catch (e) {}
+  _exiOcupado = false;
+}
+async function aplicarExistencias(r, t0){
+  const cods = r.codigos || [], ex = r.existencias || [], m = {};
+  cods.forEach((c, k) => m[claveCod(c)] = Number(ex[k]) || 0);
+  (S.datos.productos || []).forEach(p => { const k = claveCod(p.codigo); if (k in m) p.existencia = m[k]; });
+  if (S.datos.deposito && Array.isArray(r.depositos)) { const d = {}; cods.forEach((c, k) => d[claveCod(c)] = Number(r.depositos[k]) || 0); S.datos.deposito = d; }
+  S.datos.exiEn = t0; _vendidoLocal = null; _cat = null;
+  try { await kvSet("datos", S.datos); } catch (e) {}
+  const box = $("listaProd"), st = box ? box.scrollTop : 0;
+  buscar(); if (box) box.scrollTop = st;
+  marcarExistencias();
 }
 function precioDe(p, tipoIdx){
   const lst = p.precios || [];
@@ -433,11 +471,12 @@ function buscar(){
     let info = "";
     if (p.tipo === "servicio") info = '<div style="margin-top:4px;"><span class="serv-tag">Servicio</span></div>';
     else {
-      const ex = existenciaLocal(p);
+      const ex = disponible(p);   // como Ventas: lo que hay (sin restar la factura en pantalla)
       info = (p.categoria ? '<div class="prod-barcode">🏷️ ' + esc(p.categoria) + "</div>" : "") + (p.marca ? '<div class="prod-barcode">Marca: ' + esc(p.marca) + "</div>" : "") +
         (S.datos.buscarRepuesto && p.codRepuesto ? '<div class="prod-barcode">Cód. Producto: ' + esc(p.codRepuesto) + "</div>" : "") +
         (p.codigoBarras && String(p.codigoBarras) !== String(p.codigo) ? '<div class="prod-barcode">Cód. de Barras: ' + esc(p.codigoBarras) + "</div>" : "") +
-        '<div style="margin-top:4px;"><span class="prod-stock" style="' + semaforo(ex, p) + '">' + (ex <= 0 ? "Sin stock" : fmtCant(ex) + " uds") + "</span></div>";
+        '<div style="margin-top:4px;"><span class="prod-stock" style="' + semaforo(ex, p) + '">' + (ex <= 0 ? (enDeposito(p) > 0 ? "Tienda 0" : "Sin stock") : fmtCant(ex) + " uds") + "</span>" +
+        (enDeposito(p) > 0 ? ' <span class="prod-barcode" style="display:inline;">📦 Depósito: ' + fmtCant(enDeposito(p)) + "</span>" : "") + "</div>";
     }
     const q2 = cuantasEnFactura(p.codigo);
     return '<div class="prod-item" data-k="' + k + '" onclick="clicProducto(this,' + k + ')" ondblclick="agregarDeLista(' + k + ')"><div class="prod-fila">' +
@@ -475,6 +514,7 @@ async function agregar(p){
         html: "Según los datos de este equipo, de <b>" + esc(p.nombre) + "</b> quedan <b>" + fmtCant(Math.max(0, e)) + "</b>." +
           "<br><br>Si lo tienes en la mano, véndelo: al subirse se registra igual y el sistema avisa que hay que revisar la existencia." });
       if (!ok) return;
+      F.avisoEx[String(p.codigo)] = true;
     }
   }
   const pr = precioDe(p, F.tipoPrecio);
@@ -510,6 +550,8 @@ function pintarSelectores(){
   if (d.trabajoVendedores && d.modoCajas === "cajero") {
     if (F.vend === "") F.vend = d.vendedorCajaId ? String(d.vendedorCajaId) : "directa";
     sel.innerHTML = '<option value="directa">🏪 Venta directa (sin comisión)</option>' + (d.vendedores || []).map(v => '<option value="' + esc(v.id) + '">🧑‍💼 ' + esc(v.nombre) + "</option>").join("");
+    if (F.orden && F.orden.origen === "VENDEDOR" && F.orden.vendedorId && !(d.vendedores || []).some(v => String(v.id) === String(F.orden.vendedorId)))   // vendedor de la orden que ya no está activo
+      sel.innerHTML += '<option value="' + esc(F.orden.vendedorId) + '">🧑‍💼 ' + esc(F.orden.vendedor || "Vendedor de la orden") + "</option>";
     sel.value = F.vend; if (sel.value !== F.vend) { F.vend = "directa"; sel.value = "directa"; }
     $("vendBar").classList.remove("oculto");
   } else if (d.trabajoVendedores && d.vendedor && d.vendedor.nombre) {
@@ -521,6 +563,7 @@ function pintarSelectores(){
   vd.disabled = F.desc.tipo === "ninguno";
   if (document.activeElement !== vd) vd.value = F.desc.valor > 0 ? F.desc.valor : "";
   $("lblDescVal").textContent = F.desc.tipo === "pct" ? "%" : F.desc.tipo === "monto" ? "$ " + unidadU() : "";
+  pintarChipOrden();
 }
 function tiposConPrecio(){
   const d = S.datos || {};
@@ -555,19 +598,52 @@ function pintarFactura(){
     let opts = srv ? '<option value="0"' + (!i.manual ? " selected" : "") + ">Servicio</option>"
       : tps.filter(o => o.i === 0 || (p && p.precios && p.precios[o.i] && Number(p.precios[o.i].base) > 0)).map(o => '<option value="' + o.i + '"' + (!i.manual && i.tipoIdx === o.i ? " selected" : "") + ">" + esc(o.n) + "</option>").join("");
     opts += '<option value="manual"' + (i.manual ? " selected" : "") + ">Manual</option>";
-    const cant = '<td><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',-1)" title="Una menos">−</button><input type="number" min="0" step="any" id="q_' + i.key + '" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}"><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',1)" title="Una más">+</button></td>';
+    const cant = '<td><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',-1)" title="Una menos">−</button><input type="number" min="0" step="any" id="q_' + i.key + '" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onchange="revisarExistencia(' + i.key + ')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}"><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',1)" title="Una más">+</button></td>';
     const cod = '<td><span style="font-size:11px;">' + esc(i.codigoBarras || i.codigo) + "</span>" + (srv ? ' <span class="srv">SRV</span>' : "") + "</td>";
-    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + esc(i.nombre) + "</td>";
+    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + esc(i.nombre) + (srv ? "" : '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
     const fin = '<td><select onchange="cambiarTipoLinea(' + i.key + ',this)">' + opts + '</select></td><td><button type="button" class="btn-del" onclick="quitarLinea(' + i.key + ')" title="Quitar">✕</button></td>';
-    if (i.manual) return '<tr data-key="' + i.key + '">' + cod + nom + cant +
+    if (i.manual) return '<tr data-key="' + i.key + '" data-cod="' + esc(i.codigo) + '">' + cod + nom + cant +
       '<td><input type="number" class="man" min="0" step="any" id="pu_' + i.key + '" value="' + r2(i.base).toFixed(2) + '" oninput="manualPU(' + i.key + ',this.value)"></td>' +
       '<td><input type="number" class="man" min="0" max="100" step="any" id="iv_' + i.key + '" value="' + (Number(i.iva) || 0) + '" style="width:55px;color:var(--sk-mid);" oninput="manualIVA(' + i.key + ',this.value)"></td>' +
       '<td><input type="number" class="man" step="any" id="tt_' + i.key + '" value="' + totLinea(i).toFixed(2) + '" style="width:80px;color:var(--green);font-weight:700;font-size:13px;" oninput="manualTot(' + i.key + ',this.value)"></td>' + fin + "</tr>";
-    return '<tr data-key="' + i.key + '">' + cod + nom + cant +
+    return '<tr data-key="' + i.key + '" data-cod="' + esc(i.codigo) + '">' + cod + nom + cant +
       '<td style="color:var(--green);font-weight:700;">$' + fmt(i.base) + '</td><td style="color:var(--text-dim);">' + fmtCant(i.iva) + "%</td>" +
       '<td style="font-weight:700;" id="tt_' + i.key + '">$' + fmt(totLinea(i)) + "</td>" + fin + "</tr>";
   }).join("");
+  marcarExistencias();
   pintarTotales();
+}
+// ── Sin existencia: la línea se marca en rojo (se puede vender igual; el sistema avisa al registrarla) ──
+function faltasExistencia(){
+  const c = cat(), out = [], vistos = {};
+  F.items.forEach(i => {
+    if (i.tipo === "servicio" || vistos[i.codigo]) return;
+    vistos[i.codigo] = 1;
+    const p = c.find(x => x.tipo === "producto" && String(x.codigo) === String(i.codigo)); if (!p) return;
+    const disp = disponible(p), pide = r3(enFactura(i.codigo));
+    if (pide > disp + 0.0005) out.push({ codigo: String(i.codigo), nombre: i.nombre, pide, disp: Math.max(0, disp), dep: enDeposito(p) });
+  });
+  return out;
+}
+function marcarExistencias(){
+  const f = {}; faltasExistencia().forEach(x => f[x.codigo] = x);
+  F.items.forEach(i => {
+    const sp = $("sx_" + i.key); if (!sp) return;
+    const x = f[String(i.codigo)], tr = sp.closest("tr");
+    sp.classList.toggle("oculto", !x);
+    sp.textContent = x ? "⚠️ Sin existencia suficiente: " + (x.disp > 0 ? "quedan " + fmtCant(x.disp) : "no queda ninguno") + (x.dep > 0 ? " en tienda" : "") + " y van " + fmtCant(x.pide) : "";
+    if (tr) tr.classList.toggle("sin-ex-tr", !!x);
+  });
+}
+// Al terminar de escribir la cantidad: si pasa de lo que hay, se avisa una vez por producto
+async function revisarExistencia(key){
+  const i = itemDe(key); if (!i || i.tipo === "servicio") return;
+  const x = faltasExistencia().find(y => y.codigo === String(i.codigo));
+  if (!x || F.avisoEx[x.codigo]) return;
+  F.avisoEx[x.codigo] = true;
+  await aviso({ icono: "📦", titulo: "No hay suficiente existencia", colorOk: "naranja",
+    html: "De <b>" + esc(x.nombre) + "</b> " + (x.disp > 0 ? "quedan <b>" + fmtCant(x.disp) + "</b>" : "no queda <b>ninguno</b>") + (x.dep > 0 ? " en la tienda (y " + fmtCant(x.dep) + " en el depósito)" : "") + " según los datos de este equipo, y en la factura van <b>" + fmtCant(x.pide) + "</b>." +
+      "<br><br>Si lo tienes en la mano, puedes venderlo: la línea queda marcada en rojo y al registrarse el sistema avisa que hay que revisar el inventario." });
 }
 function pintarTotales(){
   const x = totales(F.items, F.desc), bs = r2(x.total * bsPorU());
@@ -598,6 +674,7 @@ function cambiarCant(key, v){
   i.cantidad = v === "" ? "" : r3(v);
   const t = $("tt_" + key);   // sin repintar la tabla (no se pierde el cursor)
   if (t) { if (t.tagName === "INPUT") t.value = totLinea(i).toFixed(2); else t.textContent = "$" + fmt(totLinea(i)); }
+  marcarExistencias();
   pintarTotales();
 }
 function pasoCant(key, d){
@@ -606,6 +683,7 @@ function pasoCant(key, d){
   if (nv <= 0) return;   // a cero no baja: para quitar el producto está la ✕
   const inp = $("q_" + key); if (inp) inp.value = nv;
   cambiarCant(key, nv);
+  if (d > 0) revisarExistencia(key);
 }
 function quitarLinea(key){ F.items = F.items.filter(x => x.key !== key); pintarFactura(); buscar(); }
 // Tipo de precio de una línea (Detal, Mayor… o Manual), como el selector TIPO de Ventas
@@ -613,10 +691,7 @@ async function cambiarTipoLinea(key, sel){
   const i = itemDe(key); if (!i) return;
   const val = sel.value, antes = i.manual ? "manual" : String(i.tipoIdx >= 0 ? i.tipoIdx : 0);
   if (val === "manual") {
-    if (S.datos.pideClave && S.datos.pideClave.manual && !F.claveOk) {
-      if (!await pedirClave("Precio manual", "Escribe la clave sin internet para cambiar el precio de <b>" + esc(i.nombre) + "</b>:")) { sel.value = antes; return; }
-      F.claveOk = true;
-    }
+    if (S.datos.pideClave && S.datos.pideClave.manual && !await claveFactura("Precio manual", "para cambiar el precio de <b>" + esc(i.nombre) + "</b>")) { sel.value = antes; return; }
     // Con TasaBin y un solo producto se pregunta en qué moneda va el precio (como Ventas)
     if (binOn() && F.items.length === 1) {
       const enDiv = await elegirMonedaManual();
@@ -669,6 +744,7 @@ function manualTot(key, v){
   pintarTotales();
 }
 async function limpiarVentaConfirmar(){
+  if (F.orden) { soltarOrden(); return; }   // la orden vuelve a la lista (ordenes.js)
   if (!F.items.length && !F.cliente.cedula && F.desc.tipo === "ninguno") return;
   const ok = await confirmar({ icono: "🗑️", titulo: "Vaciar la venta", html: "Se quitan los productos, el cliente y el descuento de esta venta. No se guarda nada.", ok: "Sí, vaciar", colorOk: "red" });
   if (ok) limpiarVenta();
@@ -698,23 +774,40 @@ async function sha256hex(t){
   return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
 }
 let _claveFallas = 0, _claveBloqHasta = 0;
-async function pedirClave(titulo, texto){
-  const c = S.datos && S.datos.claveSinInternet;
-  if (!c || !c.salt || !c.hash) {
-    await aviso({ icono: "🔒", titulo: "Falta la clave sin internet", html: "Para esto hace falta la <b>clave sin internet</b>, y este equipo no la tiene. Pídele al administrador que la ponga; el equipo la recibe la próxima vez que se actualice con internet." });
+// Con internet: la clave de precio manual del sistema (Configuración B8, la misma de Ventas), revisada en el servidor
+// (5 intentos fallidos → 5 minutos de espera, igual que Ventas). Sin internet: la clave sin internet de este equipo.
+// Devuelve "sistema" · "sinInternet" (con cuál se autorizó) o false.
+function hayInternet(){ return S.online !== false && navigator.onLine !== false; }
+async function pedirClave(titulo, para){
+  const c = S.datos && S.datos.claveSinInternet, tieneSin = !!(c && c.salt && c.hash);
+  let modo = hayInternet() && sesionViva() ? "sistema" : "sinInternet";
+  if (modo === "sinInternet" && !tieneSin) {
+    await aviso({ icono: "🔒", titulo: "Falta la clave sin internet", html: "Sin internet, para esto hace falta la <b>clave sin internet</b>, y este equipo no la tiene.<br><br>Se pone en el sistema: <b>Configuración → Administración → Caja nueva → 🔑 Clave sin internet</b>. El equipo la recibe la próxima vez que se actualice con internet." });
     return false;
   }
-  return await modal({
+  const que = () => modo === "sistema" ? "la <b>clave de precio manual</b> del sistema (la misma de Ventas)" : "la <b>clave sin internet</b>";
+  const r = await modal({
     icono: "🔒", titulo: titulo,
-    html: '<div class="m-txt">' + texto + '</div><input class="inp" id="mClave" type="password" placeholder="Clave sin internet" autocomplete="off" style="margin-top:10px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.closest(\'.modal\').querySelector(\'[data-v=ok]\').click();}"><div class="m-err" id="mClaveErr"></div>',
+    html: '<div class="m-txt">Escribe <span id="mClaveQue">' + que() + "</span> " + para + ':</div><input class="inp" id="mClave" type="password" placeholder="' + (modo === "sistema" ? "Clave de precio manual" : "Clave sin internet") + '" autocomplete="off" style="margin-top:10px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.closest(\'.modal\').querySelector(\'[data-v=ok]\').click();}"><div class="m-err" id="mClaveErr"></div>',
     botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Verificar", v: true, cls: "green", spin: "Verificando…" }],
     foco: "mClave",
     antes: async (v) => {
       if (!v) return true;
-      const err = $("mClaveErr");
-      if (Date.now() < _claveBloqHasta) { err.textContent = "Demasiados intentos. Espera un minuto."; return false; }
-      const val = $("mClave").value;
+      const err = $("mClaveErr"), val = $("mClave").value;
       if (!val) { err.textContent = "Escribe la clave."; return false; }
+      if (modo === "sistema") {
+        let res = null;
+        try { res = await api("cj_clave", { clave: val }, 25000); } catch (e) { if (!e.red) { err.textContent = e.message; return false; } }
+        if (res && res.ok) return true;
+        if (res && res.codigo !== "SESION" && res.codigo !== "USUARIO" && res.codigo !== "EQUIPO") { err.textContent = res.msg || "La clave no es correcta."; $("mClave").value = ""; $("mClave").focus(); return false; }
+        // Sin conexión con el sistema (o sin sesión): se sigue con la clave sin internet
+        if (!tieneSin) { err.innerHTML = "No hay conexión con el sistema y este equipo no tiene clave sin internet. Vuelve a intentar cuando haya internet."; return false; }
+        modo = "sinInternet";
+        $("mClaveQue").innerHTML = que(); $("mClave").placeholder = "Clave sin internet"; $("mClave").value = ""; $("mClave").focus();
+        err.textContent = "No hay conexión con el sistema: escribe la clave sin internet.";
+        return false;
+      }
+      if (Date.now() < _claveBloqHasta) { err.textContent = "Demasiados intentos. Espera un minuto."; return false; }
       const h = await sha256hex(c.salt + val);
       if (h !== c.hash) {
         _claveFallas++;
@@ -725,14 +818,20 @@ async function pedirClave(titulo, texto){
       return true;
     }
   });
+  return r ? modo : false;
+}
+// La clave autoriza toda la factura en pantalla (como el permiso de Ventas)
+async function claveFactura(titulo, para){
+  if (F.claveOk) return true;
+  const r = await pedirClave(titulo, para);
+  if (!r) return false;
+  F.claveOk = true; F.claveCon = r;
+  return true;
 }
 // ── Descuento (en Ajustes, como en Ventas): Ninguno · Porcentaje · Monto ──
 async function cambiarTipoDesc(sel){
   const v = sel.value;
-  if (v !== "ninguno" && S.datos.pideClave && S.datos.pideClave.descuento && !F.claveOk) {
-    if (!await pedirClave("Descuento", "Escribe la clave sin internet para hacer un descuento:")) { sel.value = F.desc.tipo; return; }
-    F.claveOk = true;
-  }
+  if (v !== "ninguno" && S.datos.pideClave && S.datos.pideClave.descuento && !await claveFactura("Descuento", "para hacer un descuento")) { sel.value = F.desc.tipo; return; }
   F.desc = { tipo: v, valor: v === F.desc.tipo ? F.desc.valor : 0 };
   pintarSelectores(); pintarTotales();
   if (v !== "ninguno") setTimeout(() => $("valorDescuento").focus(), 30);
@@ -889,6 +988,11 @@ async function crearCliente(btn){
 // ✅ Registrar Venta, como en Ventas: si la factura está en Genérico, primero "¿A quién le vendes?"
 async function registrarVenta(){
   if (!F.items.length) { aviso({ icono: "🧾", titulo: "La venta está vacía", html: "Agrega al menos un producto." }); return; }
+  const faltas = faltasExistencia();
+  if (faltas.length && !await confirmar({ icono: "📦", titulo: "Hay productos sin existencia suficiente", colorOk: "naranja", ok: "Sí, vender igual",
+    html: "Según los datos de este equipo no alcanza la existencia de:<ul style=\"margin:8px 0 8px 18px;line-height:1.6;\">" +
+      faltas.map(x => "<li><b>" + esc(x.nombre) + "</b>: van " + fmtCant(x.pide) + ", " + (x.disp > 0 ? "quedan " + fmtCant(x.disp) : "no queda ninguno") + (x.dep > 0 ? " en tienda" : "") + "</li>").join("") +
+      "</ul>Si los tienes en la mano, véndelos: la venta se registra igual y el sistema avisa que hay que revisar el inventario." })) return;
   if (!F.cliente.cedula) {
     const r = await modal({ icono: "", titulo: "🧾 ¿A quién le vendes?", centrado: true,
       html: '<div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;padding:6px 0;">' +
@@ -996,7 +1100,7 @@ async function abrirPago(){
   pgPintarMetodos(); pgPintarLineas(); pgPintarVuelto(); pgActualizar();
   $("mPago").classList.remove("oculto");
 }
-function cerrarPago(){ $("mPago").classList.add("oculto"); P = null; if (window.innerWidth > 820) setTimeout(() => $("busca").focus(), 30); }
+function cerrarPago(){ $("mPago").classList.add("oculto"); P = null; if (window.innerWidth > 820) setTimeout(() => { if (!document.querySelector(".mfondo:not(.oculto)")) $("busca").focus(); }, 30); }   // no le quita el cursor a otro modal
 // ── Cuánto cubre (en la pantalla) y cuánto vale (en los libros) cada línea: las mismas cuentas de Ventas ──
 function pgTasaLinea(l){   // Bs por $ a la que se aceptan los dólares de la línea (solo $, y no en Venta en Dólares)
   if (l.tipo !== "USD" || P.modo === "div") return 0;
@@ -1116,7 +1220,7 @@ function pgTasasHTML(l){
   const td = P.modo === "off" ? tDivOff() : tDiv();
   const chip = (modo, txt, dis) => '<button type="button" class="off-chip' + (l.tasaModo === modo ? " on" : "") + '"' + (dis ? " disabled" : "") + ' onclick="pgElegirTasa(' + l.id + ",'" + modo + "')\">" + txt + "</button>";
   return '<div class="pl-tasas"><span class="pl-tlbl">Tasa:</span>' + chip("bcv", "BCV " + fmt(tBcv())) + chip("div", "Divisas " + (td > 0 ? fmt(td) : "—"), !(td > 0)) +
-    chip("otra", (S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq ? "🔒 " : "") + "Otra") +
+    chip("otra", (S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq && !F.claveOk ? "🔒 " : "") + "Otra") +
     (l.tasaModo === "otra" ? '<input type="number" inputmode="decimal" min="0" step="any" id="pgT_' + l.id + '" placeholder="Bs por $" value="' + (Number(l.tasaOtra) > 0 ? l.tasaOtra : "") + '" oninput="pgTasaOtra(' + l.id + ',this.value)">' : "") + "</div>";
 }
 function pgPintarLineas(){
@@ -1224,7 +1328,7 @@ function pgMonto(id, v){ const l = P.lineas.find(x => x.id === id); if (l) { l.m
 async function pgElegirTasa(id, modo){
   const l = P.lineas.find(x => x.id === id); if (!l) return;
   if (modo === "otra" && S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq) {
-    if (!await pedirClave("Otra tasa de cobro", "Escribe la clave sin internet para cobrar los dólares a otra tasa:")) return;
+    if (!await claveFactura("Otra tasa de cobro", "para cobrar los dólares a otra tasa")) return;
   }
   if (modo === "otra") P.desbloq = true;
   l.tasaModo = modo;
@@ -1321,10 +1425,12 @@ async function pgConfirmar(){
 function vendedorDeLaVenta(){
   const d = S.datos;
   const cj = { cajeroNombre: S.turno ? S.turno.cajeroNombre : ((d.cajero && d.cajero.nombre) || ""), cajeroId: S.turno ? S.turno.cajeroId : 0 };   // el cajero del turno
+  if (F.orden && F.orden.origen === "WEB") return Object.assign({ ventaDirecta: true, vendedorNombre: "", comision: 0, canal: "WEB" }, cj);   // pedido web: Tienda online
   if (!d.trabajoVendedores) return Object.assign({ ventaDirecta: true, vendedorNombre: "", comision: 0 }, cj);
   if (d.modoCajas !== "cajero") return Object.assign({ vendedorNombre: (d.vendedor && d.vendedor.nombre) || "", comision: Number(d.vendedor && d.vendedor.comision) || 0 }, cj);
   const v = (d.vendedores || []).find(x => String(x.id) === String(F.vend));
   if (v) return Object.assign({ vendedorId: v.id, vendedorNombre: v.nombre, comision: Number(v.comision) || 0 }, cj);
+  if (F.orden && F.orden.vendedorId && String(F.orden.vendedorId) === String(F.vend)) return Object.assign({ vendedorId: F.orden.vendedorId, vendedorNombre: F.orden.vendedor, comision: 0 }, cj);
   return Object.assign({ ventaDirecta: true, vendedorNombre: "", comision: 0 }, cj);
 }
 async function pgGuardar(pagos, vuelto){
@@ -1346,11 +1452,12 @@ async function pgGuardar(pagos, vuelto){
       referencia: $("pgRef").value.trim(), observaciones: $("pgObs").value.trim(),
       clienteCedula: F.cliente.cedula || "", clienteNombre: F.cliente.nombre || "Genérico",
       clienteDireccion: F.cliente.direccion || "", clienteTelefono: F.cliente.telefono || "",
-      clienteNuevo: !!(F.cliente.cedula && F.cliente.nuevo),   // creado sin internet: el sistema lo crea antes de registrar la venta
+      clienteNuevo: !!(F.cliente.cedula && F.cliente.nuevo),
+      claveCon: F.claveOk ? F.claveCon : (F.claveCon === "orden" ? "orden" : ""),   // "orden": el precio manual o el descuento venían en la orden   // con qué clave se autorizó lo que la pide: "sistema" (la de Ventas) o "sinInternet"   // creado sin internet: el sistema lo crea antes de registrar la venta
       descuentoTipo: F.desc.tipo, descuentoValor: Number(F.desc.valor) || 0, descuentoValorServ: descuentoServidor(F.items, F.desc),
       diasCredito: P.cred.on ? (Number(P.dias) || 0) : 0,
       objetivoVenta: m === "off" ? "" : (m === "div" ? "DIVISAS" : "BCV"), totalPantallaUSD: P.total
-    }, vendedorDeLaVenta()),
+    }, vendedorDeLaVenta(), ordPago()),   // ordPago: la orden que se cobra (queda CONVERTIDA al subir), ordenes.js
     total: P.total, totalBs: totBs, totalBcv: m === "div" ? (t.bcv > 0 ? r2(totBs / t.bcv) : 0) : P.total,
     estado: "por_subir", intentos: 0, msg: "", avisos: [], numeroFactura: "", subidaEn: 0
   };
@@ -1678,7 +1785,7 @@ async function sincronizar(manual){
   if (S.permisoMal && !manual) return { subidas: 0 };
   // De la más vieja a la más nueva (y a igual hora, por número de ticket)
   const cola = S.ventas.filter(v => v.estado === "por_subir").sort((a, b) => String(a.creada).localeCompare(String(b.creada)) || (Number(a.numeroTicket) || 0) - (Number(b.numeroTicket) || 0));
-  if (!cola.length) { await subirCierres(); await numerosAlDia(); if (manual) await actualizarDatos(null, true); return { subidas: 0 }; }
+  if (!cola.length) { await subirCierres(); await numerosAlDia(); await ordAlDia(); if (manual) await actualizarDatos(null, true); return { subidas: 0 }; }
   S.sincronizando = true; pintarEstado();
   let subidas = 0, cortado = "";
   try {
@@ -1712,8 +1819,8 @@ async function sincronizar(manual){
     pintarEstado(); pintarBanners();
     if (S.vista === "ventas") pintarVentas();
   }
-  if (!cortado) { await subirCierres(); await numerosAlDia(); }
-  if (subidas && S.online) await actualizarDatos(null, true);   // existencias al día
+  if (!cortado) { await subirCierres(); await numerosAlDia(); await ordAlDia(); }
+  if (subidas && S.online) { await actualizarDatos(null, true); contarOrdenes(); }   // existencias al día (y las órdenes que se convirtieron)
   return { subidas, cortado };
 }
 async function subirCierres(){
@@ -1806,7 +1913,7 @@ function pintarVentas(){
       '<div class="s">' + esc(p.clienteNombre || "Genérico") + (p.clienteCedula ? " · " + esc(p.clienteCedula) : "") + "</div>" + estadoHTML(v) + "</div>" +
       '<div class="m">Bs ' + fmt(v.totalBs) + '<div style="font-size:11px;color:var(--text-dim);font-weight:600;">$' + fmt(v.total) + (v.unidad === "div" ? " div" : "") + "</div></div></div>" +
       '<div class="vt-det">' + msg + "<table>" + items + "</table><table>" + pagos + "</table>" +
-      '<div style="font-size:12px;color:var(--text-dim);">' + (v.unidad === "div" ? "💵 Venta en Dólares · " : "") + 'Tasa BCV Bs ' + fmt(v.tasas.bcv) + (v.tasas.div ? " · Divisas Bs " + fmt(v.tasas.div) : "") + (p.descuentoTipo !== "ninguno" && p.descuentoValor ? " · descuento " + (p.descuentoTipo === "pct" ? fmt(p.descuentoValor) + " %" : "$" + fmt(p.descuentoValor)) : "") + (p.referencia ? " · Ref: " + esc(p.referencia) : "") + "</div>" +
+      '<div style="font-size:12px;color:var(--text-dim);">' + (v.unidad === "div" ? "💵 Venta en Dólares · " : "") + 'Tasa BCV Bs ' + fmt(v.tasas.bcv) + (v.tasas.div ? " · Divisas Bs " + fmt(v.tasas.div) : "") + (p.descuentoTipo !== "ninguno" && p.descuentoValor ? " · descuento " + (p.descuentoTipo === "pct" ? fmt(p.descuentoValor) + " %" : "$" + fmt(p.descuentoValor)) : "") + (p.referencia ? " · Ref: " + esc(p.referencia) : "") + (p.ordenId ? " · " + (p.canal === "WEB" ? "🌐 pedido web " : "📋 orden ") + esc(p.ordenId) : "") + "</div>" +
       '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;"><button type="button" class="btn sm" onclick="imprimirPorId(\'' + v.id + '\')">🖨️ Reimprimir</button>' +
       ((v.estado === "pendiente" || v.estado === "invalida") ? '<button type="button" class="btn sm green" onclick="reintentar(\'' + v.id + '\',this)">🔁 Reintentar</button>' : "") + "</div></div></div>";
   }).join("");
@@ -1831,10 +1938,12 @@ function pintarAjustes(){
   $("infoEquipo").innerHTML = "<span>Negocio</span><b>" + esc(d.negocio) + "</b><span>Caja</span><b>" + esc(d.caja) + "</b><span>Equipo</span><b>" + esc(d.equipo) + (d.nombreEquipo ? " · " + esc(d.nombreEquipo) : "") + "</b>" +
     "<span>Datos del sistema</span><b>" + (d.descargadoEn ? fechaCorta(hoyTxt(new Date(d.descargadoEn))) + " " + pad(new Date(d.descargadoEn).getHours()) + ":" + pad(new Date(d.descargadoEn).getMinutes()) : "—") + "</b>" +
     "<span>Productos</span><b>" + (d.productos || []).length + "</b><span>Clientes</span><b>" + (d.clientes || []).length + ((S.clientesNuevos || []).length ? " · " + S.clientesNuevos.length + " creado(s) aquí, por subir" : "") + "</b>" +
-    "<span>Clave sin internet</span><b>" + (d.claveSinInternet ? "✅ puesta" : "⚠️ no puesta") + "</b>" +
+    "<span>Clave sin internet</span><b>" + (d.claveSinInternet ? "✅ puesta" : "⚠️ no puesta (en el sistema: Configuración → Administración → Caja nueva → 🔑 Clave sin internet)") + "</b>" +
+    "<span>Existencias</span><b>" + (d.exiEn ? "al día a las " + pad(new Date(d.exiEn).getHours()) + ":" + pad(new Date(d.exiEn).getMinutes()) : "las de los datos") + (d.deposito ? " · con Depósito: se vende lo de la tienda" : "") + "</b>" +
     "<span>Números de factura</span><b>" + numerosTexto() + "</b>";
   const u = (S.ses && S.ses.usuario) || {};
   $("infoSesion").innerHTML = "<span>Usuario</span><b>" + esc(u.nombre || u.usuario || "—") + (u.usuario ? " · " + esc(u.usuario) : "") + "</b>" +
+    "<span>Entrada</span><b>" + (sesionDirecta() ? "directa: este equipo entra solo a la caja (solo esta caja; para el sistema se pide usuario y clave)" : "con usuario y clave") + "</b>" +
     "<span>Desde</span><b>" + (S.ses && S.ses.desde ? fechaCorta(hoyTxt(new Date(S.ses.desde))) + " " + pad(new Date(S.ses.desde).getHours()) + ":" + pad(new Date(S.ses.desde).getMinutes()) : "—") + "</b>";
   $("infoTasas").innerHTML = "<span>BCV</span><b>Bs " + fmt(t.bcv) + "</b><span>" + (t.binOn ? "Divisas (TasaBin)" : "Divisas ($ en efectivo)") + "</span><b>" + (t.div > 0 ? "Bs " + fmt(t.div) + (t.binOn && t.bcv > 0 ? " · brecha " + fmt((t.div / t.bcv - 1) * 100) + " %" : "") : "—") + "</b>" +
     "<span>TasaBin</span><b>" + (t.binOn ? "encendido (precios en divisas · se puede vender en Bs o en Dólares)" : "apagado") + "</b><span>De</span><b>" + fechaCorta(t.fecha) + (t.origen === "manual" ? " (puesta a mano)" : " (del sistema)") + "</b>";
@@ -1876,13 +1985,13 @@ async function revisarVersion(){
 }
 function recargarSiSePuede(){
   if (!_verNueva) return false;
-  if (F.items.length || P || S.sincronizando || document.querySelector(".mfondo:not(#mPago)")) return false;
+  if (F.items.length || F.orden || P || S.sincronizando || document.querySelector(".mfondo:not(#mPago)")) return false;
   try { sessionStorage.setItem("cm_caja_web_recargada", _verNueva); } catch (e) {}
   location.replace(location.pathname + "?v=" + encodeURIComponent(_verNueva));
   return true;
 }
 async function cambiarTasa(btn){
-  if (!await pedirClave("Cambiar tasa", "La tasa cambia lo que se cobra en Bs. Escribe la clave sin internet:")) return;
+  if (!await pedirClave("Cambiar tasa", "para cambiar la tasa (cambia lo que se cobra en Bs)")) return;
   const t = S.tasas || {}, on = !!t.binOn;
   const brechaHoy = on && t.bcv > 0 && t.div > 0 ? r2((t.div / t.bcv - 1) * 100) : 0;
   const r = await modal({

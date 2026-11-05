@@ -15,11 +15,13 @@
   <button type="button" class="btn-volver" id="btnSistema" onclick="irSistema(this)" title="Abrir el menú del sistema">🏠 Sistema</button>
   <span class="topbar-title" id="tbTit">🛒 Punto de Venta</span>
   <div class="sep"></div>
-  <div class="badge badge-vend oculto" id="badgeCajero" onclick="irCierre()" title="Cajero del turno · tocar para cerrar el turno">🧾 <span id="cajeroNombre">—</span> <span style="opacity:0.6;font-size:10px;">✎</span></div>
+  <div class="badge badge-vend info oculto" id="badgeCajero" title="Cajero del turno (el turno se cierra en ☰ Menú → Cerrar turno)">🧾 <span id="cajeroNombre">—</span></div>
   <div class="badge badge-tasa" id="badgeTasa">
     <span class="badge-tasa-click" onclick="verTasas()" title="Ver / cambiar las tasas">💱 <span id="tasaDisplay">—</span></span>
     <button type="button" class="btn-ocultar-tasa" id="btnOcultarTasa" onclick="toggleTasaVisible()" title="Ocultar tasa">👁️</button>
   </div>
+  <button type="button" class="btn-tema btn-vender-top oculto" id="btnIrVender" onclick="irA('vender')" title="Volver a la factura">🛒 <span class="mv-lbl">Volver a vender</span></button>
+  <button type="button" class="btn-tema btn-ordenes oculto" id="btnOrdenes" onclick="abrirOrdenes()" title="Órdenes por cobrar y facturas en espera">📋 <span class="mv-lbl">Órdenes</span><span class="ord-cnt" id="contOrdenes"></span></button>
   <button type="button" class="btn-tema btn-estado" id="pillEstado" onclick="irA('ventas')" title="Ventas de este equipo"><span class="dot"></span><span id="pillTxt">Revisando…</span><span id="pillCorto"></span></button>
   <button type="button" class="btn-tema btn-menu-vta" id="btnMenuVta" onclick="abrirMenuVta()" title="Menú de la caja">☰ <span class="mv-lbl">Menú</span></button>
   <button type="button" class="btn-tema" id="btnTema" title="Cambiar tema" onclick="cambiarTema()">🌙</button>
@@ -88,6 +90,7 @@
           <input type="checkbox" id="chkDolares" onchange="cambiarMoneda()" style="width:16px;height:16px;accent-color:var(--green);cursor:pointer;margin:0;">
           <span style="font-size:12px;font-weight:700;color:var(--green);white-space:nowrap;">💵 Venta en Dólares</span>
         </label>
+        <div class="badge-inp oculto" id="chipOrden"><label>Orden:</label><b id="chipOrdenId"></b><button type="button" class="btn-cli-x oculto" id="btnVendOrden" onclick="cambiarVendOrden()" title="Cambiar el vendedor de la orden (clave maestra)" style="background:#7f8c8d;">🔒👤</button><button type="button" class="btn-cli-x" onclick="soltarOrden()" title="Soltar la orden (vuelve a quedar disponible)">✕</button></div>
         <div class="vend-bar" id="vendBar">
           <label>Vendedor:</label>
           <select id="selVend" onchange="F.vend=this.value"></select>
@@ -120,6 +123,8 @@
       <div class="bottom-row">
         <div class="acciones">
           <button type="button" class="btn-primary" id="btnCobrar" onclick="registrarVenta()">✅ Registrar Venta</button>
+          <button type="button" class="btn-secondary" id="btnCotizar" onclick="imprimirCotizacion()">📄 Cotización</button>
+          <button type="button" class="btn-secondary" id="btnEspera" onclick="ponerEnEspera()" style="background:#8e44ad;">🗂️ En espera</button>
           <button type="button" class="btn-secondary" id="btnLimpiar" onclick="limpiarVentaConfirmar()">🗑️ Vaciar</button>
         </div>
         <button type="button" class="mv-aj-btn" onclick="mvToggleAjustes()"><span id="mvAjTxt">🏷️ Descuento, precio, N° y fecha</span><span id="mvAjFlecha">▸</span></button>
@@ -204,7 +209,7 @@
       <div class="card-tit">👤 Sesión</div>
       <div class="kv" id="infoSesion"></div>
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-        <button type="button" class="btn" id="btnSalir" onclick="cerrarSesion(this)">🚪 Cerrar sesión</button>
+        <button type="button" class="btn" id="btnSalir" onclick="cerrarSesion(this)">🚪 Entrar con otro usuario</button>
       </div>
     </div>
     <div class="card" style="margin-bottom:12px;">
@@ -284,5 +289,6 @@
 <script src="api.js"></script>
 <script src="sesion.js"></script>
 <script src="numeros.js"></script>
+<script src="ordenes.js"></script>
 </body>
 </html>
