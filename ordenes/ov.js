@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "1.0 · 5-11-2026";
+const OV_VER = "1.2 · 5-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -69,13 +69,25 @@ async function arrancar(){
   const b = await kvGet("borrador"); if (b && b.items) O = Object.assign(nuevaOrden(), b);
   aplicarTema();
   armarTeclado("pnTec", teclaPinNuevo); armarTeclado("piTec", teclaPin);
+  // Abierta desde el menú del sistema (tarjeta Órdenes): #pase=… → entra con ese mismo usuario
+  const mp = location.hash.match(/pase=([A-Za-z0-9]+)/);
+  if (mp) {
+    try { history.replaceState(null, "", location.pathname); } catch (e) {}
+    let r = null;
+    try { r = await api("cj_ov_canje", { pase: mp[1] }, 30000); } catch (e) { r = null; }
+    if (r && r.ok) { registrarEventos(); await trasEntrar(r); return; }
+    if (r && r.msg) await aviso({ icono: "🔒", titulo: "No se pudo entrar desde el sistema", html: esc(r.msg) });
+  }
+  registrarEventos();
+  continuar();
+}
+function registrarEventos(){
   window.addEventListener("online", () => { enLinea(true); enviarPendientes(); });
   window.addEventListener("offline", () => enLinea(false));
   document.addEventListener("visibilitychange", () => { if (!document.hidden) enviarPendientes(); });
   setInterval(() => enviarPendientes(), 60000);
   setInterval(() => { if (sesionOk() && hayRed()) actualizarDatos(false); }, 20 * 60000);
   document.addEventListener("wheel", e => { const t = e.target; if (t && t.type === "number" && document.activeElement === t) t.blur(); }, { passive: true });
-  continuar();
 }
 // ¿Qué pantalla toca?
 async function continuar(){
@@ -113,10 +125,25 @@ async function entrarUsuario(){
   btnLibre(b);
   if (!r || !r.ok) { aviso({ icono: "🔒", titulo: "No se pudo entrar", html: esc((r && r.msg) || "Usuario o clave incorrectos.") }); return; }
   $("enCla").value = "";
+  await trasEntrar(r);
+}
+// Entró con usuario y clave, o con el pase del menú del sistema (tarjeta Órdenes)
+async function trasEntrar(r){
+  if (OV.quien && OV.quien.usuario && String(OV.quien.usuario).toLowerCase() !== String(r.usuario.usuario).toLowerCase()) {
+    // Otro usuario en este teléfono: lo del anterior no se mezcla con lo suyo
+    if (OV.pend.length && !await confirmar({ icono: "⚠️", titulo: "Otro usuario", colorOk: "red", ok: "Borrarlas y seguir",
+      html: "En este teléfono hay <b>" + OV.pend.length + "</b> orden(es) por enviar de <b>" + esc(OV.quien.nombre) + "</b>. Si entras con otro usuario se borran.<br><br>Para no perderlas, que entre " + esc(OV.quien.nombre) + " y las envíe primero." })) {
+      try { await api("cj_ov_salir", { sesion: r.token }, 15000); } catch (e) {}
+      if (OV.tel && OV.quien) mostrarPin(); else mostrarEntrar();
+      return;
+    }
+    OV.pend = []; OV.d = null; OV.tel = ""; O = nuevaOrden();
+    await kvSet("pend", []); await kvDel("datos"); await kvDel("tel"); await kvDel("borrador");
+  }
   OV.ses = { token: r.token, expira: Date.now() + 12 * 3600e3 - 60000 }; await kvSet("ses", OV.ses);
   OV.quien = { usuario: r.usuario.usuario, nombre: (r.vendedor && r.vendedor.nombre) || r.usuario.nombre || r.usuario.usuario }; await kvSet("quien", OV.quien);
-  if (r.conPin) { _pinA = ""; _pin = ""; pantalla("vPinNuevo"); $("pnTit").textContent = "Crea tu PIN"; $("pnTxt").textContent = "4 números que solo tú sepas. Desde ahora entras en este teléfono solo con el PIN."; pintarDots("pnDots", ""); $("pnErr").textContent = ""; return; }
-  OV.tel = ""; await kvDel("tel");   // admin sin vendedor: entra con usuario y clave cada vez
+  if (r.conPin && !OV.tel) { _pinA = ""; _pin = ""; pantalla("vPinNuevo"); $("pnTit").textContent = "Crea tu PIN"; $("pnTxt").textContent = "4 números que solo tú sepas. Desde ahora entras en este teléfono solo con el PIN."; pintarDots("pnDots", ""); $("pnErr").textContent = ""; return; }
+  if (!r.conPin) { OV.tel = ""; await kvDel("tel"); }   // admin sin vendedor: entra con usuario y clave cada vez
   if (await actualizarDatos(true)) { entrarApp(); enviarPendientes(); }
 }
 
@@ -244,7 +271,7 @@ function pintarEstado(){
   const sen = conSenal();
   p.classList.add(sen ? "on" : "off");
   if (n) p.classList.add("pend");
-  $("pillTxt").textContent = (sen ? "" : "Sin señal") + (n ? (sen ? "" : " · ") + "⏳ " + n : (sen ? "Al día" : ""));
+  $("pillTxt").textContent = (sen ? "" : "Sin señal") + (n ? (sen ? "" : " · ") + (OV.enviando ? "📤 " : "⏳ ") + n : (sen ? "Al día" : ""));
   $("cntPend").textContent = n ? String(n) : "";
   // Avisos arriba
   let h = "";
@@ -324,18 +351,33 @@ function pintarCliente(){
   $("cliBox").innerHTML = c ? '<div class="cli-card"><div style="flex:1;min-width:0;"><div class="c-nom">' + esc(c.nombre) + '</div><div class="c-sub">' + esc(c.cedula) + (c.telefono ? " · " + esc(c.telefono) : "") + (c.nuevo ? " · nuevo" : "") +
     '</div></div><button type="button" class="btn-m gray" onclick="elegirCliente()">Cambiar</button></div>' : '<button type="button" class="btn-grande" onclick="elegirCliente()">👤 Elegir cliente</button>';
 }
-function buscar(){
-  const q = norm($("busca").value), d = OV.d || {};
-  if (!q && !OV.cat) { $("res").innerHTML = '<div class="vacio">Busca un producto o toca una categoría.</div>'; return; }
+// La lista de productos (ordenada por nombre), de 40 en 40 con «Ver más». Con foto si el producto la tiene.
+const LISTA_PASO = 40;
+let _lista = { de: 0, prods: [] }, _filtro = "", _lim = LISTA_PASO;
+function productosOrdenados(){
+  const d = OV.d || {};
+  if (_lista.de !== d.descargadoEn) _lista = { de: d.descargadoEn, prods: (d.productos || []).slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")) };
+  return _lista.prods;
+}
+function fotoHTML(p, cls){
+  const u = String((p && p.imagen) || "").trim().replace(/"/g, "%22");
+  return '<span class="' + cls + '">' + (u ? '<img alt="" loading="lazy" decoding="async" src="' + u + '" onerror="this.parentNode.innerHTML=\'📦\'">' : "📦") + "</span>";
+}
+function verMas(){ _lim += LISTA_PASO; buscar(true); }
+function buscar(seguir){
+  const q = norm($("busca").value);
+  const f = q + "|" + OV.cat;
+  if (!seguir && f !== _filtro) { _filtro = f; _lim = LISTA_PASO; }
   const pal = q.split(/\s+/).filter(Boolean);
-  const L = (d.productos || []).filter(p => (!OV.cat || p.categoria === OV.cat) && pal.every(w => norm(p.nombre + " " + p.marca + " " + p.codigo + " " + p.codigoBarras).indexOf(w) >= 0)).slice(0, 40);
-  if (!L.length) { $("res").innerHTML = '<div class="vacio">No hay productos con «' + esc($("busca").value) + "».</div>"; return; }
+  const T = productosOrdenados().filter(p => (!OV.cat || p.categoria === OV.cat) && (!pal.length || pal.every(w => norm(p.nombre + " " + p.marca + " " + p.codigo + " " + p.codigoBarras).indexOf(w) >= 0)));
+  const L = T.slice(0, _lim);
+  if (!L.length) { $("res").innerHTML = '<div class="vacio">' + (q ? "No hay productos con «" + esc($("busca").value) + "»." : "No hay productos en esta categoría.") + "</div>"; return; }
   $("res").innerHTML = L.map((p, k) => {
     const x = precioLista(p, 0), pu = r2(enPantalla(x.base) * (1 + x.iva / 100)), q2 = enOrden(p.codigo), disp = r3(disponible(p.codigo) - q2);
     const cls = disp <= 0 ? "no" : disp <= 3 ? "poco" : "";
-    return '<div class="res-item"><div class="r-info"><div class="r-nom">' + esc(p.nombre) + '</div><div class="r-sub">' + esc([p.marca, p.codigo].filter(Boolean).join(" · ")) + '</div><span class="quedan ' + cls + '">' + (disp > 0 ? "quedan " + fmtCant(disp) : "no queda") + "</span></div>" +
+    return '<div class="res-item">' + fotoHTML(p, "r-img") + '<div class="r-info"><div class="r-nom">' + esc(p.nombre) + '</div><div class="r-sub">' + esc([p.marca, p.codigo].filter(Boolean).join(" · ")) + '</div><span class="quedan ' + cls + '">' + (disp > 0 ? "quedan " + fmtCant(disp) : "no queda") + "</span></div>" +
       '<div class="r-pre">$' + fmt(pu) + "<small>" + esc(uTxt().trim()) + '</small></div><button type="button" class="btn-mas" data-k="' + k + '">+' + (q2 > 0 ? '<span class="q">' + fmtCant(q2) + "</span>" : "") + "</button></div>";
-  }).join("");
+  }).join("") + (T.length > L.length ? '<button type="button" class="btn block" style="margin-top:4px;" onclick="verMas()">Ver más productos (' + (T.length - L.length) + ")</button>" : "");
   $("res").querySelectorAll(".btn-mas").forEach(b => b.addEventListener("click", () => agregar(L[Number(b.dataset.k)])));
 }
 function agregar(p){
@@ -343,7 +385,7 @@ function agregar(p){
   if (ya) ya.cantidad = r3((Number(ya.cantidad) || 0) + 1);
   else O.items.push({ key: ++O.seq, codigo: p.codigo, nombre: p.nombre, cantidad: 1, tipoIdx: 0, manual: false, pFinal: 0, iva: null });
   const n = String(p.nombre); toast("✅ " + (n.length > 30 ? n.slice(0, 29) + "…" : n) + " ×" + fmtCant(enOrden(p.codigo)));
-  buscar(); pintarLineas(); pintarTotal(); guardarBorrador();
+  buscar(true); pintarLineas(); pintarTotal(); guardarBorrador();
 }
 function pintarLineas(){
   const d = OV.d || {}, tps = (d.tiposPrecios || []);
@@ -355,7 +397,7 @@ function pintarLineas(){
       '<option value="manual"' + (l.manual ? " selected" : "") + ">Manual</option>";
     const falta = p && enOrden(l.codigo) > disponible(l.codigo) + 0.0005;
     const pu = puLinea(l), tot = r2(pu * (Number(l.cantidad) || 0));
-    return '<div class="lin' + (falta || !p ? " falta" : "") + '" id="ln_' + l.key + '"><div class="lin-cab"><span class="l-nom">' + esc(l.nombre) + '</span><button type="button" class="btn-cli-x" onclick="quitar(' + l.key + ')">✕</button></div>' +
+    return '<div class="lin' + (falta || !p ? " falta" : "") + '" id="ln_' + l.key + '"><div class="lin-cab">' + fotoHTML(p, "l-img") + '<span class="l-nom">' + esc(l.nombre) + '</span><button type="button" class="btn-cli-x" onclick="quitar(' + l.key + ')">✕</button></div>' +
       '<div class="lin-fila"><div class="paso"><button type="button" onclick="paso(' + l.key + ',-1)">−</button><input type="number" inputmode="decimal" min="0" step="any" id="q_' + l.key + '" value="' + (l.cantidad === "" ? "" : l.cantidad) + '" placeholder="Cant." oninput="cant(' + l.key + ',this.value)"><button type="button" onclick="paso(' + l.key + ',1)">+</button></div>' +
       '<select onchange="tipoLinea(' + l.key + ',this)">' + opts + "</select>" +
       (l.manual ? '<input class="man" type="number" inputmode="decimal" min="0" step="any" id="pm_' + l.key + '" placeholder="Precio c/IVA" value="' + (l.pFinal > 0 ? l.pFinal : "") + '" oninput="precioMan(' + l.key + ',this.value)">' : '<span class="l-pu">$' + fmt(pu) + " c/u</span>") +
@@ -496,20 +538,12 @@ async function enviarOrden(){
   OV.pend = OV.pend.filter(x => x.idLocal !== e.idLocal && x.idLocal !== O.editPend).concat([e]);
   try { await kvSet("pend", OV.pend); }
   catch (x) { aviso({ icono: "❌", titulo: "No se pudo guardar", html: "El teléfono no pudo guardar la orden (" + esc(x.message) + "). Sigue en pantalla: vuelve a intentar." }); return; }
-  const editando = !!O.id;
+  // La orden pasa a la cola y la pantalla queda lista para la siguiente: se envía por detrás (sin esperar)
   limpiarOrden(); pintarEstado();
-  if (!hayRed() || !sesionOk()) {
-    await aviso({ icono: "⏳", titulo: "Orden guardada en el teléfono", html: (hayRed() ? "Tu sesión venció: escribe tu PIN para enviarla." : "No hay señal: la orden quedó guardada en el teléfono y <b>se envía sola cuando vuelva</b>.") + "<br><br>La ves en <b>📋 Mis órdenes</b> como «⏳ Por enviar»." });
-    if (hayRed() && !sesionOk()) pedirEntrada(enviarPendientes);
-    return;
-  }
-  const b = $("btnEnviar"); btnOcupado(b, "Enviando…");
-  const r = await enviarUna(e);
-  btnLibre(b, "✅ Enviar orden");
-  if (r === "ok") toast("✅ " + (editando ? "Cambios guardados" : "Orden " + (e.idServidor || "") + " enviada"));
-  else if (r === "red") aviso({ icono: "⏳", titulo: "Orden guardada en el teléfono", html: "Se fue la señal al enviarla: <b>se envía sola cuando vuelva</b>. La ves en <b>📋 Mis órdenes</b> como «⏳ Por enviar»." });
-  else if (r === "sesion") pedirEntrada(enviarPendientes);
-  else mostrarError(e);
+  if (!hayRed()) { toast("⏳ Sin señal: la orden queda en cola y se envía sola"); return; }
+  if (!sesionOk()) { toast("⏳ Orden en cola"); pedirEntrada(enviarPendientes); return; }
+  toast("📤 Orden en cola: se está enviando");
+  enviarPendientes();
 }
 // Manda una orden guardada. Devuelve "ok" · "red" · "sesion" · "error"
 async function enviarUna(e){
@@ -521,7 +555,8 @@ async function enviarUna(e){
     e.idServidor = r.id;
     OV.pend = OV.pend.filter(x => x !== e); await kvSet("pend", OV.pend);
     if (r.ordenes) { OV.d.ordenes = r.ordenes; OV.d.reservas = r.reservas || OV.d.reservas; await kvSet("datos", OV.d); }
-    pintarEstado(); pintarMis(); buscar();
+    pintarEstado(); pintarMis();
+    if (!$("main").classList.contains("oculto")) buscar();
     return "ok";
   }
   if (r && r.reintentar) return "red";
@@ -531,23 +566,33 @@ async function enviarUna(e){
   return "error";
 }
 function mostrarError(e){
-  modal({ icono: "⚠️", titulo: "La orden no se envió", html: '<div class="m-txt">' + esc(e.msg) + (e.codigo === "CLAVE_PRECIO" ? "<br><br>Corrígela y vuelve a escribir la clave de precio manual." : "") + "<br><br>Quedó guardada en el teléfono: corrígela y vuelve a enviarla.</div>",
+  return modal({ icono: "⚠️", titulo: "La orden no se envió", html: '<div class="m-txt">' + esc(e.msg) + (e.codigo === "CLAVE_PRECIO" ? "<br><br>Corrígela y vuelve a escribir la clave de precio manual." : "") + "<br><br>Quedó guardada en el teléfono: corrígela y vuelve a enviarla.</div>",
     botones: [{ txt: "Después", v: false }, { txt: "✏️ Corregir", v: true, cls: "green" }] }).then(v => { if (v) corregirPend(e.idLocal); });
 }
+// Manda la cola, de la más vieja a la más nueva. Si mientras tanto entran más órdenes, también las manda.
 async function enviarPendientes(){
   if (OV.enviando || !OV.pend.length || !hayRed()) { pintarEstado(); return; }
   if (!sesionOk()) { pintarEstado(); return; }
-  OV.enviando = true;
-  let n = 0;
+  OV.enviando = true; pintarEstado();
+  const enviadas = [], malas = [];
+  let corte = "";
   try {
-    for (const e of OV.pend.slice()) {
-      if (e.estado === "error") continue;
+    for (;;) {
+      const e = OV.pend.find(x => x.estado !== "error" && !x._intentada);
+      if (!e) break;
+      e._intentada = true;
       const r = await enviarUna(e);
-      if (r === "ok") n++;
-      else if (r === "red" || r === "sesion") break;
+      if (r === "ok") enviadas.push(e);
+      else if (r === "error") malas.push(e);
+      else { corte = r; break; }
     }
-  } finally { OV.enviando = false; pintarEstado(); }
-  if (n) toast("✅ " + (n === 1 ? "1 orden enviada" : n + " órdenes enviadas"));
+  } finally {
+    OV.pend.forEach(x => { delete x._intentada; });
+    OV.enviando = false; pintarEstado();
+  }
+  if (enviadas.length) toast("✅ " + (enviadas.length === 1 ? (enviadas[0].id ? "Cambios guardados en " + enviadas[0].id : "Orden " + (enviadas[0].idServidor || "") + " enviada") : enviadas.length + " órdenes enviadas"));
+  if (corte === "sesion") pedirEntrada(enviarPendientes);
+  for (const e of malas) await mostrarError(e);
 }
 
 // ══ MIS ÓRDENES ══
