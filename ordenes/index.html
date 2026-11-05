@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
 <title>Órdenes · ControlMaster</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" href="icono-180.png">
 <link rel="stylesheet" href="ordenes.css">
 </head>
 <body class="light">
@@ -115,6 +118,7 @@
   <div class="bt-tot"><b id="btTot">$0,00</b><span id="btSub">Orden vacía</span></div>
   <button type="button" class="btn green" id="btnEnviar" onclick="enviarOrden()">✅ Enviar orden</button>
 </div>
+<div class="cargando oculto" id="cargando"><div class="cg-box"><div class="cg-sp"></div><div class="cg-txt" id="cgTxt">Cargando…</div><div class="cg-sub" id="cgSub"></div></div></div>
 <div id="toast"></div>
 
 <script src="ov.js"></script>

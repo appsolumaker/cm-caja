@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "1.2 · 5-11-2026";
+const OV_VER = "1.3 · 5-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -74,7 +74,9 @@ async function arrancar(){
   if (mp) {
     try { history.replaceState(null, "", location.pathname); } catch (e) {}
     let r = null;
+    cargando("Entrando…");
     try { r = await api("cj_ov_canje", { pase: mp[1] }, 30000); } catch (e) { r = null; }
+    cargandoFin();
     if (r && r.ok) { registrarEventos(); await trasEntrar(r); return; }
     if (r && r.msg) await aviso({ icono: "🔒", titulo: "No se pudo entrar desde el sistema", html: esc(r.msg) });
   }
@@ -92,7 +94,7 @@ function registrarEventos(){
 // ¿Qué pantalla toca?
 async function continuar(){
   if (sesionOk() && OV.d) { entrarApp(); actualizarDatos(false); enviarPendientes(); return; }
-  if (sesionOk()) { const ok = await actualizarDatos(false); if (ok) { entrarApp(); enviarPendientes(); return; } }
+  if (sesionOk()) { cargando("Descargando productos…", "Un momento, por favor."); const ok = await actualizarDatos(false); cargandoFin(); if (ok) { entrarApp(); enviarPendientes(); return; } }
   if (OV.tel && OV.quien) { mostrarPin(); return; }
   mostrarEntrar();
 }
@@ -144,7 +146,14 @@ async function trasEntrar(r){
   OV.quien = { usuario: r.usuario.usuario, nombre: (r.vendedor && r.vendedor.nombre) || r.usuario.nombre || r.usuario.usuario }; await kvSet("quien", OV.quien);
   if (r.conPin && !OV.tel) { _pinA = ""; _pin = ""; pantalla("vPinNuevo"); $("pnTit").textContent = "Crea tu PIN"; $("pnTxt").textContent = "4 números que solo tú sepas. Desde ahora entras en este teléfono solo con el PIN."; pintarDots("pnDots", ""); $("pnErr").textContent = ""; return; }
   if (!r.conPin) { OV.tel = ""; await kvDel("tel"); }   // admin sin vendedor: entra con usuario y clave cada vez
-  if (await actualizarDatos(true)) { entrarApp(); enviarPendientes(); }
+  await descargarYEntrar();
+}
+// Descarga productos, precios y clientes mostrando "Cargando…" en toda la pantalla
+async function descargarYEntrar(){
+  cargando("Descargando productos…", "La primera vez puede tardar un poco. No cierres la página.");
+  let ok = false;
+  try { ok = await actualizarDatos(true); } finally { cargandoFin(); }
+  if (ok) { entrarApp(); enviarPendientes(); }
 }
 
 // ── PIN (teclado grande) ──
@@ -161,14 +170,16 @@ async function teclaPinNuevo(k){
   if (!_pinA) { _pinA = _pin; _pin = ""; setTimeout(() => { pintarDots("pnDots", ""); $("pnTit").textContent = "Repite tu PIN"; $("pnTxt").textContent = "Escríbelo otra vez para confirmarlo."; }, 180); return; }
   if (_pin !== _pinA) { _pinA = ""; _pin = ""; pintarDots("pnDots", ""); $("pnTit").textContent = "Crea tu PIN"; $("pnErr").textContent = "No coinciden. Escríbelo de nuevo."; return; }
   let r;
+  cargando("Creando tu PIN…");
   try { r = await api("cj_ov_pin", { pin: _pin, tel: OV.tel }, 30000); }
-  catch (e) { _pin = ""; _pinA = ""; pintarDots("pnDots", ""); $("pnErr").textContent = e.message + " Vuelve a intentar."; return; }
+  catch (e) { cargandoFin(); _pin = ""; _pinA = ""; pintarDots("pnDots", ""); $("pnTit").textContent = "Crea tu PIN"; $("pnErr").textContent = e.message + " Vuelve a intentar."; return; }
+  cargandoFin();
   if (!r || !r.ok) { _pin = ""; _pinA = ""; pintarDots("pnDots", ""); $("pnTit").textContent = "Crea tu PIN"; $("pnErr").textContent = (r && r.msg) || "No se pudo crear el PIN."; if (r && r.codigo === "SESION") mostrarEntrar(); return; }
   OV.tel = r.tel; await kvSet("tel", OV.tel);
   OV.quien = { usuario: OV.quien.usuario, nombre: (r.vendedor && r.vendedor.nombre) || r.nombre }; await kvSet("quien", OV.quien);
   _pin = ""; _pinA = "";
   toast("✅ PIN creado");
-  if (await actualizarDatos(true)) { entrarApp(); enviarPendientes(); }
+  await descargarYEntrar();
 }
 let _pinOcupado = false;
 async function teclaPin(k){
@@ -176,16 +187,16 @@ async function teclaPin(k){
   if (k === "⌫") _pin = _pin.slice(0, -1); else if (_pin.length < 4) _pin += k;
   pintarDots("piDots", _pin); $("piErr").textContent = "";
   if (_pin.length < 4) return;
-  _pinOcupado = true; $("piErr").innerHTML = '<span class="sp"></span>Entrando…';
+  _pinOcupado = true; cargando("Entrando…");
   let r;
   try { r = await api("cj_ov_entrar", { tel: OV.tel, pin: _pin }, 30000); }
   catch (e) {
-    _pinOcupado = false; _pin = ""; pintarDots("piDots", "");
+    cargandoFin(); _pinOcupado = false; _pin = ""; pintarDots("piDots", "");
     $("piErr").textContent = "No hay conexión con el sistema." + (OV.d ? " Puedes seguir sin internet: las órdenes se envían cuando vuelva." : "");
     $("piOffline").classList.toggle("oculto", !OV.d);
     return;
   }
-  _pinOcupado = false; _pin = ""; pintarDots("piDots", "");
+  cargandoFin(); _pinOcupado = false; _pin = ""; pintarDots("piDots", "");
   if (!r || !r.ok) {
     if (r && r.codigo === "TEL") { OV.tel = ""; await kvDel("tel"); await aviso({ icono: "🔒", titulo: "Entra con tu usuario y clave", html: esc(r.msg) }); mostrarEntrar(); return; }
     $("piErr").textContent = (r && r.msg) || "No se pudo entrar.";
@@ -194,7 +205,8 @@ async function teclaPin(k){
   OV.ses = { token: r.token, expira: Date.now() + (Number(r.horas) || 24) * 3600e3 - 60000 }; await kvSet("ses", OV.ses);
   OV.sinInternet = false;
   if (OV._volver) { const f = OV._volver; OV._volver = null; entrarApp(); f(); return; }
-  if (await actualizarDatos(!OV.d)) { entrarApp(); enviarPendientes(); }
+  if (OV.d) { entrarApp(); enviarPendientes(); actualizarDatos(false); return; }   // ya tiene productos: entra de una y se actualizan por detrás
+  await descargarYEntrar();
 }
 async function olvidePin(){
   const ok = await confirmar({ icono: "🔢", titulo: "Olvidé mi PIN", ok: "Entrar con usuario y clave", html: "Entra con tu usuario y clave del sistema y crea un PIN nuevo. Las órdenes que tengas guardadas en este teléfono no se pierden." });
@@ -730,6 +742,9 @@ function aviso(o){ return modal({ icono: o.icono || "ℹ️", titulo: o.titulo, 
 function confirmar(o){ return modal({ icono: o.icono || "❓", titulo: o.titulo, html: '<div class="m-txt">' + (o.html || "") + "</div>", botones: [{ txt: o.cancel || "Cancelar", v: false }, { txt: o.ok || "Aceptar", v: true, cls: o.colorOk || "green" }] }); }
 let _toastT = null;
 function toast(t){ const el = $("toast"); el.textContent = t; el.classList.remove("on"); void el.offsetWidth; el.classList.add("on"); clearTimeout(_toastT); _toastT = setTimeout(() => el.classList.remove("on"), 2500); }
+// Pantalla "Cargando…" (encima de todo menos los avisos)
+function cargando(txt, sub){ $("cgTxt").textContent = txt || "Cargando…"; $("cgSub").textContent = sub || ""; $("cargando").classList.remove("oculto"); }
+function cargandoFin(){ $("cargando").classList.add("oculto"); }
 function btnOcupado(b, txt){ if (!b) return; if (b._txt == null) b._txt = b.innerHTML; b.disabled = true; b.innerHTML = '<span class="sp"></span>' + esc(txt || "Procesando…"); }
 function btnLibre(b, txt){ if (!b) return; b.disabled = false; if (txt != null) b.innerHTML = txt; else if (b._txt != null) b.innerHTML = b._txt; b._txt = null; }
 
