@@ -16,7 +16,7 @@
 //  Etapa 1D (2.4): entrada directa. Un equipo activado no pide usuario y clave: entra solo a la caja (sesión solo de
 //  esa caja, del último usuario que entró en el equipo) y los cajeros solo eligen su nombre y ponen su PIN.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.5 · 4-11-2026";
+const APP_VER = "2.6 · 5-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -59,7 +59,7 @@ const S = {
   vista: "vender"
 };
 const F = nuevaFactura();   // la venta que se está armando
-function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, dolares: false, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, claveCon: "", seq: 0, avisoEx: {}, orden: null }; }   // dolares: Venta en Dólares (TasaBin), se apaga en cada venta como en Ventas
+function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, dolares: false, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, claveCon: "", seq: 0, avisoEx: {}, orden: null, dlv: { tipo: "delivery", monto: 0 } }; }   // dolares: Venta en Dólares (TasaBin), se apaga en cada venta como en Ventas
 let P = null;              // el pago abierto
 let _ventaGuardada = null; // la que se acaba de guardar (para imprimir)
 
@@ -346,6 +346,7 @@ function pintarEstado(){
   $("pillTxt").textContent = t; $("pillCorto").textContent = k;
   pintarNumFactura();
   p.title = t + " — tocar para ver las ventas de este equipo";
+  if (typeof pintarBotonOrdenes === "function") pintarBotonOrdenes();   // 📋 Órdenes marca cuando no hay internet
 }
 function pintarBanners(){
   pintarNumFactura();
@@ -563,6 +564,8 @@ function pintarSelectores(){
   vd.disabled = F.desc.tipo === "ninguno";
   if (document.activeElement !== vd) vd.value = F.desc.valor > 0 ? F.desc.valor : "";
   $("lblDescVal").textContent = F.desc.tipo === "pct" ? "%" : F.desc.tipo === "monto" ? "$ " + unidadU() : "";
+  $("tipoDelivery").value = F.dlv.tipo === "envio" ? "envio" : "delivery";
+  const vdl = $("valorDelivery"); if (document.activeElement !== vdl) vdl.value = dlvMonto() > 0 ? dlvMonto() : "";
   pintarChipOrden();
 }
 function tiposConPrecio(){
@@ -646,17 +649,21 @@ async function revisarExistencia(key){
       "<br><br>Si lo tienes en la mano, puedes venderlo: la línea queda marcada en rojo y al registrarse el sistema avisa que hay que revisar el inventario." });
 }
 function pintarTotales(){
-  const x = totales(F.items, F.desc), bs = r2(x.total * bsPorU());
+  const x = totales(F.items, F.desc), T = totalConDlv(), bs = T.bs;
   $("subTotal").textContent = fmt(x.sub);
   $("ivaTotal").textContent = fmt(x.ivaR);
   $("rowDesc").classList.toggle("oculto", !(x.desc > 0));
   $("descMonto").textContent = fmt(x.desc);
-  $("totalUSD").textContent = fmt(x.total);
+  $("totalUSD").textContent = fmt(T.total);
+  $("rowDeliv").classList.toggle("oculto", !(T.dlv > 0));
+  $("delivLbl").textContent = (F.dlv.tipo === "envio" ? "📦 " : "🛵 ") + dlvTxt();
+  $("delivMonto").textContent = fmt(T.dlv);
+  $("delivNota").textContent = binOn() ? " BCV" : "";
   $("totalU").textContent = binOn() ? (unidadU() === "div" ? "div" : "BCV") : "";
   $("totalBS").textContent = fmt(bs);
   // Teléfono: el total abajo y cuántos productos van
   const n = F.items.length;
-  $("mvTotUSD").textContent = "$ " + fmt(x.total) + (binOn() ? " " + unidadU() : "");
+  $("mvTotUSD").textContent = "$ " + fmt(T.total) + (binOn() ? " " + unidadU() : "");
   $("mvTotBS").textContent = "Bs " + fmt(bs);
   $("mvCnt").textContent = n ? String(n) : "";
   $("mvCntTxt").textContent = n ? (n === 1 ? "1 producto" : n + " productos") : "Factura vacía";
@@ -745,8 +752,8 @@ function manualTot(key, v){
 }
 async function limpiarVentaConfirmar(){
   if (F.orden) { soltarOrden(); return; }   // la orden vuelve a la lista (ordenes.js)
-  if (!F.items.length && !F.cliente.cedula && F.desc.tipo === "ninguno") return;
-  const ok = await confirmar({ icono: "🗑️", titulo: "Vaciar la venta", html: "Se quitan los productos, el cliente y el descuento de esta venta. No se guarda nada.", ok: "Sí, vaciar", colorOk: "red" });
+  if (!F.items.length && !F.cliente.cedula && F.desc.tipo === "ninguno" && !dlvMonto()) return;
+  const ok = await confirmar({ icono: "🗑️", titulo: "Vaciar la venta", html: "Se quitan los productos, el cliente, el descuento y el delivery de esta venta. No se guarda nada.", ok: "Sí, vaciar", colorOk: "red" });
   if (ok) limpiarVenta();
 }
 function limpiarVenta(){
@@ -838,6 +845,16 @@ async function cambiarTipoDesc(sel){
 }
 function cambiarValorDesc(val){ F.desc.valor = Math.max(0, Number(val) || 0); pintarTotales(); }
 function quitarDescuento(){ F.desc = { tipo: "ninguno", valor: 0 }; pintarSelectores(); pintarTotales(); }
+// ── Delivery / envío (Etapa 2B), como en Ventas: se escribe en $ BCV (es para el motorizado o la agencia) ──
+//  En pantalla y en el ticket va SIEMPRE por su monto ($2), también en Venta en Dólares; sus Bs, a tasa BCV.
+//  En los libros (el servidor) vale su monto en $ BCV pasado a divisas con TasaBin ($2 BCV = $1,80 div con 11,1 % de brecha).
+function dlvMonto(){ return r2(Math.max(0, Number(F.dlv && F.dlv.monto) || 0)); }
+function dlvLibro(m){ m = r2(Math.max(0, Number(m) || 0)); return binOn() && tBcv() > 0 && tDiv() > 0 && Math.abs(tDiv() - tBcv()) > 0.000001 ? r2(m * tBcv() / tDiv()) : m; }
+function dlvTxt(t){ return (t || (F.dlv && F.dlv.tipo)) === "envio" ? "Envío" : "Delivery"; }
+function cambiarDelivery(v){ F.dlv.monto = Math.max(0, Number(v) || 0); pintarTotales(); }
+function cambiarTipoDelivery(v){ F.dlv.tipo = v === "envio" ? "envio" : "delivery"; pintarTotales(); }
+// Total de la factura en pantalla con el delivery, y sus Bs (los productos a la tasa de la venta, el delivery a BCV)
+function totalConDlv(){ const x = totales(F.items, F.desc), d = dlvMonto(); return { prod: x.total, dlv: d, total: r2(x.total + d), bs: r2(x.total * bsPorU() + d * tBcv()) }; }
 
 // ── Clientes (como el modal de Ventas: buscar, elegir o crearlo ahí mismo) ──
 const cedNorm = c => String(c == null ? "" : c).trim().replace(/\.0$/, "").toUpperCase();
@@ -1082,10 +1099,19 @@ async function abrirPago(){
     S.tasaOkHoy = hoyTxt();
   }
   repreciar();
-  const tot = totales(F.items, F.desc).total, m = modoVenta();
-  P = { modo: m, lineas: [], cred: { on: false, monto: "", editado: false }, vt: { on: false, lineas: [] }, seq: 0, verMet: false, dias: 0, total: tot, desbloq: false };
-  $("pgTotal").innerHTML = "$ " + fmt(tot) + "<small>" + unidadU() + "</small>";
-  $("pgTotalBs").textContent = "Bs " + fmt(r2(tot * bsPorU()));
+  const T = totalConDlv(), m = modoVenta(), aparte = m === "div" && T.dlv > 0;   // Venta en Dólares con delivery: se cobra en dos pasos
+  const tot = aparte ? T.prod : T.total;
+  P = { modo: m, lineas: [], cred: { on: false, monto: "", editado: false }, vt: { on: false, lineas: [] }, seq: 0, verMet: false, dias: 0, total: tot, desbloq: false,
+        dlvMonto: T.dlv, dlv: { on: aparte, monto: T.dlv, tipo: F.dlv.tipo, modo: "", metodo: "" } };
+  if (aparte) {
+    $("pgTotal").innerHTML = '<div class="tp-filas"><div class="tp-fila"><span>🛒 Productos</span><span>$' + fmt(T.prod) + ' <small>div</small></span></div>' +
+      '<div class="tp-fila"><span>' + (F.dlv.tipo === "envio" ? "📦 " : "🛵 ") + dlvTxt() + '</span><span>$' + fmt(T.dlv) + " <small>(o Bs " + fmt(r2(T.dlv * tBcv())) + ")</small></span></div></div>";
+    $("pgTotalBs").textContent = "";
+  } else {
+    $("pgTotal").innerHTML = "$ " + fmt(tot) + "<small>" + unidadU() + "</small>";
+    $("pgTotalBs").textContent = "Bs " + fmt(r2(tot * bsPorU())) + (T.dlv > 0 ? " · incluye " + dlvTxt().toLowerCase() + " $" + fmt(T.dlv) : "");
+  }
+  $("pgPaso1").classList.toggle("oculto", !aparte); $("pgPaso1M").textContent = "$" + fmt(T.prod);
   $("pgHint").innerHTML = m === "div"
     ? "💵 <b>Venta en Dólares</b>: los $ van a la par · los Bs a tasa Divisas <b>Bs " + fmt(tDiv()) + "</b>."
     : "Venta en <b>$ BCV</b>: los Bs van a tasa BCV <b>Bs " + fmt(tBcv()) + "</b> · los $ a la tasa que elijas en cada línea" +
@@ -1147,7 +1173,7 @@ function pgEstado(){
   let vtCub = 0, vtVale = 0;
   if (P.vt.on) P.vt.lineas.forEach(v => { vtCub += pgCubreVt(v); vtVale += pgValeVt(v); });
   const quedaX = -pendX - vtCub, queda = r2(quedaX);
-  const valorVenta = valorLibro(F.items, F.desc);
+  const valorVenta = r2(valorLibro(F.items, F.desc) + (P.dlv.on ? 0 : dlvLibro(P.dlvMonto)));   // en dos pasos, el paso 1 es solo de los productos
   const dif = r2(vale + credVale - vtVale - valorVenta);
   return { cub: r2(cub), cred, credVale, cubT: r2(cubT), pend, pendX, vtCub: r2(vtCub), vtVale: r2(vtVale), queda, quedaX, vale: r2(vale), valorVenta, dif, hay: P.lineas.length > 0 || P.cred.on };
 }
@@ -1278,7 +1304,7 @@ function pgActualizar(){
       if (Math.abs(st.queda) <= TOL) h = '<div class="bal ok">✅ Pago exacto con vuelto</div>';
       else if (st.queda > 0) h = '<div class="bal sobra">Faltan ' + txtU(st.queda) + " por devolver" + bs(st.queda) + "</div>";
       else h = '<div class="bal falta">⚠️ El vuelto pasa de lo que sobra por ' + txtU(-st.queda) + "</div>";
-    } else h = '<div class="bal ok">✅ Pago exacto: cubierto ' + txtU(P.total) + " de " + txtU(P.total) + "</div>";
+    } else h = '<div class="bal ok">' + (P.dlv.on ? "✅ Productos pagados: " + txtU(P.total) : "✅ Pago exacto: cubierto " + txtU(P.total) + " de " + txtU(P.total)) + "</div>";
     if (st.pend <= TOL && Math.abs(st.dif) > 0.01 && !(st.pend < -TOL && !P.vt.on)) {
       const favor = st.dif > 0;
       h += '<div class="dif ' + (favor ? "afavor" : "encontra") + '">💹 Diferencial ' + (favor ? "a favor" : "en contra") + ": <b>" + txtL(Math.abs(st.dif)) + "</b>. Lo recibido vale " + txtL(r2(st.vale + st.credVale - st.vtVale)) + " y la venta vale " + txtL(st.valorVenta) + "." + pgMotivoDif() + "</div>";
@@ -1290,7 +1316,15 @@ function pgActualizar(){
   $("pgMetodos").classList.toggle("oculto", plegar);
   $("pgMas").classList.toggle("oculto", !plegar);
   const vm = $("pgVtMetodos"); if (vm && P.vt.on) vm.classList.toggle("oculto", P.vt.lineas.length >= 2 || (P.vt.lineas.length > 0 && Math.abs(st.queda) <= TOL));
-  $("pgDias").classList.toggle("oculto", !(P.cred.on && $("selDias").options.length > 1));
+  $("pgDias").classList.toggle("oculto", !((P.cred.on || P.dlv.modo === "cred") && $("selDias").options.length > 1));
+  pgDlvPintar();
+  const todo = $("pgTodo");
+  if (!P.dlv.on) todo.innerHTML = "";
+  else {
+    const uno = st.hay && st.pend <= TOL, dos = !!pgDlvListo();
+    todo.innerHTML = uno && dos ? '<div class="pg-todo ok">✅ Todo pagado. Toca <b>Registrar</b>.</div>'
+      : '<div class="pg-todo falta">Falta: ' + [uno ? "" : "① los productos", dos ? "" : "② el " + dlvTxt(P.dlv.tipo).toLowerCase()].filter(Boolean).join(" y ") + "</div>";
+  }
   $("pgLineasTit").classList.toggle("oculto", !(P.lineas.length || P.cred.on));
 }
 function pgMotivoDif(){
@@ -1343,20 +1377,61 @@ function pgTasaOtra(id, val){
   if (Number(val) > 0) pgAutocompletar(l);
   pgActualizar();
 }
+// El crédito necesita un cliente con cédula: si la venta está en Genérico, se elige (o se crea) antes
+async function pgClienteParaCredito(){
+  if (F.cliente.cedula) return true;
+  const r = await modal({ icono: "👤", titulo: "El crédito necesita un cliente", html: '<div class="m-txt">La venta a crédito queda como cuenta por cobrar a nombre del cliente. Esta venta está a nombre de <b>Genérico</b>.<br><br>Sin internet solo se pueden usar los clientes que ya existen en el sistema.</div>',
+    botones: [{ txt: "Cancelar", v: false }, { txt: "👤 Elegir cliente", v: true, cls: "green" }] });
+  if (!r) return false;
+  const c = await abrirClientes();
+  return !!(c && F.cliente.cedula);
+}
 async function pgCredito(){
   if (P.cred.on) { P.cred = { on: false, monto: "", editado: false }; }
   else {
-    if (!F.cliente.cedula) {
-      const r = await modal({ icono: "👤", titulo: "El crédito necesita un cliente", html: '<div class="m-txt">La venta a crédito queda como cuenta por cobrar a nombre del cliente. Esta venta está a nombre de <b>Genérico</b>.<br><br>Sin internet solo se pueden usar los clientes que ya existen en el sistema.</div>',
-        botones: [{ txt: "Cancelar", v: false }, { txt: "👤 Elegir cliente", v: true, cls: "green" }] });
-      if (!r) return;
-      const c = await abrirClientes();
-      if (!c || !F.cliente.cedula) return;
-    }
+    if (!await pgClienteParaCredito()) return;
     P.cred = { on: true, monto: "", editado: false };
   }
   pgPintarMetodos(); pgPintarLineas(); pgActualizar();
 }
+// ══ COBRO EN DOS PASOS: Venta en Dólares con delivery (Etapa 2B) ══
+//  Paso 1: los productos, con el cobro de siempre. Paso 2: el delivery, sin escribir montos:
+//   💵 en dólares por su monto ($2: lo que pasa de su valor queda como ingreso extra, como en Ventas)
+//   🇻🇪 en bolívares a tasa BCV (Bs 80) · 📝 a crédito por lo que vale ($2 BCV = $1,80 div), junto con lo que quede a deber.
+function pgDlvMetodos(tipo){ return metodos().map((m, i) => ({ m, i })).filter(o => o.m.tipo === tipo && o.m.conCuenta); }
+function pgDlvListo(){
+  const d = P && P.dlv; if (!d || !d.on) return "";
+  if (d.modo === "cred") return "a crédito ($" + fmt(dlvLibro(d.monto)) + ")";
+  if ((d.modo === "usd" || d.modo === "bs") && d.metodo) return pguDesc(metodoDe(d.metodo) || { metodo: d.metodo, tipo: d.modo === "usd" ? "USD" : "BS" }) + " " + (d.modo === "usd" ? "$" + fmt(d.monto) : "Bs " + fmt(r2(d.monto * tBcv())));
+  return "";
+}
+function pgDlvPintar(){
+  const box = $("pgDlv");
+  if (!P || !P.dlv.on) { box.classList.add("oculto"); box.innerHTML = ""; return; }
+  const d = P.dlv, bs = r2(d.monto * tBcv()), nom = dlvTxt(d.tipo), lst = pgDlvListo();
+  const op = (k, t, b, sub) => '<button type="button" class="dlv-op' + (d.modo === k ? " on" : "") + '" data-dlv="' + k + '" onclick="pgDlvModo(\'' + k + '\')">' + t + "<b>" + b + "</b>" + (sub ? "<small>" + sub + "</small>" : "") + "</button>";
+  let h = '<div class="dlv-paso"><div class="paso-tit"><span><span class="paso-n">2</span>¿Cómo paga el ' + nom.toUpperCase() + "?</span><b>" + (d.tipo === "envio" ? "📦" : "🛵") + '</b></div><div class="dlv-ops">' +
+    (pgDlvMetodos("USD").length ? op("usd", "💵 En dólares", "$" + fmt(d.monto)) : "") +
+    (pgDlvMetodos("BS").length ? op("bs", "🇻🇪 En bolívares", "Bs " + fmt(bs)) : "") +
+    (metodoCredito() ? op("cred", "📝 A crédito", "$" + fmt(dlvLibro(d.monto)), "se suma a lo que queda a deber") : "") + "</div>";
+  if (d.modo === "usd" || d.modo === "bs") {
+    const L = pgDlvMetodos(d.modo === "usd" ? "USD" : "BS");
+    h += '<div class="dlv-donde">¿Por dónde paga los ' + (d.modo === "usd" ? "$" + fmt(d.monto) : "Bs " + fmt(bs)) + '?</div><div class="pgu-chips">' +
+      L.map(o => '<button type="button" class="pgu-chip ' + (d.modo === "usd" ? "usd" : "bs") + (d.metodo === o.m.metodo ? " sel" : "") + '" onclick="pgDlvMetodo(' + o.i + ')">' + esc(pguDesc(o.m)) + "</button>").join("") + "</div>";
+  }
+  h += lst ? '<div class="dlv-ok">✅ ' + esc(nom) + " pagado: " + esc(lst) + "</div>" : '<div class="dlv-falta">👆 Elige cómo paga el ' + nom.toLowerCase() + ".</div>";
+  box.innerHTML = h + "</div>";
+  box.classList.remove("oculto");
+}
+async function pgDlvModo(k){
+  const d = P && P.dlv; if (!d) return;
+  if (k === "cred" && !await pgClienteParaCredito()) return;
+  if (!P) return;
+  d.modo = k; d.metodo = "";
+  if (k !== "cred") { const L = pgDlvMetodos(k === "usd" ? "USD" : "BS"); if (L.length === 1) d.metodo = L[0].m.metodo; }
+  pgActualizar();
+}
+function pgDlvMetodo(i){ const m = metodos()[i]; if (!m || !P) return; P.dlv.metodo = m.metodo; pgActualizar(); }
 function pgVueltoAbrir(){ P.vt = { on: true, lineas: [] }; pgPintarVuelto(); pgActualizar(); }
 function pgVueltoCerrar(){ P.vt = { on: false, lineas: [] }; pgPintarVuelto(); pgActualizar(); }
 function pgVtAgregar(i){
@@ -1374,6 +1449,10 @@ function pgVtQuitar(k){ P.vt.lineas.splice(k, 1); pgPintarVuelto(); pgActualizar
 
 async function pgConfirmar(){
   const m = P.modo;
+  if (P.dlv.on && !pgDlvListo()) {
+    aviso({ icono: P.dlv.tipo === "envio" ? "📦" : "🛵", titulo: "Falta el " + dlvTxt(P.dlv.tipo).toLowerCase(), html: "En el paso <b>②</b> elige cómo paga el cliente el " + dlvTxt(P.dlv.tipo).toLowerCase() + ": en dólares, en bolívares" + (metodoCredito() ? " o a crédito" : "") + (P.dlv.modo && P.dlv.modo !== "cred" ? ", y por dónde lo paga" : "") + "." });
+    return;
+  }
   const pagos = [];
   for (const l of P.lineas) {
     const v = r2(Number(l.monto) || 0), d = pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo });
@@ -1390,6 +1469,18 @@ async function pgConfirmar(){
     if (!F.cliente.cedula) { aviso({ icono: "👤", titulo: "Falta el cliente", html: "El crédito necesita un cliente con cédula. Elige el cliente y vuelve a guardar." }); return; }
     if (!(c > 0)) { aviso({ icono: "📝", titulo: "Falta el monto del crédito", html: "Marcaste crédito pero el monto quedó vacío. Usa <b>↺ Lo que falta</b>, escríbelo, o quita el crédito con ✕." }); return; }
     pagos.push({ metodo: metodoCredito(), monto: c, tipo: "CRED" });
+  }
+  if (P.dlv.on) {   // paso ②: el delivery se suma a lo que ya se cobró por ese medio (o al crédito)
+    const d = P.dlv;
+    if (d.modo === "cred") {
+      if (!F.cliente.cedula) { aviso({ icono: "👤", titulo: "Falta el cliente", html: "El crédito necesita un cliente con cédula. Elige el cliente y vuelve a guardar." }); return; }
+      const v = dlvLibro(d.monto), c = pagos.find(x => x.tipo === "CRED");
+      if (c) c.monto = r2(c.monto + v); else pagos.push({ metodo: metodoCredito(), monto: v, tipo: "CRED" });
+    } else {
+      const tipo = d.modo === "usd" ? "USD" : "BS", monto = d.modo === "usd" ? r2(d.monto) : r2(d.monto * tBcv());
+      const ya = pagos.find(x => x.metodo === d.metodo && x.tipo === tipo);
+      if (ya) ya.monto = r2(ya.monto + monto); else pagos.push({ metodo: d.metodo, monto: monto, tipo: tipo });
+    }
   }
   if (!pagos.length) { aviso({ icono: "🧾", titulo: "No hay forma de pago", html: "Toca el método con que paga el cliente (o <b>A crédito</b> si queda a deber)." }); return; }
   const vuelto = [];
@@ -1437,7 +1528,9 @@ async function pgGuardar(pagos, vuelto){
   const btn = $("pgGuardar");
   btnOcupado(btn, "Guardando…"); $("pgCerrar").disabled = true;
   if (!S.turno) { btnLibre(btn); $("pgCerrar").disabled = false; cerrarPago(); irA("vender"); return; }
-  const t = S.tasas, ahora = new Date(), m = P.modo, totBs = r2(P.total * bsPorU());
+  const t = S.tasas, ahora = new Date(), m = P.modo, dl = r2(P.dlvMonto || 0);
+  const totPant = r2(P.total + (P.dlv.on ? dl : 0));                                     // lo que dice la factura (con el delivery por su monto)
+  const totBs = P.dlv.on ? r2(P.total * bsPorU() + dl * tBcv()) : r2(P.total * bsPorU());   // el delivery, siempre a BCV
   const v = {
     id: uuid(), numero: "", creada: ahoraTxt(ahora), fecha: hoyTxt(ahora),
     numeroTicket: 0, provisional: false, turno: S.turno.id,   // el número lo pone guardarVentaNueva (apartado o provisional)
@@ -1455,10 +1548,11 @@ async function pgGuardar(pagos, vuelto){
       clienteNuevo: !!(F.cliente.cedula && F.cliente.nuevo),
       claveCon: F.claveOk ? F.claveCon : (F.claveCon === "orden" ? "orden" : ""),   // "orden": el precio manual o el descuento venían en la orden   // con qué clave se autorizó lo que la pide: "sistema" (la de Ventas) o "sinInternet"   // creado sin internet: el sistema lo crea antes de registrar la venta
       descuentoTipo: F.desc.tipo, descuentoValor: Number(F.desc.valor) || 0, descuentoValorServ: descuentoServidor(F.items, F.desc),
-      diasCredito: P.cred.on ? (Number(P.dias) || 0) : 0,
-      objetivoVenta: m === "off" ? "" : (m === "div" ? "DIVISAS" : "BCV"), totalPantallaUSD: P.total
+      diasCredito: (P.cred.on || P.dlv.modo === "cred") ? (Number(P.dias) || 0) : 0,
+      delivery: dl, deliveryBCV: dl, deliveryConcepto: P.dlv.tipo === "envio" ? "envio" : "delivery",   // Etapa 2B: como Ventas (al fondo de delivery entran los $ BCV)
+      objetivoVenta: m === "off" ? "" : (m === "div" ? "DIVISAS" : "BCV"), totalPantallaUSD: totPant
     }, vendedorDeLaVenta(), ordPago()),   // ordPago: la orden que se cobra (queda CONVERTIDA al subir), ordenes.js
-    total: P.total, totalBs: totBs, totalBcv: m === "div" ? (t.bcv > 0 ? r2(totBs / t.bcv) : 0) : P.total,
+    total: totPant, totalBs: totBs, totalBcv: m === "div" ? (t.bcv > 0 ? r2(totBs / t.bcv) : 0) : totPant,
     estado: "por_subir", intentos: 0, msg: "", avisos: [], numeroFactura: "", subidaEn: 0
   };
   try { await guardarVentaNueva(v); }
@@ -1500,6 +1594,8 @@ function htmlTicket(v){
   const its = v.items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, base: i.pu != null ? i.pu : i.precio, iva: i.iva }));
   const x = totales(its, { tipo: v.pago.descuentoTipo, valor: v.pago.descuentoValor });
   const p = v.pago, esGen = !p.clienteCedula || p.clienteNombre === "Genérico";
+  const dl = r2(Number(p.delivery) || 0), totT = r2(x.total + dl);   // delivery por su monto; sus Bs a BCV como todo el ticket
+  const dlvF = dl > 0 ? "<tr><td>" + (p.deliveryConcepto === "envio" ? "Envío" : "Delivery") + ':</td><td style="text-align:right;">+ ' + sym + " " + conv(dl) + "</td></tr>" : "";
   const filasProds = its.map(it => {
     const pu = it.base * (1 + it.iva / 100), tl = pu * it.cantidad;
     return mostrarPU
@@ -1524,7 +1620,7 @@ function htmlTicket(v){
   if ((modo === "vendedor" || modo === "ambos") && p.vendedorNombre) per.push("Vendedor: " + esc(p.vendedorNombre));
   const logo = (cfg.imprimirLogo !== false && String(cfg.logo || "").indexOf("data:image") === 0)
     ? '<div style="text-align:center;padding-top:6px;"><img src="' + cfg.logo + '" alt="" style="max-width:' + (cfg.formato === "ticket58" ? "34mm" : "46mm") + ";max-height:" + (cfg.formato === "ticket58" ? "16mm" : "20mm") + ';object-fit:contain;filter:grayscale(100%);"></div>' : "";
-  const equiv = cfg.mostrarEquiv && enBS ? '<tr><td>' + (enDiv ? "Total $:" : "Total $ BCV:") + '</td><td style="text-align:right;">$' + fmt(x.total) + "</td></tr>" : "";
+  const equiv = cfg.mostrarEquiv && enBS ? '<tr><td>' + (enDiv ? "Total $:" : "Total $ BCV:") + '</td><td style="text-align:right;">$' + fmt(totT) + "</td></tr>" : "";
   const desc = x.desc > 0 ? '<tr><td>Descuento:</td><td style="text-align:right;">- ' + sym + " " + conv(x.desc) + "</td></tr>" : "";
   const formaPago = cfg.mostrarFormaPago !== false ? '<hr class="sep"><div style="font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Forma de pago</div><table style="margin-bottom:5px;">' + filasPago + "</table>" : "";
   const obs = p.observaciones ? '<div style="border-top:1px dashed #ccc;padding:5px 0;font-size:9px;"><strong>Obs:</strong> ' + esc(p.observaciones) + "</div>" : "";
@@ -1539,7 +1635,7 @@ function htmlTicket(v){
       : '<tr style="font-size:12px;font-weight:bold;border-bottom:2px solid #000;"><th style="text-align:left;width:48%;padding:4px 0;">PRODUCTO</th><th style="text-align:center;width:19.2%;padding:4px 0;">CANT.</th><th style="text-align:right;width:32.8%;padding:4px 0;">TOTAL</th></tr>') +
     "</thead><tbody>" + filasProds + "</tbody></table>" +
     '<hr class="sep"><table style="margin-bottom:3px;"><tr><td>Subtotal:</td><td style="text-align:right;">' + sym + " " + conv(x.sub) + "</td></tr>" + desc +
-    '<tr><td>IVA:</td><td style="text-align:right;">' + sym + " " + conv(x.ivaR) + '</td></tr><tr style="font-size:11px;font-weight:bold;"><td>Total:</td><td style="text-align:right;">' + sym + " " + conv(x.total) + "</td></tr>" + equiv + "</table>" +
+    '<tr><td>IVA:</td><td style="text-align:right;">' + sym + " " + conv(x.ivaR) + "</td></tr>" + dlvF + '<tr style="font-size:11px;font-weight:bold;"><td>Total:</td><td style="text-align:right;">' + sym + " " + conv(totT) + "</td></tr>" + equiv + "</table>" +
     formaPago + obs +
     '<hr class="sep"><div style="text-align:center;padding:6px 0;"><div>' + esc(cfg.pieLinea1 || "") + '</div><div style="margin-top:2px;">' + esc(cfg.pieLinea2 || "") + "</div></div></body></html>";
 }
@@ -1678,7 +1774,7 @@ function resumenTurno(t){
     const fx = (v.unidad === "div" && v.tasas && v.tasas.bcv > 0) ? (Number(v.tasas.div) || 0) / v.tasas.bcv : 1;
     totalUsd += v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0; totalBs += Number(v.totalBs) || 0;
     const sinDesc = totales(v.items.map(i => ({ cantidad: i.cantidad, base: i.pu != null ? i.pu : i.precio, iva: i.iva })), { tipo: "ninguno" }).total;
-    desc += Math.max(0, sinDesc - (Number(v.total) || 0)) * fx;
+    desc += Math.max(0, sinDesc - ((Number(v.total) || 0) - (Number(v.pago.delivery) || 0))) * fx;   // sin el delivery
     if (v.estado !== "subida") sinSubir++;
     (v.pago.pagos || []).forEach(p => { if (p.tipo === "CRED") credito += (Number(p.monto) || 0) * fx; else sumar(p, Number(p.monto) || 0); });
     (v.pago.vuelto || []).forEach(p => sumar(p, -(Number(p.monto) || 0)));
@@ -1900,7 +1996,8 @@ function pintarVentas(){
   if (!lst.length) { $("listaVentas").innerHTML = '<div class="vacio">No hay ventas aquí.</div>'; return; }
   $("listaVentas").innerHTML = lst.slice(0, 300).map(v => {
     const p = v.pago;
-    const items = v.items.map(i => "<tr><td>" + fmtCant(i.cantidad) + " × " + esc(i.nombre) + (i.manual ? " ✏️" : "") + '</td><td class="r">$' + fmt((i.pu != null ? i.pu : i.precio) * (1 + i.iva / 100) * i.cantidad) + "</td></tr>").join("");
+    const items = v.items.map(i => "<tr><td>" + fmtCant(i.cantidad) + " × " + esc(i.nombre) + (i.manual ? " ✏️" : "") + '</td><td class="r">$' + fmt((i.pu != null ? i.pu : i.precio) * (1 + i.iva / 100) * i.cantidad) + "</td></tr>").join("") +
+      (Number(p.delivery) > 0 ? "<tr><td>" + (p.deliveryConcepto === "envio" ? "📦 Envío" : "🛵 Delivery") + '</td><td class="r">$' + fmt(p.delivery) + " BCV</td></tr>" : "");
     const pagos = (p.pagos || []).map(q => "<tr><td>" + esc(q.metodo) + '</td><td class="r">' + (q.tipo === "BS" ? "Bs " : "$") + fmt(q.monto) + "</td></tr>").join("") +
       (p.vuelto || []).map(q => "<tr><td>Vuelto (" + esc(q.metodo) + ')</td><td class="r">− ' + (q.tipo === "BS" ? "Bs " : "$") + fmt(q.monto) + "</td></tr>").join("");
     let msg = "";

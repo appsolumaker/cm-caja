@@ -127,7 +127,7 @@
           <button type="button" class="btn-secondary" id="btnEspera" onclick="ponerEnEspera()" style="background:#8e44ad;">🗂️ En espera</button>
           <button type="button" class="btn-secondary" id="btnLimpiar" onclick="limpiarVentaConfirmar()">🗑️ Vaciar</button>
         </div>
-        <button type="button" class="mv-aj-btn" onclick="mvToggleAjustes()"><span id="mvAjTxt">🏷️ Descuento, precio, N° y fecha</span><span id="mvAjFlecha">▸</span></button>
+        <button type="button" class="mv-aj-btn" onclick="mvToggleAjustes()"><span id="mvAjTxt">🏷️ Descuento, delivery, precio, N° y fecha</span><span id="mvAjFlecha">▸</span></button>
         <div class="descuentos">
           <div class="desc-title">Ajustes</div>
           <div class="desc-row">
@@ -142,11 +142,19 @@
             <label id="lblDescVal"></label>
             <input type="number" id="valorDescuento" min="0" step="0.01" placeholder="—" disabled oninput="cambiarValorDesc(this.value)">
           </div>
+          <div class="desc-row">
+            <select id="tipoDelivery" onchange="cambiarTipoDelivery(this.value)" title="Delivery en la ciudad o envío nacional" style="flex:0 0 auto;width:auto;">
+              <option value="delivery">🛵 Delivery</option>
+              <option value="envio">📦 Envío</option>
+            </select>
+            <input type="number" id="valorDelivery" min="0" step="0.01" placeholder="$ BCV" oninput="cambiarDelivery(this.value)" title="Lo que se cobra de delivery, en $ BCV (es para el motorizado o la agencia)">
+          </div>
         </div>
         <div class="totales-box">
           <div class="t-row">Subtotal: <span>$ <span id="subTotal">0,00</span></span></div>
           <div class="t-row desc-color oculto" id="rowDesc">Descuento: -$ <span id="descMonto">0,00</span></div>
           <div class="t-row">IVA: <span>$ <span id="ivaTotal">0,00</span></span></div>
+          <div class="t-row deliv-color oculto" id="rowDeliv"><span id="delivLbl">Delivery</span>: +$ <span id="delivMonto">0,00</span><small id="delivNota"></small></div>
           <div class="t-total">$ <span id="totalUSD">0,00</span><span class="t-u" id="totalU"></span></div>
           <div class="t-bs">Bs <span id="totalBS">0,00</span></div>
         </div>
@@ -246,6 +254,7 @@
           <div class="bs" id="pgTotalBs"></div>
         </div>
         <div class="pgu-hint" id="pgHint"></div>
+        <div class="paso-tit oculto" id="pgPaso1"><span><span class="paso-n">1</span>¿Cómo paga los PRODUCTOS?</span><b id="pgPaso1M"></b></div>
         <div id="pgMetodos"></div>
         <div class="oculto" id="pgMas"><button type="button" class="pgu-mas" onclick="P.verMet=true;pgActualizar()">＋ Otro método o crédito</button></div>
         <div class="pgu-lineas-tit oculto" id="pgLineasTit">Pagos de esta venta</div>
@@ -255,11 +264,13 @@
           <select id="selDias" onchange="P.dias=Number(this.value)||0"></select></div>
         </div>
         <div id="pgBal"></div>
+        <div id="pgDlv" class="oculto"></div>
         <div id="pgVuelto" class="oculto pgu-vt">
           <div class="pgu-vt-cab"><span>💸 Vuelto</span><span class="pgu-vt-sobra" id="pgVtSobra"></span><button type="button" class="btn-m gray" style="padding:4px 10px;font-size:12px;" onclick="pgVueltoCerrar()">Quitar vuelto</button></div>
           <div id="pgVtMetodos"></div>
           <div id="pgVtLineas"></div>
         </div>
+        <div id="pgTodo"></div>
         <div class="fg" style="margin-top:12px;"><label for="pgRef">Referencia (opcional)</label>
         <input id="pgRef" placeholder="Nro. transferencia..." maxlength="60"></div>
         <div class="fg" style="margin-top:10px;"><label for="pgObs">Observaciones (se imprime en el ticket)</label>

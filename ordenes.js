@@ -49,6 +49,9 @@ function pintarBotonOrdenes(){
   const n = _ord.abiertas + (S.esperas || []).length;
   $("contOrdenes").textContent = n > 0 ? String(n) : "";
   b.classList.toggle("hay", n > 0);
+  const sin = !!S.datos && !ordEnLinea();
+  b.classList.toggle("sinred", sin);
+  b.title = sin ? "Sin internet: las órdenes del sistema no se pueden ver ahora (aparecen solas cuando vuelva)" : "Órdenes por cobrar y facturas en espera";
 }
 
 // ── Chip "Orden: OV-0001" de la factura ──
@@ -76,6 +79,11 @@ function ordPago(){
 function abrirOrdenes(){
   if (!S.datos) return;
   if (_ord.cerrar) return;
+  if (!ordEnLinea() && !(S.esperas || []).length) {   // no es una falla: sin internet no hay cómo traer las órdenes
+    aviso({ icono: "📡", titulo: "Sin internet", html: "Las órdenes están guardadas en el sistema, y sin internet <b>no se pueden ver ni tomar</b>. No es una falla de la caja.<br><br>Cuando vuelva el internet, toca <b>📋 Órdenes</b> otra vez y aparecen solas." +
+      (F.orden ? "<br><br>La orden <b>" + esc(F.orden.id) + "</b> que tienes en pantalla se cobra normal: queda convertida cuando suba la venta." : "<br><br>Mientras tanto puedes seguir vendiendo normal.") });
+    return;
+  }
   modal({ titulo: "📋 Órdenes por cobrar", clase: "ordenes", ancho: true,
     html: '<div class="ord-busca"><input class="inp" id="ordBusca" type="text" placeholder="🔍 Nombre, cédula o número de orden" autocomplete="off">' +
       '<button type="button" class="btn-m gray" id="btnOrdRef" title="Actualizar">🔃</button></div><div id="ordLista" class="ord-lista"></div>',
@@ -126,7 +134,7 @@ function pintarOrdenes(estado, lista){
     }).join("");
   }
   if (!ordEnLinea() || _ord.error === "sinred") {
-    h += '<div class="ord-vacio">📡 <b>Sin internet</b>: no se pueden traer las órdenes del sistema.' + (F.orden ? "<br>La orden <b>" + esc(F.orden.id) + "</b> que tienes en pantalla se cobra igual: queda convertida al subir la venta." : "") + "</div>";
+    h += '<div class="ord-vacio">📡 <b>Sin internet</b>: las órdenes del sistema no se pueden ver ahora. No es una falla: cuando vuelva el internet, aparecen solas.' + (F.orden ? "<br>La orden <b>" + esc(F.orden.id) + "</b> que tienes en pantalla se cobra igual: queda convertida al subir la venta." : "") + "</div>";
   } else if (estado === "cargando") {
     h += '<div class="ord-vacio"><span class="sp"></span> Cargando órdenes…</div>';
   } else if (_ord.error) {
@@ -193,8 +201,8 @@ async function ordTomar(id, btn){
   if (!r.ok) { await aviso({ icono: "⚠️", titulo: "No se pudo tomar la orden", html: esc(r.msg || "") }); buscarOrdenes(); return; }
   S.ordSoltar = (S.ordSoltar || []).filter(x => x !== id); kvSet("ordSoltar", S.ordSoltar).catch(() => {});
   cerrarOrdenes();
-  ordCargar(r.orden);
   contarOrdenes();
+  await ordCargar(r.orden);
 }
 // Una línea de la orden → una línea de la factura. congelada: espera de la caja (precios como estaban).
 function ordLinea(it, cobroDef, congelada){
@@ -220,7 +228,7 @@ function ordLinea(it, cobroDef, congelada){
   }
   return { linea: l };
 }
-function ordCargar(o){
+async function ordCargar(o){
   const esp = o.origen === "CAJA", web = o.origen === "WEB", ex = o.extra || {};
   const tp = F.tipoPrecio;
   Object.assign(F, nuevaFactura()); F.tipoPrecio = tp;
@@ -240,6 +248,8 @@ function ordCargar(o){
   }
   // Descuento (espera de la caja): ya se autorizó al ponerla
   if (ex.descTipo === "pct" || ex.descTipo === "monto") F.desc = { tipo: ex.descTipo, valor: Math.max(0, Number(ex.descValor) || 0) };
+  // Delivery o envío de la orden ($ BCV), como en Ventas
+  if (Number(ex.delivery) > 0) F.dlv = { tipo: ex.tipoDelivery === "envio" ? "envio" : "delivery", monto: r2(Number(ex.delivery)) };
   // Vendedor: el de la orden (bloqueado); en las esperas, el que se eligió
   if (ordConVend()) {
     if (esp) { const vs = String(ex.vendSel || (o.vendedorId ? "v:" + o.vendedorId : "directa")); F.vend = vs.indexOf("v:") === 0 ? vs.slice(2) : "directa"; }
@@ -255,17 +265,52 @@ function ordCargar(o){
   if (web) av.push("🌐 Pedido de la tienda online" + (o.refOrigen ? " <b>#" + esc(o.refOrigen) + "</b>" : "") + ": se cobra como <b>Tienda online</b>" + (ordD().trabajoVendedores ? ", sin vendedor y sin comisión." : "."));
   if (manuales.length) av.push("Trae <b>precio manual</b> puesto por el vendedor en: " + manuales.map(esc).join(", ") + ". Revísalo antes de cobrar.");
   if (faltan.length) av.push("<b>No se cargaron</b> porque no están en los datos de este equipo (ya no existen, están deshabilitados o faltan por actualizar): " + faltan.map(esc).join(", ") + ".");
-  if (Number(ex.delivery) > 0) av.push("🛵 La orden traía <b>delivery</b> de $" + fmt(ex.delivery) + ": la caja no cobra delivery, <b>no se incluyó</b>. Si va, agrégalo como servicio o cóbralo desde Ventas.");
+  if (!esp && dlvMonto() > 0) av.push((F.dlv.tipo === "envio" ? "📦 Trae <b>envío</b>" : "🛵 Trae <b>delivery</b>") + " de <b>$" + fmt(dlvMonto()) + " BCV</b>: ya está en la factura.");
   if (web && Number(o.total) > 0 && F.items.length) {
     const hoy = totales(F.items, { tipo: "ninguno" }).total;
     if (Math.abs(hoy - Number(o.total)) > 0.01 * (F.items.length + 1))
       av.push("⚠️ En la tienda el cliente vio un total de <b>$" + fmt(o.total) + "</b>; con los precios de hoy suma <b>" + txtU(hoy) + "</b>" + (faltan.length ? " (sin los productos que no se cargaron)" : "") + ". Confírmale el monto antes de cobrar.");
   }
-  if (cliNuevo) av.push("👤 El cliente <b>" + esc(F.cliente.nombre) + "</b> (" + esc(F.cliente.cedula) + ") no está en los clientes de este equipo: queda puesto en la factura y <b>se crea en el sistema al registrar la venta</b>.");
+  // El cliente que no está en este equipo se busca en el sistema (para tomar la orden ya hubo internet)
+  if (cliNuevo && ordEnLinea()) {
+    try {
+      const rc = await api("cj_cliente", { op: "buscar", q: String(o.cedula) }, 20000);
+      const c = rc && rc.ok ? (rc.clientes || []).find(x => ordDig(x.cedula) && ordDig(x.cedula) === ordDig(o.cedula)) : null;
+      if (c) { await guardarClienteSistema(c); F.cliente = Object.assign({}, clienteDe(c.cedula) || c); delete F.cliente.nuevo; cliNuevo = false; pintarTotales(); }
+    } catch (e) {}
+  }
   if (o.notas) av.push("📝 Nota de la orden: " + esc(o.notas));
   const tit = (esp ? "Factura en espera " : web ? "Pedido web " : "Orden ") + o.id + " cargada";
-  if (av.length) aviso({ icono: ordIcono(o.origen), titulo: tit, html: av.join("<br><br>") });
+  if (av.length) await aviso({ icono: ordIcono(o.origen), titulo: tit, html: av.join("<br><br>") });
   else toast(ordIcono(o.origen) + " " + tit);
+  if (cliNuevo) await ordCrearCliente(o);
+}
+// El cliente de la orden no existe en el sistema: se ofrece crearlo con sus datos ya puestos (como Ventas)
+async function ordCrearCliente(o){
+  const c = F.cliente, enLinea = ordEnLinea();
+  let creado = null;
+  const r = await modal({ icono: "👤", titulo: "Cliente nuevo",
+    html: '<div class="m-txt"><b>' + esc(c.nombre) + "</b> (" + esc(c.cedula) + ") no está registrado en Clientes." + (enLinea ? " ¿Lo creas ahora? Revisa sus datos:" : " Se crea en el sistema al registrar la venta.") + "</div>" +
+      (enLinea ? '<div class="form-grid" style="margin-top:10px;"><div class="fg"><label>Cédula / RIF</label><input class="inp" id="ocCed" value="' + esc(c.cedula) + '" readonly style="opacity:0.7;"></div>' +
+        '<div class="fg"><label>Nombre</label><input class="inp" id="ocNom" value="' + esc(c.nombre) + '" placeholder="Nombre y apellido"></div>' +
+        '<div class="fg"><label>Teléfono</label><input class="inp" id="ocTel" value="' + esc(c.telefono || "") + '" placeholder="Opcional"></div>' +
+        '<div class="fg"><label>Dirección</label><input class="inp" id="ocDir" value="' + esc(c.direccion || "") + '" placeholder="Opcional"></div></div><div class="m-err" id="ocErr"></div>' : ""),
+    botones: enLinea ? [{ txt: "Ahora no", v: false }, { txt: "👤 Crear cliente", v: true, cls: "green", spin: "Creando…" }] : [{ txt: "Entendido", v: false, cls: "green" }],
+    antes: async v => {
+      if (!v) return true;
+      const err = $("ocErr"), d = { cedula: c.cedula, nombre: $("ocNom").value.trim().replace(/\s+/g, " "), telefono: $("ocTel").value.trim(), direccion: $("ocDir").value.trim() };
+      if (!d.nombre) { err.textContent = "Escribe el nombre del cliente."; return false; }
+      let x = null;
+      try { x = await api("cj_cliente", { op: "crear", cliente: d }, 30000); } catch (e) { err.textContent = e.red ? "No hay conexión con el sistema. Toca «Ahora no»: el cliente se crea al registrar la venta." : e.message; return false; }
+      if (!x || !x.ok || !x.cliente) { err.textContent = (x && x.msg) || "El sistema no pudo crear el cliente."; return false; }
+      creado = x; return true;
+    } });
+  if (!r || !creado) return;
+  await guardarClienteSistema(creado.cliente);
+  F.cliente = Object.assign({}, clienteDe(creado.cliente.cedula) || creado.cliente); delete F.cliente.nuevo;
+  pintarTotales();
+  if (creado.existia) aviso({ icono: "👤", titulo: "Ese cliente ya existía", html: "En el sistema la cédula <b>" + esc(creado.cliente.cedula) + "</b> ya es de <b>" + esc(creado.cliente.nombre) + "</b>. Se eligió ese cliente." });
+  else toast("✅ Cliente creado");
 }
 
 // ── Soltar la orden de la factura (vuelve a quedar disponible para cualquier caja) ──
@@ -394,7 +439,7 @@ async function ordDescartar(id, btn){
 // La factura en pantalla, sin funciones ni la lista de precios (para guardarla o subirla)
 function ordFoto(){
   return JSON.parse(JSON.stringify({ items: F.items, cliente: F.cliente, tipoPrecio: F.tipoPrecio, dolares: !!F.dolares, desc: F.desc, vend: F.vend,
-    claveOk: F.claveOk, claveCon: F.claveCon, orden: F.orden || null, avisoEx: F.avisoEx }));
+    claveOk: F.claveOk, claveCon: F.claveCon, orden: F.orden || null, avisoEx: F.avisoEx, dlv: F.dlv }));
 }
 // Precio en pantalla de una línea guardada (con la moneda que tenía esa factura)
 function ordBasePara(libro, manual, dolares){
@@ -404,7 +449,8 @@ function ordBasePara(libro, manual, dolares){
 }
 function ordTotalSnap(f){
   const its = (f.items || []).map(i => Object.assign({}, i, { base: ordBasePara(i.libro, i.manual, f.dolares) }));
-  const t = totales(its, f.desc).total, u = !binOn() ? "" : f.dolares ? " div" : " BCV";
+  const dl = r2(Math.max(0, Number(f.dlv && f.dlv.monto) || 0));
+  const t = r2(totales(its, f.desc).total + dl), u = !binOn() ? "" : f.dolares ? " div" : " BCV";   // con el delivery por su monto, como Ventas
   return { total: t, its: its, txt: "$" + fmt(t) + u };
 }
 // Lo que viaja al sistema (formato de las facturas en espera de Ventas)
@@ -420,7 +466,7 @@ function ordDatosEspera(f, id, ref){
     items: T.its.map(i => ({ tipo: i.tipo, codigo: i.codigo, nombre: i.nombre, codigoBarras: i.codigoBarras || i.codigo, cantidad: Number(i.cantidad) || 0,
       tipoIdx: i.manual ? -1 : (Number(i.tipoIdx) || 0), manual: !!i.manual, manualTipo: cobro, cobro: cobro, iva: Number(i.iva) || 0,
       precio: i.base, precioBase: i.base, precioBin: i.libro })),
-    extra: { descTipo: f.desc && f.desc.tipo || "ninguno", descValor: f.desc && f.desc.valor > 0 ? String(f.desc.valor) : "", delivery: "", tipoDelivery: "delivery", ventaDolares: !!f.dolares, vendSel: vendSel },
+    extra: { descTipo: f.desc && f.desc.tipo || "ninguno", descValor: f.desc && f.desc.valor > 0 ? String(f.desc.valor) : "", delivery: f.dlv && Number(f.dlv.monto) > 0 ? String(r2(f.dlv.monto)) : "", tipoDelivery: f.dlv && f.dlv.tipo === "envio" ? "envio" : "delivery", ventaDolares: !!f.dolares, vendSel: vendSel },
     totalRef: T.total
   };
 }
@@ -448,7 +494,7 @@ async function ponerEnEspera(){
     if (ok === "red") await ordGuardarEsperaLocal(ref, true);
     return;
   }
-  await ordGuardarEsperaLocal(ref);
+  await ordGuardarEsperaLocal(ref, ordModoCajero());   // modo cajero sin internet: avisa en un mini modal que quedó en este equipo
 }
 // Devuelve true si quedó en la lista del sistema; "red" si no hubo conexión; false si no se pudo
 async function ordGuardarEsperaServidor(op){
@@ -477,13 +523,13 @@ async function ordGuardarEsperaLocal(ref, sinRed){
   F.orden = null;
   limpiarVenta();
   pintarBotonOrdenes();
-  if (sinRed) aviso({ icono: "🗂️", titulo: "En espera en este equipo", html: "No hubo conexión con el sistema: la factura quedó guardada <b>en este equipo</b> (" + esc(e.id) + ") y pasa sola a la lista del sistema cuando vuelva el internet." });
+  if (sinRed) aviso({ icono: "🗂️", titulo: "En espera en este equipo", html: "No hay internet: la factura quedó guardada <b>en este equipo</b> (" + esc(e.id) + "). Mientras tanto solo esta caja la ve en <b>📋 Órdenes</b>.<br><br>Cuando vuelva el internet pasa sola a la lista del sistema, donde la ve cualquier caja." });
   else toast("🗂️ En espera en este equipo (" + e.id + ")");
   return true;
 }
 async function ordAbrirLocal(id){
   const e = (S.esperas || []).find(x => x.id === id); if (!e) return;
-  if (F.items.length) await ordGuardarEsperaLocal("");   // la que está en pantalla pasa a espera (en este equipo)
+  if (F.items.length) await ordGuardarEsperaLocal("", false);   // la que está en pantalla pasa a espera (en este equipo)
   else if (F.orden) await ordSoltarActual(true);
   S.esperas = (S.esperas || []).filter(x => x.id !== id);
   await kvSet("esperas", S.esperas).catch(() => {});
@@ -553,7 +599,7 @@ function htmlCotizacion(){
   const mon = cfg0.cotizacionMoneda || "BS";
   const cfg = Object.assign({ pieLinea1: "***Gracias por su compra***", pieLinea2: "Puede solicitar su factura en caja." }, cfg0, { moneda: mon, mostrarEquiv: mon === "BS" && cfg0.cotizacionMostrarEquiv === true });
   const enBS = cfg.moneda !== "USD", tasa = tBcv() || 1, conv = u => enBS ? fmt(u * tasa) : fmt(u), sym = enBS ? "Bs." : "$";   // Bs siempre a tasa BCV
-  const x = totales(F.items, F.desc), c = F.cliente, esGen = !c.cedula || c.nombre === "Genérico";
+  const x = totales(F.items, F.desc), c = F.cliente, esGen = !c.cedula || c.nombre === "Genérico", dl = dlvMonto(), totC = r2(x.total + dl);
   const td = "padding:7px 4px;border-right:1px solid #000;border-top:1px solid #000;font-size:11px;";
   let filas = 0;
   const prods = F.items.map((i, k) => { const n = String(i.nombre || ""); filas += n.length > 90 ? 3 : n.length > 45 ? 2 : 1;
@@ -581,9 +627,9 @@ function htmlCotizacion(){
     '<thead><tr style="border-bottom:2px solid #000;"><th style="' + th + '">N°</th><th style="' + th + '">CÓDIGO</th><th style="' + th + '">DESCRIPCIÓN</th><th style="' + th + '">CANT.</th><th style="' + th + '">PRECIO BASE</th><th style="' + th + '">IVA</th><th style="padding:5px 4px;text-align:center;font-size:11px;font-weight:bold;">TOTAL</th></tr></thead>' +
     "<tbody>" + prods + vacias + "</tbody></table>" +
     '<table style="width:100%;border:1px solid #000;border-top:none;"><tr><td style="width:55%;border-right:1px solid #000;padding:5px 6px;vertical-align:top;font-size:11px;"><b>OBSERVACIONES:</b></td><td style="width:45%;padding:0;vertical-align:top;"><table style="width:100%;">' +
-    fila("Subtotal:", sym + " " + conv(x.sub)) + (x.desc > 0 ? fila("Descuento:", "- " + sym + " " + conv(x.desc)) : "") + fila("IVA:", sym + " " + conv(x.ivaR)) +
-    '<tr><td style="padding:5px 6px;font-size:11px;font-weight:bold;">Total:</td><td style="padding:5px 6px;text-align:right;font-size:11px;font-weight:bold;white-space:nowrap;">' + sym + " " + conv(x.total) + "</td></tr>" +
-    (cfg.mostrarEquiv && enBS ? '<tr><td style="padding:5px 6px;border-top:1px solid #000;color:#555;font-size:11px;">' + (modoVenta() === "div" ? "Total $" : "Total $ BCV") + ':</td><td style="padding:5px 6px;text-align:right;border-top:1px solid #000;color:#555;font-size:11px;white-space:nowrap;">$' + fmt(x.total) + "</td></tr>" : "") +
+    fila("Subtotal:", sym + " " + conv(x.sub)) + (x.desc > 0 ? fila("Descuento:", "- " + sym + " " + conv(x.desc)) : "") + fila("IVA:", sym + " " + conv(x.ivaR)) + (dl > 0 ? fila(dlvTxt() + ":", "+ " + sym + " " + conv(dl)) : "") +
+    '<tr><td style="padding:5px 6px;font-size:11px;font-weight:bold;">Total:</td><td style="padding:5px 6px;text-align:right;font-size:11px;font-weight:bold;white-space:nowrap;">' + sym + " " + conv(totC) + "</td></tr>" +
+    (cfg.mostrarEquiv && enBS ? '<tr><td style="padding:5px 6px;border-top:1px solid #000;color:#555;font-size:11px;">' + (modoVenta() === "div" ? "Total $" : "Total $ BCV") + ':</td><td style="padding:5px 6px;text-align:right;border-top:1px solid #000;color:#555;font-size:11px;white-space:nowrap;">$' + fmt(totC) + "</td></tr>" : "") +
     "</table></td></tr></table>" +
     '<div style="min-height:16px;"></div><div style="text-align:center;font-size:11px;color:#555;">' + esc(cfg.pieLinea1 || "") + '</div><div style="text-align:center;margin-top:3px;font-size:11px;color:#555;">' + esc(cfg.pieLinea2 || "") + "</div></body></html>";
 }
