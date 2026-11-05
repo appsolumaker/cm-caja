@@ -2,7 +2,7 @@
 // Guarda la página en el equipo para que abra sin internet.
 // Con internet trae la versión nueva (y la guarda); sin internet usa la guardada.
 // Las llamadas al sistema (/caja/api, POST) no pasan por aquí.
-const CACHE = "cm-caja-web-v3";
+const CACHE = "cm-caja-web-v4";
 const BASE = new URL("./", self.location).pathname;   // /caja/
 const ARCHIVOS = ["./", "./index.html", "./estilos.css", "./app.js", "./api.js", "./sesion.js", "./numeros.js", "./ordenes.js", "./cajero.js"];
 
@@ -35,7 +35,7 @@ function primeroRed(r) {
       .then(c => c || (r.mode === "navigate" ? caches.match(new URL("./", self.location).href) : null));
     // Sin respuesta en 4 s (internet malo): se usa la guardada y la nueva se guarda cuando llegue
     const t = setTimeout(() => { desdeCache().then(c => { if (c && !listo) { listo = true; resolve(c); } }); }, 4000);
-    fetch(r).then(res => {
+    fetch(r.url, { cache: "no-cache", credentials: "same-origin" }).then(res => {   // no-cache: siempre pregunta a GitHub si hay versión nueva
       if (res && res.ok && res.type === "basic") {
         const copia = res.clone();
         caches.open(CACHE).then(c => c.put(llave(r), copia));

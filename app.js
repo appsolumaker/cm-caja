@@ -18,7 +18,7 @@
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
 //  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.7 · 5-11-2026";
+const APP_VER = "2.7.1 · 5-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -138,6 +138,18 @@ async function arrancar(){
   try { window.name = "cm_caja"; } catch (e) {}   // el sistema la encuentra por este nombre y no abre otra
   $("verApp").textContent = "Caja · versión " + APP_VER;
   document.body.classList.add("entrando");
+  // 2.7.1: la página (index.html) y sus archivos tienen que ser de la misma versión. Justo después de subir
+  // a GitHub, el navegador puede traer uno viejo un rato: se recarga una vez y, si sigue mal, lo dice.
+  const verPag = (document.querySelector('meta[name="cm-ver"]') || {}).content || "", faltaJs = typeof bloquear !== "function";
+  if (verPag !== APP_VER.split(" ")[0] || faltaJs) {
+    let ya = ""; try { ya = sessionStorage.getItem("cm_recargo") || ""; } catch (e) {}
+    if (!ya) { try { sessionStorage.setItem("cm_recargo", "1"); } catch (e) {} location.reload(); return; }
+    pantalla({ ico: "⏳", tit: "Caja", html: "<p>La caja se está actualizando y el navegador trajo archivos de versiones distintas" + (faltaJs ? " (falta <b>cajero.js</b>)" : "") + ". Espera un par de minutos y toca <b>Reintentar</b>.</p>" +
+      '<p style="font-size:12px;color:var(--text-dim);">Página ' + esc(verPag || "anterior a la 2.7.1") + " · archivos " + esc(APP_VER) + "</p>",
+      btns: '<button type="button" class="btn green" onclick="location.reload()">🔄 Reintentar</button>' });
+    return;
+  }
+  try { sessionStorage.removeItem("cm_recargo"); } catch (e) {}
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
   try { await dbAbrir(); }
