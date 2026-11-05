@@ -371,6 +371,28 @@ body.entrando #banners{display:none;}
 .cj-btn small{display:block;font-size:11px;font-weight:600;color:var(--text-dim);margin-top:3px;}
 .cj-btn.sel{border-color:var(--border-g);background:var(--green-dim);color:var(--green);}
 .cj-btn:disabled{opacity:.45;cursor:not-allowed;}
+.cj-btn.adm small{color:#e3b341;}
+/* Etapa 4A · teclado grande del PIN y caja bloqueada (cajero.js) */
+.pk-hola{font-size:20px;font-weight:900;color:var(--text);text-align:center;margin:4px 0 2px;}
+.pk-sub{font-size:13px;color:var(--text-dim);text-align:center;line-height:1.5;margin:6px 0 4px;}
+.pk-sub.bq-txt{text-align:left;}
+.pk-err{color:#e74c3c;font-size:13px;font-weight:700;text-align:center;min-height:18px;margin-top:4px;line-height:1.4;}
+.pk-links{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px;}
+.pin-dots{display:flex;justify-content:center;gap:14px;margin:14px 0 4px;}
+.pin-dots span{width:16px;height:16px;border-radius:50%;border:2px solid var(--green);}
+.pin-dots span.on{background:var(--green);}
+.pin-dots.mal{animation:pkMal 0.35s;}
+@keyframes pkMal{0%,100%{transform:translateX(0);}25%{transform:translateX(-8px);}75%{transform:translateX(8px);}}
+.teclado{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px auto 0;max-width:320px;}
+.teclado button{height:58px;border-radius:12px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:24px;font-weight:800;}
+.teclado button:active{background:var(--green-dim);}
+.teclado button.t-x{font-size:20px;}
+.teclado button.t-ok{font-size:22px;color:var(--green);}
+.lnk{background:none;border:none;color:var(--text-dim);font-size:13px;font-weight:700;text-decoration:underline;padding:6px;}
+.bloqueo{position:fixed;inset:0;z-index:10000;background:var(--bg);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:28px 16px calc(28px + env(safe-area-inset-bottom,0px));}
+.bq-box{color:var(--text);width:100%;max-width:400px;background:var(--bg3);border:1px solid var(--border-g);border-radius:14px;padding:22px 18px;margin:auto 0;}
+.bq-ico{font-size:40px;text-align:center;}
+body.entrando .bloqueo{display:none!important;}
 .cie-tabla{width:100%;border-collapse:collapse;font-size:13px;}
 .cie-tabla td{padding:6px 0;border-bottom:1px dashed var(--border);}
 .cie-tabla td.r{text-align:right;white-space:nowrap;font-weight:700;}

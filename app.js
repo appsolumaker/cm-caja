@@ -15,8 +15,10 @@
 //  Línea en rojo y avisos cuando no alcanza la existencia (se puede vender igual).
 //  Etapa 1D (2.4): entrada directa. Un equipo activado no pide usuario y clave: entra solo a la caja (sesión solo de
 //  esa caja, del último usuario que entró en el equipo) y los cajeros solo eligen su nombre y ponen su PIN.
+//  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
+//  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.6 · 5-11-2026";
+const APP_VER = "2.7 · 5-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -168,6 +170,7 @@ function listo(){
   mostrarVista(S.vista === "activar" ? "vender" : S.vista);
   pintarTodo();
   if (S.vista === "vender" && !S.turno) { mostrarVista("turno"); pintarTurno(); }
+  if (!_listoYa && S.turno) bloquear();   // cajero.js: al abrir la caja con un turno abierto, entra con el PIN del cajero
   if (_listoYa) { sincronizar(); return; }
   _listoYa = true;
   ordIniciar();   // ordenes.js: 📋 Órdenes y su contador
@@ -268,6 +271,7 @@ function mostrarVista(v){
 function irA(v){
   cerrarMenuVta();
   if (!S.datos) return;
+  if (S.cierreAdmin && v !== "cierre") { cancelarCierreAdmin(); return; }   // cajero.js: el Administrador solo vino a cerrar el turno
   if (v === "vender" && !S.turno) { mostrarVista("turno"); pintarTurno(); return; }   // primero, abrir turno
   mostrarVista(v);
   if (v === "ventas") pintarVentas();
@@ -277,6 +281,7 @@ function irA(v){
 function pintarTodo(){
   pintarCabecera(); pintarEstado(); pintarBanners();
   if (S.vista === "turno") pintarTurno();
+  if (BQ.on && !PK.c) pintarBloqueo();   // cajero.js (sin teclado en pantalla: no se borra lo que se está escribiendo)
   pintarCategorias(); pintarSelectores(); buscar(); pintarFactura();
   if (S.vista === "ventas") pintarVentas();
   if (S.vista === "ajustes") pintarAjustes();
@@ -289,6 +294,8 @@ function pintarCabecera(){
   $("badgeCajero").classList.toggle("oculto", !S.turno);
   if (S.turno) $("cajeroNombre").textContent = S.turno.cajeroNombre;
   $("menuCierre").classList.toggle("oculto", !S.turno);
+  $("btnBloquear").classList.toggle("oculto", !S.turno);
+  $("menuBloq").classList.toggle("oculto", !S.turno);
   const u = S.ses && S.ses.usuario;
   $("menuInfo").innerHTML = "<b>" + esc(d.negocio || "Mi negocio") + "</b><br>Caja " + esc(d.caja) + " · equipo " + esc(d.equipo || "") + (d.nombreEquipo ? " (" + esc(d.nombreEquipo) + ")" : "") +
     (u ? "<br>Usuario: " + esc(u.nombre || u.usuario) + (sesionDirecta() ? " (entrada directa)" : "") : "") + (S.turno ? "<br>Turno de " + esc(S.turno.cajeroNombre) + " desde las " + horaDe(S.turno.apertura) : "");
@@ -326,6 +333,7 @@ function menuVtaAccion(a){
   cerrarMenuVta();
   if (a === "actualizar") { actualizarDatos(null, false); toast("🔄 Actualizando datos…"); return; }
   if (a === "cierre") { irCierre(); return; }
+  if (a === "bloquear") { bloquear(); return; }
   irA(a);
 }
 function cuentas(){
@@ -1694,69 +1702,7 @@ function imprimirHTML(html){
   fr.srcdoc = html;
 }
 
-// ══ TURNO: el cajero entra con su PIN y dice con cuánto efectivo arranca ══
-let _turnoSel = null;
-const _pinFallas = {};   // id del cajero → { n, hasta }
-function cajerosTurno(){
-  const l = (S.datos && S.datos.cajeros) || [];
-  const idCaja = Number(S.datos && S.datos.cajero && S.datos.cajero.id) || 0;
-  return l.slice().sort((a, b) => (b.id === idCaja) - (a.id === idCaja) || String(a.nombre).localeCompare(String(b.nombre)));
-}
-function pintarTurno(){
-  const box = $("turnoCuerpo"); if (!box || !S.datos) return;
-  const l = cajerosTurno(), idCaja = Number(S.datos.cajero && S.datos.cajero.id) || 0;
-  if (!l.length || !l.some(c => c.pin)) {
-    box.innerHTML = '<div class="m-txt" style="line-height:1.55;">' + (l.length ? "Ningún cajero tiene <b>PIN</b> todavía." : "No hay cajeros activos.") +
-      '<br><br>En el sistema: <b>Configuración → Cajas y vendedores</b>' + (l.length ? ", toca <b>🔢 PIN</b> en cada cajero" : ", crea los cajeros y ponles su <b>🔢 PIN</b>") +
-      '. Después, aquí con internet, toca <b>🔄 Actualizar datos</b>.</div><div style="margin-top:14px;"><button type="button" class="btn green" onclick="actualizarDatos(this)">🔄 Actualizar datos</button></div>';
-    return;
-  }
-  box.innerHTML = '<div class="m-txt" style="color:var(--text-dim);font-size:13px;">¿Quién está en la caja?</div><div class="cj-grid">' +
-    l.map(c => '<button type="button" class="cj-btn' + (_turnoSel === c.id ? " sel" : "") + '"' + (c.pin ? "" : " disabled") + ' onclick="elegirCajero(' + c.id + ')">' + esc(c.nombre) +
-      "<small>" + (c.pin ? (c.id === idCaja ? "Cajero de esta caja" : "&nbsp;") : "Sin PIN") + "</small></button>").join("") + "</div>" +
-    '<div id="turnoForm" class="' + (_turnoSel ? "" : "oculto") + '">' +
-      '<label class="lbl" for="tPin">PIN de <span id="tPinNom"></span></label><input class="inp" id="tPin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="4 a 6 números">' +
-      '<div class="cie-tit">Fondo de caja (efectivo con que arranca la gaveta)</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;"><div><label class="lbl" for="tFondoBs" style="margin-top:0;">Efectivo Bs</label><input class="inp" id="tFondoBs" type="number" inputmode="decimal" min="0" step="any" placeholder="Bs (vacío = 0)"></div>' +
-      '<div><label class="lbl" for="tFondoUsd" style="margin-top:0;">Efectivo $</label><input class="inp" id="tFondoUsd" type="number" inputmode="decimal" min="0" step="any" placeholder="$ (vacío = 0)"></div></div>' +
-      '<div class="m-btns"><button type="button" class="btn green" id="btnAbrirTurno" onclick="abrirTurno(this)">🔓 Abrir turno</button></div>' +
-    "</div>";
-  if (_turnoSel) { const c = l.find(x => x.id === _turnoSel); $("tPinNom").textContent = c ? c.nombre : ""; }
-  $("tPin") && $("tPin").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("tFondoBs").focus(); } });
-}
-function elegirCajero(id){
-  _turnoSel = id; pintarTurno();
-  setTimeout(() => { const i = $("tPin"); if (i) i.focus(); }, 30);
-}
-async function abrirTurno(btn){
-  const c = cajerosTurno().find(x => x.id === _turnoSel);
-  if (!c || !c.pin) return;
-  const f = _pinFallas[c.id] || { n: 0, hasta: 0 };
-  if (Date.now() < f.hasta) { aviso({ icono: "⏳", titulo: "Espera un momento", html: "Hubo 5 PIN equivocados para <b>" + esc(c.nombre) + "</b>. Espera un minuto y vuelve a intentar." }); return; }
-  const pin = $("tPin").value.trim();
-  if (!/^\d{4,6}$/.test(pin)) { aviso({ icono: "🔢", titulo: "Falta el PIN", html: "Escribe tu PIN de 4 a 6 números." }); return; }
-  btnOcupado(btn, "Revisando…");
-  const h = await sha256hex(c.pin.salt + pin);
-  btnLibre(btn);
-  if (h !== c.pin.hash) {
-    f.n++; if (f.n >= 5) { f.hasta = Date.now() + 60000; f.n = 0; }
-    _pinFallas[c.id] = f;
-    $("tPin").value = "";
-    aviso({ icono: "🔢", titulo: "PIN incorrecto", html: "Ese no es el PIN de <b>" + esc(c.nombre) + "</b>. Vuelve a intentar." + (f.hasta > Date.now() ? "<br><br>Fueron 5 intentos: espera un minuto." : "") });
-    return;
-  }
-  _pinFallas[c.id] = { n: 0, hasta: 0 };
-  const ahora = new Date();
-  S.turno = { id: "T-" + (S.datos.equipo || "EQ") + "-" + ahoraTxt(ahora).replace(/\D/g, "").slice(0, 12) + "-" + uuid().slice(0, 4),
-              cajeroId: c.id, cajeroNombre: c.nombre, apertura: ahoraTxt(ahora),
-              fondoBs: r2(Number($("tFondoBs").value) || 0), fondoUsd: r2(Number($("tFondoUsd").value) || 0) };
-  await kvSet("turno", S.turno);
-  _turnoSel = null;
-  toast("✅ Turno abierto: " + c.nombre);
-  pintarCabecera();
-  irA("vender");
-  numerosAlDia();   // numeros.js: con internet, aparta los números de factura de este turno
-}
+// ══ TURNO: el cajero entra con su PIN (cajero.js) ══
 
 // ══ CIERRE DE TURNO ══
 function esEfectivo(p){ const m = metodoDe(p.metodo) || { metodo: p.metodo, tipo: p.tipo }; return pguTipoDe(m) === "efectivo"; }
@@ -1801,6 +1747,7 @@ function pintarCierre(){
     (R.credito ? '<tr><td>📝 A crédito (no entra a caja)</td><td class="r">$' + fmt(R.credito) + "</td></tr>" : "");
   $("cierreCard").innerHTML =
     '<div class="card-tit">🔒 Cerrar turno</div>' +
+    (S.cierreAdmin ? '<div class="banner av" style="margin:0 0 10px;">⭐ Lo cierra <b>' + esc(S.cierreAdmin.nombre) + "</b> porque " + esc(t.cajeroNombre) + " no está. Queda anotado en el cierre.</div>" : "") +
     '<div class="m-txt"><b>' + esc(t.cajeroNombre) + "</b> · desde " + fechaCorta(t.apertura) + " " + horaDe(t.apertura) + "</div>" +
     '<div class="res" style="margin-top:10px;"><div><span>Ventas</span><b>' + R.ventas + '</b></div><div><span>Total</span><b>Bs ' + fmt(R.totalBs) + '</b><span style="text-transform:none;">$' + fmt(R.totalUsd) + " BCV</span></div>" +
     (R.descuentos ? '<div><span>Descuentos</span><b>$' + fmt(R.descuentos) + "</b></div>" : "") + "</div>" +
@@ -1816,7 +1763,7 @@ function pintarCierre(){
       '<div><label class="lbl" for="cUsd">Contado $</label><input class="inp" id="cUsd" type="number" inputmode="decimal" min="0" step="any" placeholder="Cuenta el efectivo en $" oninput="pintarDifCierre()"><div id="cUsdDif" style="font-size:13px;font-weight:800;margin-top:4px;"></div></div>' +
     "</div>" +
     '<label class="lbl" for="cObs">Observación (opcional)</label><input class="inp" id="cObs" maxlength="200" placeholder="Ej. se pagó al proveedor de pan desde la gaveta">' +
-    '<div class="m-btns"><button type="button" class="btn" onclick="irA(\'vender\')">Volver a vender</button><button type="button" class="btn naranja" id="btnCerrarTurno" onclick="cerrarTurno(this)">🔒 Cerrar turno</button></div>';
+    '<div class="m-btns">' + (S.cierreAdmin ? '<button type="button" class="btn" onclick="cancelarCierreAdmin()">Cancelar</button>' : '<button type="button" class="btn" onclick="irA(\'vender\')">Volver a vender</button>') + '<button type="button" class="btn naranja" id="btnCerrarTurno" onclick="cerrarTurno(this)">🔒 Cerrar turno</button></div>';
   $("cierreCard")._R = R;
 }
 function pintarDifCierre(){
@@ -1836,12 +1783,13 @@ async function cerrarTurno(btn){
   btnOcupado(btn, "Cerrando…");
   const c = Object.assign({ id: t.id, cajeroId: t.cajeroId, cajeroNombre: t.cajeroNombre, apertura: t.apertura, cierre: ahoraTxt(),
     fondoBs: t.fondoBs, fondoUsd: t.fondoUsd, efBsContado: r2(Number(b)), efUsdContado: r2(Number(u)), efBsDif: dBs, efUsdDif: dUsd,
-    obs: $("cObs").value.trim(), caja: S.datos.caja, equipo: S.datos.equipo, estado: "por_subir", msg: "" }, R);
+    obs: ((S.cierreAdmin ? "Lo cerró " + S.cierreAdmin.nombre + " (" + t.cajeroNombre + " no estaba). " : "") + $("cObs").value.trim()).trim(), cerradoPor: S.cierreAdmin ? S.cierreAdmin.nombre : t.cajeroNombre,
+    caja: S.datos.caja, equipo: S.datos.equipo, estado: "por_subir", msg: "" }, R);
   c.metodos = R.metodos.map(m => ({ metodo: m.metodo, tipo: m.tipo, desc: m.desc, neto: m.neto, efectivo: m.efectivo }));
   S.cierres.push(c);
   try { await kvSet("cierres", S.cierres); await kvSet("turno", null); }
   catch (e) { btnLibre(btn); S.cierres.pop(); aviso({ icono: "❌", titulo: "No se cerró el turno", html: "El equipo no pudo guardar el cierre (" + esc(e.message) + "). Vuelve a intentar." }); return; }
-  S.turno = null;
+  S.turno = null; S.cierreAdmin = null;
   btnLibre(btn);
   pintarCabecera(); pintarEstado();
   numerosAlDia();   // numeros.js: sin turno, los números apartados que no se usaron vuelven al sistema
