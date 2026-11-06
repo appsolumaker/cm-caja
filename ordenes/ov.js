@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "1.3 · 5-11-2026";
+const OV_VER = "1.4 · 5-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -58,6 +58,11 @@ const sesionOk = () => !!(OV.ses && OV.ses.token && OV.ses.expira > Date.now());
 // ══ ARRANQUE ══
 async function arrancar(){
   $("verTxt").textContent = "Órdenes · versión " + OV_VER;
+  // 1.4: la página y ov.js tienen que ser de la misma versión (justo después de subir a GitHub puede llegar uno viejo)
+  if (((document.querySelector('meta[name="cm-ver"]') || {}).content || "") !== OV_VER.split(" ")[0]) {
+    let ya = ""; try { ya = sessionStorage.getItem("ov_recargo") || ""; } catch (e) {}
+    if (!ya) { try { sessionStorage.setItem("ov_recargo", "1"); } catch (e) {} location.reload(); return; }
+  } else { try { sessionStorage.removeItem("ov_recargo"); } catch (e) {} }
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
   try { await dbAbrir(); } catch (e) { pantalla("vEntrar"); $("enTxt").textContent = "Este navegador no deja guardar datos (¿ventana de incógnito?). Ábrelo en una ventana normal."; return; }
   OV.tel = (await kvGet("tel")) || "";
@@ -68,7 +73,7 @@ async function arrancar(){
   OV.pref = Object.assign(OV.pref, (await kvGet("pref")) || {});
   const b = await kvGet("borrador"); if (b && b.items) O = Object.assign(nuevaOrden(), b);
   aplicarTema();
-  armarTeclado("pnTec", teclaPinNuevo); armarTeclado("piTec", teclaPin);
+  armarTeclado("piTec", teclaPin);
   // Abierta desde el menú del sistema (tarjeta Órdenes): #pase=… → entra con ese mismo usuario
   const mp = location.hash.match(/pase=([A-Za-z0-9]+)/);
   if (mp) {
@@ -79,6 +84,14 @@ async function arrancar(){
     cargandoFin();
     if (r && r.ok) { registrarEventos(); await trasEntrar(r); return; }
     if (r && r.msg) await aviso({ icono: "🔒", titulo: "No se pudo entrar desde el sistema", html: esc(r.msg) });
+  }
+  // Etapa 4B: abrió el enlace que le mandó el administrador (#enlace=…) → este teléfono queda registrado
+  const me = location.hash.match(/enlace=([A-Za-z0-9]+)/);
+  if (me) {
+    try { history.replaceState(null, "", location.pathname); } catch (e) {}
+    registrarEventos();
+    await usarEnlace(me[1]);
+    return;
   }
   registrarEventos();
   continuar();
@@ -99,15 +112,53 @@ async function continuar(){
   mostrarEntrar();
 }
 function pantalla(id){
-  ["vEntrar", "vPinNuevo", "vPin"].forEach(x => $(x).classList.toggle("oculto", x !== id));
+  ["vEntrar", "vPin"].forEach(x => $(x).classList.toggle("oculto", x !== id));
   const app = id === "app";
   ["tabs", "main", "barra", "pill", "btnMenu"].forEach(x => $(x).classList.toggle("oculto", !app));
   if (!app) $("bandas").innerHTML = "";
 }
-function mostrarEntrar(){
+// Sin teléfono registrado: el vendedor necesita su enlace. Usuario y clave quedan para los administradores.
+function mostrarEntrar(motivo){
   pantalla("vEntrar");
+  $("enAviso").innerHTML = motivo ? esc(motivo) : "";
+  $("enAviso").classList.toggle("oculto", !motivo);
   $("enOffline").classList.toggle("oculto", !(OV.d && OV.quien));
+  if (!$("enForm").classList.contains("oculto")) setTimeout(() => $("enUsu").focus(), 50);
+}
+function verFormAdmin(){
+  $("enForm").classList.remove("oculto"); $("enAdm").classList.add("oculto");
   setTimeout(() => $("enUsu").focus(), 50);
+}
+// ── El enlace de un solo uso: registra este teléfono para el vendedor. Después, solo el PIN. ──
+async function usarEnlace(cod){
+  pantalla("vEntrar");
+  cargando("Registrando tu teléfono…");
+  let r = null;
+  try { r = await api("cj_ov_enlace", { enlace: cod }, 30000); } catch (e) { r = { ok: false, red: true, msg: e.message }; }
+  cargandoFin();
+  if (!r || !r.ok) {
+    await aviso({ icono: r && r.red ? "📡" : "🔗", titulo: r && r.red ? "Sin conexión" : "El enlace no sirvió",
+      html: esc((r && r.msg) || "El sistema no respondió.") + (r && r.red ? "<br><br>Para registrar el teléfono hace falta internet: abre el enlace otra vez cuando tengas." : "") });
+    continuar();
+    return;
+  }
+  const nuevo = { usuario: "vend#" + r.vendedor.id, nombre: r.vendedor.nombre };
+  if (OV.quien && String(OV.quien.usuario || "").toLowerCase() !== nuevo.usuario) {   // otro vendedor en este teléfono: lo suyo no se mezcla
+    if (OV.pend.length && !await confirmar({ icono: "⚠️", titulo: "Otro vendedor", colorOk: "red", ok: "Borrarlas y seguir",
+      html: "En este teléfono hay <b>" + OV.pend.length + "</b> orden(es) por enviar de <b>" + esc(OV.quien.nombre) + "</b>. Si sigues con <b>" + esc(nuevo.nombre) + "</b>, se borran.<br><br>Para no perderlas, que " + esc(OV.quien.nombre) + " entre y las envíe primero (después abre el enlace otra vez: pide uno nuevo)." })) {
+      try { await api("cj_ov_salir", { tel: r.tel, olvidar: true }, 15000); } catch (e) {}
+      continuar();
+      return;
+    }
+    OV.pend = []; OV.d = null; O = nuevaOrden();
+    await kvSet("pend", []); await kvDel("datos"); await kvDel("borrador");
+  }
+  if (OV.tel && OV.tel !== r.tel) { const viejo = OV.tel; api("cj_ov_salir", { tel: viejo, olvidar: true }, 15000).catch(() => {}); }   // el registro anterior de este teléfono
+  OV.ses = null; await kvDel("ses");
+  OV.tel = r.tel; await kvSet("tel", OV.tel);
+  OV.quien = nuevo; await kvSet("quien", OV.quien);
+  toast("✅ Teléfono registrado");
+  mostrarPin();
 }
 function mostrarPin(){
   pantalla("vPin"); _pin = "";
@@ -144,8 +195,7 @@ async function trasEntrar(r){
   }
   OV.ses = { token: r.token, expira: Date.now() + 12 * 3600e3 - 60000 }; await kvSet("ses", OV.ses);
   OV.quien = { usuario: r.usuario.usuario, nombre: (r.vendedor && r.vendedor.nombre) || r.usuario.nombre || r.usuario.usuario }; await kvSet("quien", OV.quien);
-  if (r.conPin && !OV.tel) { _pinA = ""; _pin = ""; pantalla("vPinNuevo"); $("pnTit").textContent = "Crea tu PIN"; $("pnTxt").textContent = "4 números que solo tú sepas. Desde ahora entras en este teléfono solo con el PIN."; pintarDots("pnDots", ""); $("pnErr").textContent = ""; return; }
-  if (!r.conPin) { OV.tel = ""; await kvDel("tel"); }   // admin sin vendedor: entra con usuario y clave cada vez
+  OV.tel = ""; await kvDel("tel");   // con usuario y clave (administradores) se entra así cada vez; los vendedores, con su enlace y PIN
   await descargarYEntrar();
 }
 // Descarga productos, precios y clientes mostrando "Cargando…" en toda la pantalla
@@ -157,30 +207,12 @@ async function descargarYEntrar(){
 }
 
 // ── PIN (teclado grande) ──
-let _pin = "", _pinA = "";
+let _pin = "";
 function armarTeclado(id, fn){
   $(id).innerHTML = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map(k => k ? '<button type="button" class="' + (k === "⌫" ? "t-x" : "") + '" data-k="' + k + '">' + k + "</button>" : "<span></span>").join("");
   $(id).querySelectorAll("button").forEach(bt => bt.addEventListener("click", () => fn(bt.dataset.k)));
 }
 function pintarDots(id, v){ $(id).querySelectorAll("span").forEach((s, i) => s.classList.toggle("on", i < v.length)); }
-async function teclaPinNuevo(k){
-  if (k === "⌫") _pin = _pin.slice(0, -1); else if (_pin.length < 4) _pin += k;
-  pintarDots("pnDots", _pin); $("pnErr").textContent = "";
-  if (_pin.length < 4) return;
-  if (!_pinA) { _pinA = _pin; _pin = ""; setTimeout(() => { pintarDots("pnDots", ""); $("pnTit").textContent = "Repite tu PIN"; $("pnTxt").textContent = "Escríbelo otra vez para confirmarlo."; }, 180); return; }
-  if (_pin !== _pinA) { _pinA = ""; _pin = ""; pintarDots("pnDots", ""); $("pnTit").textContent = "Crea tu PIN"; $("pnErr").textContent = "No coinciden. Escríbelo de nuevo."; return; }
-  let r;
-  cargando("Creando tu PIN…");
-  try { r = await api("cj_ov_pin", { pin: _pin, tel: OV.tel }, 30000); }
-  catch (e) { cargandoFin(); _pin = ""; _pinA = ""; pintarDots("pnDots", ""); $("pnTit").textContent = "Crea tu PIN"; $("pnErr").textContent = e.message + " Vuelve a intentar."; return; }
-  cargandoFin();
-  if (!r || !r.ok) { _pin = ""; _pinA = ""; pintarDots("pnDots", ""); $("pnTit").textContent = "Crea tu PIN"; $("pnErr").textContent = (r && r.msg) || "No se pudo crear el PIN."; if (r && r.codigo === "SESION") mostrarEntrar(); return; }
-  OV.tel = r.tel; await kvSet("tel", OV.tel);
-  OV.quien = { usuario: OV.quien.usuario, nombre: (r.vendedor && r.vendedor.nombre) || r.nombre }; await kvSet("quien", OV.quien);
-  _pin = ""; _pinA = "";
-  toast("✅ PIN creado");
-  await descargarYEntrar();
-}
 let _pinOcupado = false;
 async function teclaPin(k){
   if (_pinOcupado) return;
@@ -198,7 +230,7 @@ async function teclaPin(k){
   }
   cargandoFin(); _pinOcupado = false; _pin = ""; pintarDots("piDots", "");
   if (!r || !r.ok) {
-    if (r && r.codigo === "TEL") { OV.tel = ""; await kvDel("tel"); await aviso({ icono: "🔒", titulo: "Entra con tu usuario y clave", html: esc(r.msg) }); mostrarEntrar(); return; }
+    if (r && r.codigo === "TEL") { OV.tel = ""; await kvDel("tel"); await aviso({ icono: "🔗", titulo: "Hace falta un enlace nuevo", html: esc(r.msg) }); mostrarEntrar(r.msg); return; }
     $("piErr").textContent = (r && r.msg) || "No se pudo entrar.";
     return;
   }
@@ -208,12 +240,8 @@ async function teclaPin(k){
   if (OV.d) { entrarApp(); enviarPendientes(); actualizarDatos(false); return; }   // ya tiene productos: entra de una y se actualizan por detrás
   await descargarYEntrar();
 }
-async function olvidePin(){
-  const ok = await confirmar({ icono: "🔢", titulo: "Olvidé mi PIN", ok: "Entrar con usuario y clave", html: "Entra con tu usuario y clave del sistema y crea un PIN nuevo. Las órdenes que tengas guardadas en este teléfono no se pierden." });
-  if (!ok) return;
-  try { if (hayRed()) await api("cj_ov_salir", { tel: OV.tel, olvidar: true }, 15000); } catch (e) {}
-  OV.tel = ""; await kvDel("tel");
-  mostrarEntrar();
+function olvidePin(){
+  aviso({ icono: "🔢", titulo: "Olvidé mi PIN", html: "Pídele al administrador que te ponga un PIN nuevo (en el sistema: <b>Configuración → Cajas y vendedores → 🔢 PIN</b>).<br><br>Tu teléfono sigue registrado: cuando te diga el PIN nuevo, lo escribes aquí. Las órdenes guardadas en el teléfono no se pierden." });
 }
 function seguirSinInternet(){ OV.sinInternet = true; entrarApp(); }
 // La sesión venció mientras se trabajaba: el PIN (o usuario y clave) otra vez, sin perder nada
@@ -226,7 +254,7 @@ async function pedirEntrada(luego){
   else mostrarEntrar();
 }
 async function salir(){
-  const ok = await confirmar({ icono: "🚪", titulo: "Salir", ok: "Salir", html: "La próxima vez entras con tu PIN." + (OV.pend.length ? "<br><br>Tienes <b>" + OV.pend.length + "</b> orden(es) por enviar: quedan guardadas en el teléfono y se envían cuando vuelvas a entrar." : "") });
+  const ok = await confirmar({ icono: "🚪", titulo: "Salir", ok: "Salir", html: (OV.tel ? "La próxima vez entras con tu PIN." : "La próxima vez entras con tu usuario y clave.") + (OV.pend.length ? "<br><br>Tienes <b>" + OV.pend.length + "</b> orden(es) por enviar: quedan guardadas en el teléfono y se envían cuando vuelvas a entrar." : "") });
   if (!ok) return;
   try { if (hayRed() && OV.ses) await api("cj_ov_salir", { sesion: OV.ses.token }, 15000); } catch (e) {}
   OV.ses = null; await kvDel("ses");

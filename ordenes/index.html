@@ -4,11 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
+<meta name="cm-ver" content="1.4">
 <title>Órdenes · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="ordenes.css">
+<link rel="stylesheet" href="ordenes.css?v=1.4">
 </head>
 <body class="light">
 
@@ -31,22 +32,18 @@
   <div class="entrar-box">
     <div style="font-size:40px;">📋</div>
     <h2>Órdenes de venta</h2>
-    <p id="enTxt">Entra con tu usuario y clave del sistema. La primera vez creas tu PIN: desde ahí entras solo con el PIN.</p>
-    <div class="fg"><label for="enUsu">Usuario</label><input class="inp" id="enUsu" autocomplete="username" autocapitalize="off" placeholder="Tu usuario"></div>
-    <div class="fg"><label for="enCla">Clave</label><input class="inp" id="enCla" type="password" autocomplete="current-password" placeholder="Tu clave" onkeydown="if(event.key==='Enter')entrarUsuario()"></div>
-    <button type="button" class="btn green block" id="btnEntrar" onclick="entrarUsuario()">Entrar</button>
-    <div class="entrar-links"><button type="button" class="lnk oculto" id="enOffline" onclick="seguirSinInternet()">📝 Seguir sin internet</button></div>
+    <div class="en-aviso oculto" id="enAviso"></div>
+    <p id="enTxt">Para entrar, pídele al administrador tu <b>enlace</b>. Ábrelo en este teléfono y después entras solo con tu <b>PIN</b>.</p>
+    <div class="oculto" id="enForm">
+      <div class="fg"><label for="enUsu">Usuario</label><input class="inp" id="enUsu" autocomplete="username" autocapitalize="off" placeholder="Tu usuario"></div>
+      <div class="fg"><label for="enCla">Clave</label><input class="inp" id="enCla" type="password" autocomplete="current-password" placeholder="Tu clave" onkeydown="if(event.key==='Enter')entrarUsuario()"></div>
+      <button type="button" class="btn green block" id="btnEntrar" onclick="entrarUsuario()">Entrar</button>
+    </div>
+    <div class="entrar-links">
+      <button type="button" class="lnk" id="enAdm" onclick="verFormAdmin()">🔐 Soy administrador: entrar con usuario y clave</button>
+      <button type="button" class="lnk oculto" id="enOffline" onclick="seguirSinInternet()">📝 Seguir sin internet</button>
+    </div>
     <div class="ver-txt" id="verTxt"></div>
-  </div>
-</div>
-<div class="entrar oculto" id="vPinNuevo">
-  <div class="entrar-box">
-    <div style="font-size:40px;">🔢</div>
-    <h2 id="pnTit">Crea tu PIN</h2>
-    <p id="pnTxt">4 números que solo tú sepas. Desde ahora entras en este teléfono solo con el PIN.</p>
-    <div class="pin-dots" id="pnDots"><span></span><span></span><span></span><span></span></div>
-    <div class="m-err" id="pnErr"></div>
-    <div class="teclado" id="pnTec"></div>
   </div>
 </div>
 <div class="entrar oculto" id="vPin">
@@ -121,6 +118,6 @@
 <div class="cargando oculto" id="cargando"><div class="cg-box"><div class="cg-sp"></div><div class="cg-txt" id="cgTxt">Cargando…</div><div class="cg-sub" id="cgSub"></div></div></div>
 <div id="toast"></div>
 
-<script src="ov.js"></script>
+<script src="ov.js?v=1.4"></script>
 </body>
 </html>
