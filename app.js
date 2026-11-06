@@ -18,7 +18,7 @@
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
 //  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.8 · 5-11-2026";
+const APP_VER = "2.8.1 · 6-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -255,8 +255,12 @@ function textoTasas(){
   return "BCV <b>Bs " + fmt(t.bcv) + "</b> · Divisas efectivo <b>Bs " + (t.div > 0 ? fmt(t.div) : "—") + "</b>";
 }
 async function actualizarDatos(btn, silencioso){
-  if (!S.eq || !sesionViva()) return;
+  if (!S.eq) return;
   if (silencioso && P) return;   // con el cobro abierto no se cambian tasas ni precios
+  if (!sesionViva() && !(await entrarDirecto())) {   // 2.8.1: sin sesión, el equipo vuelve a entrar solo antes de actualizar
+    if (!silencioso) aviso({ icono: "🔐", titulo: "No se pudieron actualizar los datos", html: "La sesión de este equipo venció y no pudo volver a entrar sola (¿hay internet?). Puedes seguir vendiendo con los datos que ya tiene el equipo." });
+    return;
+  }
   btnOcupado(btn, "Actualizando…");
   try {
     await descargarDatos();
@@ -267,6 +271,7 @@ async function actualizarDatos(btn, silencioso){
     btnLibre(btn);
     pintarBanners();
     if (e.codigo === "SESION" || e.codigo === "USUARIO") return;   // sesion.js ya lo atendió
+    if (silencioso && !e.red && !S.permisoMal) { S.datosMal = "Los datos (tasas, precios y existencias) no se pudieron actualizar solos: " + e.message; pintarBanners(); }   // 2.8.1: que no falle callado
     if (!silencioso && !S.permisoMal) aviso({ icono: "📡", titulo: "No se pudieron actualizar los datos", html: esc(e.message) + (e.red ? "<br><br>Puedes seguir vendiendo con los datos que ya tiene el equipo." : "") });
   }
 }
@@ -372,7 +377,7 @@ function pintarBanners(){
   pintarNumFactura();
   let h = "";
   if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a></div>';
-  if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + "</div>";
+  if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + ' <a href="#" onclick="actualizarDatos(null,false);return false;" style="color:inherit;font-weight:800;">Reintentar</a></div>';
   if (S.sesionMal) h += '<div class="banner av">🔐 ' + esc(S.sesionMal) + ' <a href="#" onclick="pedirEntrarOtraVez();return false;" style="color:inherit;font-weight:800;">Entrar</a></div>';
   if (S.datos && tasaVieja() && S.tasaOkHoy !== hoyTxt()) h += '<div class="banner av">💱 Las tasas de este equipo son del <b>' + fechaCorta(S.tasas.fecha) + '</b>. Con internet se actualizan solas; si no hay, revísalas antes de cobrar: <a href="#" onclick="verTasas();return false;" style="color:inherit;font-weight:800;">ver tasas</a>.</div>';
   if (S.turno && S.num && !S.num.lista.length && S.online === false) h += '<div class="banner av">🔢 Este equipo no tiene números de factura apartados: los tickets salen <b>provisionales</b> y el sistema les da su número al subirlos.</div>';
@@ -501,8 +506,9 @@ function buscar(){
         (enDeposito(p) > 0 ? ' <span class="prod-barcode" style="display:inline;">📦 Depósito: ' + fmtCant(enDeposito(p)) + "</span>" : "") + "</div>";
     }
     const q2 = cuantasEnFactura(p.codigo);
-    return '<div class="prod-item" data-k="' + k + '" onclick="clicProducto(this,' + k + ')" ondblclick="agregarDeLista(' + k + ')"><div class="prod-fila">' +
-      (fotos && p.tipo !== "servicio" ? fotoProd(p) : "") +
+    const cf = fotos && p.tipo !== "servicio";
+    return '<div class="prod-item' + (cf ? " con-foto" : "") + '" data-k="' + k + '" onclick="clicProducto(this,' + k + ')" ondblclick="agregarDeLista(' + k + ')"><div class="prod-fila"' + (cf ? ' style="align-items:center;gap:10px;"' : "") + ">" +
+      (cf ? fotoProd(p) : "") +
       '<div style="flex:1;min-width:0;"><div class="prod-cod">ID: ' + esc(p.codigo) + '</div><div class="prod-nom">' + esc(p.nombre) + "</div>" + info + "</div>" +
       '<div class="prod-pr"><div class="p1">$ ' + fmt(conIva) + " <small>BCV</small></div><div class=\"p2\">Bs " + fmt(r2(conIva * tBcv())) + "</div>" + (div > 0 ? '<div class="p3">$ ' + fmt(div) + " <small>div</small></div>" : "") + "</div>" +
       '<button type="button" class="mv-add" data-cod="' + esc(p.codigo) + '" title="Agregar a la factura" onclick="event.stopPropagation();agregarDeLista(' + k + ')" ondblclick="event.stopPropagation()">+' + (q2 > 0 ? '<span class="mv-q">' + fmtCant(q2) + "</span>" : "") + "</button>" +
@@ -518,15 +524,22 @@ function fotoDeCodigo(c){
   if (_fotoDatos !== S.datos) { _fotoDatos = S.datos; _fotoMapa = {}; ((S.datos && S.datos.productos) || []).forEach(p => { if (p.imagen) _fotoMapa[String(p.codigo)] = p.imagen; }); }
   return _fotoMapa[String(c)] || "";
 }
-function miniFoto(c){
+// Igual que Ventas (_SIN_FOTO_SVG, .vta-thumb y .vta-mini): recuadro «Sin foto» y la foto con fondo blanco, sin recortarla
+const SIN_FOTO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5.2-5.2a1 1 0 0 0-1.4 0L5 20"/></svg>';
+function fotoLista(img){ const b = img.parentNode; img.classList.add("ok"); if (b) { b.classList.remove("cargando"); b.classList.add("con-img"); } }
+function sinFoto(img){ const b = img && img.parentNode; if (!b) return; b.onclick = null; b.removeAttribute("title"); b.classList.remove("cargando", "con-img"); b.classList.add("sin"); b.innerHTML = SIN_FOTO_SVG + "<small>Sin foto</small>"; }
+function miniFoto(c, srv){
+  if (srv) return '<span class="vta-mini vacio"></span>';   // servicios: sin foto, solo el espacio para alinear (como Ventas)
   const u = String(fotoDeCodigo(c) || "").replace(/"/g, "%22");
-  return '<span class="fac-img">' + (u ? '<img alt="" loading="lazy" decoding="async" src="' + u + '" onerror="this.parentNode.innerHTML=\'📦\'">' : "📦") + "</span>";
+  return u ? '<span class="vta-mini"><img alt="" decoding="async" src="' + u + '" onload="this.parentNode.classList.add(\'con-img\')" onerror="this.parentNode.innerHTML=SIN_FOTO_SVG"></span>'
+           : '<span class="vta-mini">' + SIN_FOTO_SVG + "</span>";
 }
-// La foto del producto (la del catálogo). Sin foto, o si no carga: 📦. Tocarla la muestra grande.
+// La foto del producto en la lista (la del catálogo). Sin foto, o si no carga: «Sin foto». Tocarla la muestra grande.
 function fotoProd(p){
   const u = String((p && p.imagen) || "").trim().replace(/"/g, "%22");
-  return '<span class="prod-img"' + (u ? ' onclick="event.stopPropagation();verFoto(this)" ondblclick="event.stopPropagation()" title="Ver la foto"' : "") + ">" +
-    (u ? '<img alt="" loading="lazy" decoding="async" src="' + u + '" onerror="this.parentNode.onclick=null;this.parentNode.innerHTML=\'📦\'">' : "📦") + "</span>";
+  if (!u) return '<span class="vta-thumb sin">' + SIN_FOTO_SVG + "<small>Sin foto</small></span>";
+  return '<span class="vta-thumb cargando" onclick="event.stopPropagation();verFoto(this)" ondblclick="event.stopPropagation()" title="Ver la foto">' +
+    '<img alt="" loading="lazy" decoding="async" src="' + u + '" onload="fotoLista(this)" onerror="sinFoto(this)"></span>';
 }
 function verFoto(el){
   const img = el && el.querySelector("img"); if (!img) return;
@@ -647,7 +660,7 @@ function pintarFactura(){
     opts += '<option value="manual"' + (i.manual ? " selected" : "") + ">Manual</option>";
     const cant = '<td><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',-1)" title="Una menos">−</button><input type="number" min="0" step="any" id="q_' + i.key + '" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onchange="revisarExistencia(' + i.key + ')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}"><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',1)" title="Una más">+</button></td>';
     const cod = '<td><span style="font-size:11px;">' + esc(i.codigoBarras || i.codigo) + "</span>" + (srv ? ' <span class="srv">SRV</span>' : "") + "</td>";
-    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + (!srv && hayFotos() ? miniFoto(i.codigo) : "") + esc(i.nombre) + (srv ? "" : '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
+    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + (hayFotos() ? '<span class="vta-fcel">' + miniFoto(i.codigo, srv) + '<span class="vta-fnom">' + esc(i.nombre) + "</span></span>" : esc(i.nombre)) + (srv ? "" : '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
     const fin = '<td><select onchange="cambiarTipoLinea(' + i.key + ',this)">' + opts + '</select></td><td><button type="button" class="btn-del" onclick="quitarLinea(' + i.key + ')" title="Quitar">✕</button></td>';
     if (i.manual) return '<tr data-key="' + i.key + '" data-cod="' + esc(i.codigo) + '">' + cod + nom + cant +
       '<td><input type="number" class="man" min="0" step="any" id="pu_' + i.key + '" value="' + r2(i.base).toFixed(2) + '" oninput="manualPU(' + i.key + ',this.value)"></td>' +
