@@ -18,7 +18,7 @@
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
 //  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.8.1 · 6-11-2026";
+const APP_VER = "2.8.2 · 6-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -2067,7 +2067,7 @@ let _verNueva = "";
 async function revisarVersion(){
   if (navigator.onLine === false) return;
   try {
-    const r = await fetch("./app.js?v=" + Date.now(), { cache: "no-store" });
+    const r = await fetch("./app.js?chk=" + Date.now(), { cache: "no-store" });   // «chk»: el SW no lo guarda (si no, sin internet quedaría el app.js nuevo con la página vieja)
     if (!r.ok) return;
     const m = (await r.text()).match(/const APP_VER = "([^"]+)"/);
     if (!m || m[1] === APP_VER) return;

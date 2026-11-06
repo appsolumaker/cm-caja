@@ -2,7 +2,7 @@
 // Guarda la página en el equipo para que abra sin internet.
 // Con internet trae la versión nueva (y la guarda); sin internet usa la guardada.
 // Las llamadas al sistema (/caja/api, POST) no pasan por aquí.
-const CACHE = "cm-caja-web-v4";
+const CACHE = "cm-caja-web-v5";
 const BASE = new URL("./", self.location).pathname;   // /caja/
 const ARCHIVOS = ["./", "./index.html", "./estilos.css", "./app.js", "./api.js", "./sesion.js", "./numeros.js", "./ordenes.js", "./cajero.js"];
 
@@ -21,6 +21,7 @@ self.addEventListener("fetch", e => {
   if (r.method !== "GET") return;
   const u = new URL(r.url);
   if (u.origin !== self.location.origin || u.pathname.indexOf(BASE) !== 0 || u.pathname === BASE + "api") return;
+  if (u.searchParams.has("chk")) return;   // la revisión de versión va directo a la red y no se guarda
   e.respondWith(primeroRed(r));
 });
 
