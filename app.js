@@ -18,7 +18,7 @@
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
 //  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.7.1 · 5-11-2026";
+const APP_VER = "2.8 · 5-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -486,6 +486,7 @@ function buscar(){
   if (!S.datos) { box.innerHTML = ""; return; }
   const q = $("busca").value, todos = resultados(q), lst = todos.slice(0, LISTA_MAX), on = binOn();
   $("vtaContador").textContent = todos.length > LISTA_MAX ? "Mostrando " + LISTA_MAX + " de " + todos.length + ": escribe para buscar" : "";
+  const fotos = S.vtaVista !== "servicios" && hayFotos();   // 2.8: como Ventas, con «Mostrar fotos de productos en Ventas» (Configuración)
   if (!lst.length) { box.innerHTML = '<div class="vacio">' + (norm(q) ? "No hay " + (S.vtaVista === "servicios" ? "servicios" : "productos") + " con «" + esc(q) + "»." : "No hay productos en los datos de este equipo.") + "</div>"; box._lst = []; return; }
   box.innerHTML = lst.map((p, k) => {
     const pr = precioDe(p, F.tipoPrecio), conIva = r2(r2(baseBCV(pr.base)) * (1 + pr.iva / 100)), div = on ? r2(pr.base * (1 + pr.iva / 100)) : 0;
@@ -501,6 +502,7 @@ function buscar(){
     }
     const q2 = cuantasEnFactura(p.codigo);
     return '<div class="prod-item" data-k="' + k + '" onclick="clicProducto(this,' + k + ')" ondblclick="agregarDeLista(' + k + ')"><div class="prod-fila">' +
+      (fotos && p.tipo !== "servicio" ? fotoProd(p) : "") +
       '<div style="flex:1;min-width:0;"><div class="prod-cod">ID: ' + esc(p.codigo) + '</div><div class="prod-nom">' + esc(p.nombre) + "</div>" + info + "</div>" +
       '<div class="prod-pr"><div class="p1">$ ' + fmt(conIva) + " <small>BCV</small></div><div class=\"p2\">Bs " + fmt(r2(conIva * tBcv())) + "</div>" + (div > 0 ? '<div class="p3">$ ' + fmt(div) + " <small>div</small></div>" : "") + "</div>" +
       '<button type="button" class="mv-add" data-cod="' + esc(p.codigo) + '" title="Agregar a la factura" onclick="event.stopPropagation();agregarDeLista(' + k + ')" ondblclick="event.stopPropagation()">+' + (q2 > 0 ? '<span class="mv-q">' + fmtCant(q2) + "</span>" : "") + "</button>" +
@@ -508,6 +510,28 @@ function buscar(){
   }).join("");
   box._lst = lst;
   $("mvCats").querySelectorAll(".mv-cat").forEach(b => b.classList.toggle("on", b.dataset.v === $("selCat").value));
+}
+// 2.8 · Fotos como en Ventas (Configuración → «Mostrar fotos de productos en Ventas»): en la lista y una miniatura en la factura
+function hayFotos(){ return !!(S.datos && S.datos.fotosVentas === true); }
+let _fotoMapa = {}, _fotoDatos = null;
+function fotoDeCodigo(c){
+  if (_fotoDatos !== S.datos) { _fotoDatos = S.datos; _fotoMapa = {}; ((S.datos && S.datos.productos) || []).forEach(p => { if (p.imagen) _fotoMapa[String(p.codigo)] = p.imagen; }); }
+  return _fotoMapa[String(c)] || "";
+}
+function miniFoto(c){
+  const u = String(fotoDeCodigo(c) || "").replace(/"/g, "%22");
+  return '<span class="fac-img">' + (u ? '<img alt="" loading="lazy" decoding="async" src="' + u + '" onerror="this.parentNode.innerHTML=\'📦\'">' : "📦") + "</span>";
+}
+// La foto del producto (la del catálogo). Sin foto, o si no carga: 📦. Tocarla la muestra grande.
+function fotoProd(p){
+  const u = String((p && p.imagen) || "").trim().replace(/"/g, "%22");
+  return '<span class="prod-img"' + (u ? ' onclick="event.stopPropagation();verFoto(this)" ondblclick="event.stopPropagation()" title="Ver la foto"' : "") + ">" +
+    (u ? '<img alt="" loading="lazy" decoding="async" src="' + u + '" onerror="this.parentNode.onclick=null;this.parentNode.innerHTML=\'📦\'">' : "📦") + "</span>";
+}
+function verFoto(el){
+  const img = el && el.querySelector("img"); if (!img) return;
+  const nom = (el.closest(".prod-item") || {}).querySelector ? el.closest(".prod-item").querySelector(".prod-nom").textContent : "";
+  modal({ titulo: nom || "Foto", html: '<img class="foto-grande" alt="" src="' + img.getAttribute("src").replace(/"/g, "%22") + '">', botones: [{ txt: "Cerrar", v: true, cls: "green" }] });
 }
 function limpiarBusqueda(){ $("busca").value = ""; buscar(); $("busca").focus(); }
 function buscarEnter(){
@@ -623,7 +647,7 @@ function pintarFactura(){
     opts += '<option value="manual"' + (i.manual ? " selected" : "") + ">Manual</option>";
     const cant = '<td><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',-1)" title="Una menos">−</button><input type="number" min="0" step="any" id="q_' + i.key + '" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onchange="revisarExistencia(' + i.key + ')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}"><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',1)" title="Una más">+</button></td>';
     const cod = '<td><span style="font-size:11px;">' + esc(i.codigoBarras || i.codigo) + "</span>" + (srv ? ' <span class="srv">SRV</span>' : "") + "</td>";
-    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + esc(i.nombre) + (srv ? "" : '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
+    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + (!srv && hayFotos() ? miniFoto(i.codigo) : "") + esc(i.nombre) + (srv ? "" : '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
     const fin = '<td><select onchange="cambiarTipoLinea(' + i.key + ',this)">' + opts + '</select></td><td><button type="button" class="btn-del" onclick="quitarLinea(' + i.key + ')" title="Quitar">✕</button></td>';
     if (i.manual) return '<tr data-key="' + i.key + '" data-cod="' + esc(i.codigo) + '">' + cod + nom + cant +
       '<td><input type="number" class="man" min="0" step="any" id="pu_' + i.key + '" value="' + r2(i.base).toFixed(2) + '" oninput="manualPU(' + i.key + ',this.value)"></td>' +
