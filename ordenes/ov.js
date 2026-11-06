@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "1.4 · 5-11-2026";
+const OV_VER = "1.5 · 6-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -399,9 +399,12 @@ function productosOrdenados(){
   if (_lista.de !== d.descargadoEn) _lista = { de: d.descargadoEn, prods: (d.productos || []).slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")) };
   return _lista.prods;
 }
+// Igual que Ventas: recuadro «Sin foto» (mismo dibujo) y la foto con fondo blanco, sin recortarla
+const SIN_FOTO = '<span class="sin-foto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5.2-5.2a1 1 0 0 0-1.4 0L5 20"/></svg><small>Sin foto</small></span>';
+function sinFoto(img){ const s = img && img.parentNode; if (s) { s.classList.remove("con-img"); s.innerHTML = SIN_FOTO; } }
 function fotoHTML(p, cls){
   const u = String((p && p.imagen) || "").trim().replace(/"/g, "%22");
-  return '<span class="' + cls + '">' + (u ? '<img alt="" loading="lazy" decoding="async" src="' + u + '" onerror="this.parentNode.innerHTML=\'📦\'">' : "📦") + "</span>";
+  return '<span class="' + cls + '">' + (u ? '<img alt="" loading="lazy" decoding="async" src="' + u + '" onload="this.parentNode.classList.add(\'con-img\')" onerror="sinFoto(this)">' : SIN_FOTO) + "</span>";
 }
 function verMas(){ _lim += LISTA_PASO; buscar(true); }
 function buscar(seguir){
