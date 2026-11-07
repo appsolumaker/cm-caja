@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "1.5 · 6-11-2026";
+const OV_VER = "1.6 · 6-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -40,6 +40,7 @@ function ErrRed(m){ const e = new Error(m); e.red = true; return e; }
 async function api(accion, extra, ms){
   const cuerpo = Object.assign({ accion: accion }, extra || {});
   if (OV.ses && OV.ses.token && cuerpo.sesion == null) cuerpo.sesion = OV.ses.token;
+  if (OV.tel && cuerpo.tel == null) cuerpo.tel = OV.tel;   // S1: la sesión del PIN solo sirve desde este teléfono
   const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), ms || 60000);
   let r;
   try { r = await fetch(API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(cuerpo), signal: ctl.signal, cache: "no-store" }); }
