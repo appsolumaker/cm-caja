@@ -19,10 +19,29 @@ function modsSesion(){
 function puedeCaja(n){ const m = modsSesion(); return m.indexOf("todos") >= 0 || m.indexOf("ventas_" + n) >= 0; }
 async function guardarSesion(r){
   S.ses = { token: r.token, usuario: r.usuario || {}, desde: Date.now() };
-  S.sesionMal = "";
+  S.sesionMal = ""; S.noDirecta = false;
   await kvSet("sesion", S.ses);
 }
 async function borrarSesion(){ S.ses = null; await kvSet("sesion", null); }
+// ── Entrada directa (Etapa 1D): un equipo activado no pide usuario y clave. Sin sesión (o vencida), pide una
+//    con la llave del equipo: solo de esta caja, a nombre del último usuario que entró aquí. true si quedó adentro.
+let _renovando = null;
+function entrarDirecto(){
+  if (!S.eq || S.online === false || navigator.onLine === false || S.noDirecta) return Promise.resolve(false);
+  if (_renovando) return _renovando;
+  _renovando = (async () => {
+    try {
+      const r = await api("cj_renovar", {}, 30000);
+      if (r && r.ok && r.token) { await guardarSesion(r); pintarBanners(); return true; }
+      if (r && r.codigo === "EQUIPO") { S.permisoMal = r.msg || "Este equipo no tiene permiso."; pintarBanners(); }
+      else if (r && r.msg) S.avisoPase = r.msg;
+    } catch (e) {}
+    return false;
+  })();
+  const p = _renovando; p.then(() => { _renovando = null; });
+  return p;
+}
+function sesionDirecta(){ return !!(S.ses && S.ses.usuario && S.ses.usuario.rol === "caja_equipo"); }
 function ventaAMedias(){ return F.items.length > 0 || !!P || !!document.querySelector(".mfondo:not(.oculto)"); }
 
 // ── Pantalla de entrar (la vista "activar") ──
@@ -69,8 +88,12 @@ async function continuarArranque(){
     pantallaActivar();
     return;
   }
-  // 2) El usuario
-  if (!sesionViva()) { pantallaLogin(S.avisoPase ? esc(S.avisoPase) : ""); S.avisoPase = ""; return; }
+  // 2) El usuario: un equipo activado entra directo (los cajeros solo eligen su nombre y ponen su PIN)
+  if (!sesionViva()) {
+    pantallaCargando("Entrando…");
+    if (await entrarDirecto()) { continuarArranque(); return; }
+    pantallaLogin(S.avisoPase ? esc(S.avisoPase) : ""); S.avisoPase = ""; return;
+  }
   // 3) Los datos de la caja
   if (!S.datos) {
     pantalla({ ico: "⬇️", html: "<p>Ahora hay que descargar los productos, los clientes y las tasas de la <b>Caja " + esc(S.eq.caja) + "</b>. Necesita <b>internet</b> esta vez.</p>",
@@ -111,7 +134,7 @@ async function entrar(btn){
   await guardarSesion(r);
   btnLibre(btn);
   toast("✅ Hola, " + (r.usuario.nombre || r.usuario.usuario));
-  S.datosMal = ""; S.permisoMal = "";
+  S.datosMal = ""; S.permisoMal = ""; S.pedirPin = true;   // 2.9: con un turno abierto, el cajero pone su PIN
   continuarArranque();
 }
 
@@ -127,14 +150,22 @@ function pantallaActivar(){
   const sug = cajas.indexOf(Number(S.paseCaja)) >= 0 ? Number(S.paseCaja) : cajas[0];
   pantalla({ ico: "🔌",
     html: "<p>Este equipo todavía no está activado para la caja. Se hace <b>una sola vez</b>: después vende aunque se vaya el internet.</p>",
-    form: '<label class="lbl" for="acCaja">Caja de este equipo</label><select class="inp" id="acCaja">' + cajas.map(n => '<option value="' + n + '"' + (n === sug ? " selected" : "") + ">Caja " + n + "</option>").join("") + "</select>" +
+    form: '<input type="hidden" id="acCaja" value="' + sug + '">' +
+          (cajas.length > 1 ? '<div class="act-caja" id="acCajaBox">Este equipo cobra como <b id="acCajaTxt">Caja ' + sug + '</b>. <button type="button" class="lnk" onclick="acOtraCaja()">¿Cobran en varios equipos a la vez?</button></div>' : "") +
           '<label class="lbl" for="acNom">Nombre del equipo</label><input class="inp" id="acNom" maxlength="40" placeholder="Ej. PC de la caja 1, Celular de María">' +
           '<label class="lbl" for="acMae">Clave maestra</label><input class="inp" id="acMae" type="password" autocomplete="off" placeholder="La del administrador">' +
-          '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Las ventas de este equipo quedan como de esa caja. Si después hay que quitarle el permiso: Configuración → Administración → Caja nueva.</div>",
+          '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Después de activarlo, cada cajero entra tocando su nombre y poniendo su PIN. Si después hay que quitarle el permiso al equipo: Configuración → Administración → Caja nueva.</div>",
     btns: '<button type="button" class="btn green block" id="btnActivar" onclick="activarEquipo(this)">✅ Activar este equipo</button>' +
           '<div style="margin-top:8px;"><button type="button" class="btn sm" onclick="pedirEntrarOtraVez()">Entrar con otro usuario</button></div>' });
   $("acMae").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); activarEquipo($("btnActivar")); } });
   setTimeout(() => { const i = $("acNom"); if (i) i.focus(); }, 60);
+}
+// Solo si el negocio cobra en varios equipos al mismo tiempo: cada uno es una caja (1 a 5), con sus turnos y su cuadre
+function acOtraCaja(){
+  const cajas = [1, 2, 3, 4, 5].filter(puedeCaja), act = Number($("acCaja").value) || cajas[0];
+  $("acCajaBox").innerHTML = '<label class="lbl" for="acCajaSel" style="margin-top:0;">¿Qué caja es este equipo?</label><select class="inp" id="acCajaSel" onchange="$(\'acCaja\').value=this.value">' +
+    cajas.map(n => '<option value="' + n + '"' + (n === act ? " selected" : "") + ">Caja " + n + "</option>").join("") + "</select>" +
+    '<div class="act-nota" style="margin-top:6px;">Si en el negocio cobran en <b>un solo equipo</b>, déjalo en <b>Caja 1</b>. Si cobran en varios a la vez (dos computadoras, un teléfono…), cada uno es una caja distinta: así cada uno cuadra su gaveta.</div>';
 }
 async function activarEquipo(btn){
   if (btn && btn.disabled) return;
@@ -154,6 +185,7 @@ async function activarEquipo(btn){
   S.permisoMal = ""; S.datosMal = "";
   btnLibre(btn);
   toast("✅ Equipo activado: " + r.equipo);
+  S.pedirPin = true;   // 2.9: después de activar, lo primero es el cajero (o el PIN del turno abierto)
   continuarArranque();
 }
 // El sistema dijo que este equipo ya no tiene permiso (dado de baja o activado en otro lado): activarlo de nuevo
@@ -167,7 +199,12 @@ async function olvidarEquipo(){
 }
 
 // ── La sesión venció o el usuario no tiene permiso para esta caja (lo avisa api.js) ──
-function sesionProblema(res){
+async function sesionProblema(res){
+  // La sesión venció: el equipo vuelve a entrar solo (sin molestar al cajero). Si no se puede, como antes.
+  if (res && res.codigo === "SESION" && S.eq && S.ses) {
+    S.ses.token = "";   // la vieja ya no sirve
+    if (await entrarDirecto()) { setTimeout(() => { if (S.datos) actualizarDatos(null, true); }, 800); return; }
+  }
   S.sesionMal = res.msg || "Tu sesión venció.";
   if (S.vista !== "activar" && ventaAMedias()) { pintarBanners(); return; }   // primero se termina la venta
   pedirEntrarOtraVez();
@@ -185,13 +222,14 @@ async function cerrarSesion(btn){
     return;
   }
   if (ventaAMedias()) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de cerrar la sesión." }); return; }
-  if (!await confirmar({ icono: "🚪", titulo: "Cerrar sesión", ok: "Sí, cerrar sesión", colorOk: "naranja",
-    html: "Para volver a vender hay que entrar con usuario y clave." + (S.turno ? "<br><br>El turno de <b>" + esc(S.turno.cajeroNombre) + "</b> sigue abierto." : "") })) return;
+  if (!await confirmar({ icono: "🚪", titulo: "Entrar con otro usuario", ok: "Sí, salir", colorOk: "naranja",
+    html: "Se sale de esta sesión y la caja pide usuario y clave. El usuario que entre queda como el de este equipo: la próxima vez la caja entra directo con él." + (S.turno ? "<br><br>El turno de <b>" + esc(S.turno.cajeroNombre) + "</b> sigue abierto." : "") })) return;
   btnOcupado(btn, "Cerrando…");
   try { await api("cj_salir", {}, 15000); } catch (e) {}
   btnLibre(btn);
   await borrarSesion();
-  pantallaLogin("Sesión cerrada.");
+  S.noDirecta = true;   // hasta que alguien entre: no vuelve a entrar sola
+  pantallaLogin("Entra con tu usuario y clave.");
 }
 
 // ── 🏠 Sistema: vuelve a la pestaña del sistema, o la abre con un pase de un solo uso ──
@@ -222,6 +260,7 @@ async function irSistema(btn){
   let r = null;
   try { r = await api("cj_pase", {}, 30000); } catch (e) { r = { ok: false, msg: e.message }; }
   btnLibre(btn);
+  if (r && r.codigo === "SOLO_CAJA" && r.url) { try { w.location.href = r.url; w.focus(); } catch (e) { location.href = r.url; } return; }   // entrada directa: el sistema pide usuario y clave
   if (!r || !r.ok) {
     try { w.close(); } catch (e) {}
     if (r && r.codigo === "SESION") return;   // ya pidió entrar otra vez

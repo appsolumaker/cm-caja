@@ -141,9 +141,12 @@ async function abrirTurno(btn){
   btnLibre(btn);
   desbloquear();
   toast("✅ Turno abierto: " + c.nombre);
-  pintarCabecera();
-  irA("vender");
-  numerosAlDia();   // numeros.js: con internet, aparta los números de factura de este turno
+  S.cierreAdmin = null;
+  seguro(pintarCabecera);   // 2.9: aunque algo falle al pintar, la caja pasa a la facturación con la lista de productos
+  seguro(() => irA("vender"));
+  if (S.vista !== "vender") mostrarVista("vender");
+  seguro(buscar); seguro(pintarFactura);
+  try { numerosAlDia(); } catch (e) {}   // numeros.js: con internet, aparta los números de factura de este turno
 }
 
 // ══ CON TURNO: la caja bloqueada ══

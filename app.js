@@ -18,7 +18,7 @@
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
 //  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.8.2 · 6-11-2026";
+const APP_VER = "2.9 · 7-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -150,6 +150,8 @@ async function arrancar(){
     return;
   }
   try { sessionStorage.removeItem("cm_recargo"); } catch (e) {}
+  let robar = false; try { robar = sessionStorage.getItem("cm_robar") === "1"; sessionStorage.removeItem("cm_robar"); } catch (e) {}
+  if (!await candadoPestana(robar)) { pantallaOtraPestana(); return; }   // S2: una sola pestaña de la caja por equipo
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
   try { await dbAbrir(); }
@@ -171,6 +173,30 @@ async function arrancar(){
   await entrarConPase();     // sesion.js: si vino del sistema con un pase, ya entra con ese usuario
   continuarArranque();       // sesion.js: equipo → usuario → datos → vender
 }
+// ══ S2 (7-11-2026): UNA sola pestaña de la caja en este equipo ══
+// Con dos pestañas abiertas las dos venderían con el mismo turno y los mismos números, y cada una contaría
+// distinto. La primera se queda con el candado del navegador (Web Locks) mientras esté abierta; la segunda
+// lo dice y no arranca. «Usar esta pestaña» se lo quita a la otra, que se recarga y queda avisando.
+function candadoPestana(robar){
+  if (!navigator.locks || !navigator.locks.request) return Promise.resolve(true);   // navegador viejo: como antes
+  return new Promise(res => {
+    navigator.locks.request("cm-caja-pestana", robar ? { steal: true } : { ifAvailable: true }, lock => {
+      if (!lock) { res(false); return; }
+      res(true);
+      return new Promise(() => {});   // se queda con el candado mientras la pestaña esté abierta
+    }).catch(() => { location.reload(); });   // otra pestaña tocó «Usar esta pestaña»: esta se recarga y queda avisando
+  });
+}
+function pantallaOtraPestana(){
+  pantalla({ ico: "🗂️", tit: "La caja ya está abierta", html: "<p>La caja ya está abierta en <b>otra pestaña</b> (o ventana) de este equipo. Sigue vendiendo en esa.</p>" +
+    '<p style="font-size:13px;color:var(--text-dim);">Si no la encuentras o se quedó trabada, toca <b>Usar esta pestaña</b>: la otra se cierra sola. Lo que estaba a medio cobrar allá se pierde; las ventas ya guardadas no.</p>',
+    btns: '<button type="button" class="btn green" id="btnEstaPestana" onclick="usarEstaPestana(this)">🗂️ Usar esta pestaña</button>' });
+}
+function usarEstaPestana(btn){
+  btnOcupado(btn, "Abriendo…");
+  try { sessionStorage.setItem("cm_robar", "1"); } catch (e) {}   // al recargar, esta pestaña le quita el candado a la otra
+  location.reload();
+}
 // Equipo nuevo en este navegador (activado otra vez): se borran los datos y el contador, NO las ventas sin subir
 async function borrarDatosDelEquipo(){
   await dbOp("kv", "readwrite", s => { s.delete("datos"); s.delete("tasas"); s.delete("numeros"); return s.delete("seq"); });
@@ -181,8 +207,11 @@ function listo(){
   document.body.classList.remove("entrando");
   mostrarVista(S.vista === "activar" ? "vender" : S.vista);
   pintarTodo();
-  if (S.vista === "vender" && !S.turno) { mostrarVista("turno"); pintarTurno(); }
-  if (!_listoYa && S.turno) bloquear();   // cajero.js: al abrir la caja con un turno abierto, entra con el PIN del cajero
+  // 2.9: lo PRIMERO es el cajero. Sin turno: «¿Quién está en la caja?» (antes de la facturación). Con turno: su PIN
+  // al abrir la caja, y también después de activar el equipo o de entrar otra vez con usuario y clave.
+  if (!S.turno && (S.vista === "vender" || !_listoYa)) { mostrarVista("turno"); seguro(pintarTurno); }
+  if (S.turno && (!_listoYa || S.pedirPin)) bloquear();   // cajero.js
+  S.pedirPin = false;
   if (_listoYa) { sincronizar(); return; }
   _listoYa = true;
   ordIniciar();   // ordenes.js: 📋 Órdenes y su contador
@@ -237,7 +266,7 @@ async function descargarDatos(){
   // TasaBin encendido: div = tasa Divisas (H7). Apagado: div = Divisas de los $ en efectivo (H9).
   const on = d.binOn === true;
   S.tasas = { bcv: Number(d.tasa) || 0, div: on ? (Number(d.tasaBinance) || Number(d.tasa) || 0) : (Number(d.tasaDivisas) || 0),
-              binOn: on, brecha: Number(d.brechaPct) || 0, fecha: hoyTxt(), origen: "sistema" };
+              binOn: on, brecha: Number(d.brechaPct) || 0, fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(d.tasaFecha || "")) ? d.tasaFecha : hoyTxt(), origen: "sistema" };   // S2: el día en que el sistema actualizó la BCV
   if (!on) F.dolares = false;
   await kvSet("tasas", S.tasas);
   if (antes) {   // la factura en pantalla toma las tasas nuevas (los precios del sistema no cambian)
@@ -295,14 +324,28 @@ function irA(v){
   if (v === "ajustes") pintarAjustes();
   if (v === "vender") setTimeout(() => { const b = $("busca"); if (b && window.innerWidth > 820) b.focus(); }, 50);
 }
-function pintarTodo(){
-  pintarCabecera(); pintarEstado(); pintarBanners();
-  if (S.vista === "turno") pintarTurno();
-  if (BQ.on && !PK.c) pintarBloqueo();   // cajero.js (sin teclado en pantalla: no se borra lo que se está escribiendo)
-  pintarCategorias(); pintarSelectores(); buscar(); pintarFactura();
-  if (S.vista === "ventas") pintarVentas();
-  if (S.vista === "ajustes") pintarAjustes();
+function pintarTodo(){   // 2.9: cada parte por separado: si una falla, las demás se pintan igual (y la falla se ve en la barra roja)
+  [pintarCabecera, pintarEstado, pintarBanners].forEach(seguro);
+  if (S.vista === "turno") seguro(pintarTurno);
+  if (BQ.on && !PK.c) seguro(pintarBloqueo);   // cajero.js (sin teclado en pantalla: no se borra lo que se está escribiendo)
+  [pintarCategorias, pintarSelectores, buscar, pintarFactura].forEach(seguro);
+  if (S.vista === "ventas") seguro(pintarVentas);
+  if (S.vista === "ajustes") seguro(pintarAjustes);
 }
+// 2.9: si algo falla en la pantalla, se dice en una barra roja (con el texto exacto, para mandárselo a Solumaker)
+function seguro(fn){ try { return fn(); } catch (e) { mostrarFalla(e); } }
+let _fallaVista = "";
+function mostrarFalla(e){
+  const msg = String((e && (e.message || e.reason && e.reason.message || e.reason)) || e || "").slice(0, 300);
+  if (!msg || /ResizeObserver|Script error/i.test(msg) || msg === _fallaVista) return;
+  _fallaVista = msg;
+  try { console.error(e); } catch (x) {}
+  let bar = $("barraFalla");
+  if (!bar) { bar = document.createElement("div"); bar.id = "barraFalla"; bar.className = "barra-falla"; document.body.appendChild(bar); }
+  bar.innerHTML = "⚠️ Algo falló en la caja: <b>" + esc(msg) + "</b> · versión " + esc(APP_VER) + ' <button type="button" onclick="location.reload()">🔄 Recargar</button> <button type="button" onclick="this.parentNode.remove()">✕</button>';
+}
+window.addEventListener("error", ev => mostrarFalla(ev.error || ev.message));
+window.addEventListener("unhandledrejection", ev => { const r = ev.reason; if (r && (r.red || r.codigo)) return; mostrarFalla(r); });
 // Barra de arriba, como en Ventas: cajero del turno, tasa (se puede ocultar) y el menú
 function pintarCabecera(){
   const d = S.datos;
@@ -379,7 +422,10 @@ function pintarBanners(){
   if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a></div>';
   if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + ' <a href="#" onclick="actualizarDatos(null,false);return false;" style="color:inherit;font-weight:800;">Reintentar</a></div>';
   if (S.sesionMal) h += '<div class="banner av">🔐 ' + esc(S.sesionMal) + ' <a href="#" onclick="pedirEntrarOtraVez();return false;" style="color:inherit;font-weight:800;">Entrar</a></div>';
-  if (S.datos && tasaVieja() && S.tasaOkHoy !== hoyTxt()) h += '<div class="banner av">💱 Las tasas de este equipo son del <b>' + fechaCorta(S.tasas.fecha) + '</b>. Con internet se actualizan solas; si no hay, revísalas antes de cobrar: <a href="#" onclick="verTasas();return false;" style="color:inherit;font-weight:800;">ver tasas</a>.</div>';
+  if (S.datos && tasaVieja() && S.tasaOkHoy !== hoyTxt()) h += '<div class="banner av">💱 ' + (S.tasas.origen === "sistema" && S.online !== false
+      ? "El sistema todavía tiene la tasa BCV del <b>" + fechaCorta(S.tasas.fecha) + "</b>: no se ha actualizado hoy. Revísala antes de cobrar y avísale al administrador: "
+      : "Las tasas de este equipo son del <b>" + fechaCorta(S.tasas.fecha) + "</b>. Con internet se actualizan solas; si no hay, revísalas antes de cobrar: ") +
+    '<a href="#" onclick="verTasas();return false;" style="color:inherit;font-weight:800;">ver tasas</a>.</div>';
   if (S.turno && S.num && !S.num.lista.length && S.online === false) h += '<div class="banner av">🔢 Este equipo no tiene números de factura apartados: los tickets salen <b>provisionales</b> y el sistema les da su número al subirlos.</div>';
   if (_verNueva) h += '<div class="banner av">🔄 Hay una versión nueva de la caja. Se actualiza sola cuando termines esta venta.</div>';
   const c = cuentas();
@@ -485,12 +531,13 @@ function semaforo(ex, p){
   return "color:var(--green);background:var(--green-dim);";
 }
 function cuantasEnFactura(cod){ let q = 0; F.items.forEach(i => { if (String(i.codigo) === String(cod)) q += Number(i.cantidad) || 0; }); return r3(q); }
-const LISTA_MAX = 300;
+const LISTA_MAX = 300, LISTA_MAX_TEL = 60;   // 2.9: en el teléfono con fotos, 60 a la vez (escribe para buscar el resto)
+const listaMax = () => (window.innerWidth <= 820 && hayFotos()) ? LISTA_MAX_TEL : LISTA_MAX;
 function buscar(){
   const box = $("listaProd");
   if (!S.datos) { box.innerHTML = ""; return; }
-  const q = $("busca").value, todos = resultados(q), lst = todos.slice(0, LISTA_MAX), on = binOn();
-  $("vtaContador").textContent = todos.length > LISTA_MAX ? "Mostrando " + LISTA_MAX + " de " + todos.length + ": escribe para buscar" : "";
+  const max = listaMax(), q = $("busca").value, todos = resultados(q), lst = todos.slice(0, max), on = binOn();
+  $("vtaContador").textContent = todos.length > max ? "Mostrando " + max + " de " + todos.length + ": escribe para buscar" : "";
   const fotos = S.vtaVista !== "servicios" && hayFotos();   // 2.8: como Ventas, con «Mostrar fotos de productos en Ventas» (Configuración)
   if (!lst.length) { box.innerHTML = '<div class="vacio">' + (norm(q) ? "No hay " + (S.vtaVista === "servicios" ? "servicios" : "productos") + " con «" + esc(q) + "»." : "No hay productos en los datos de este equipo.") + "</div>"; box._lst = []; return; }
   box.innerHTML = lst.map((p, k) => {
@@ -526,12 +573,16 @@ function fotoDeCodigo(c){
 }
 // Igual que Ventas (_SIN_FOTO_SVG, .vta-thumb y .vta-mini): recuadro «Sin foto» y la foto con fondo blanco, sin recortarla
 const SIN_FOTO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5.2-5.2a1 1 0 0 0-1.4 0L5 20"/></svg>';
+// 2.9: en la lista y en la factura va la foto CHICA (…-400.webp, la misma que sube Inventario junto a la grande): en el
+// teléfono, 60 fotos grandes (…-900) ponían lenta la caja. Si la chica no está, se usa la que viene.
+function fotoChica(u){ return String(u || "").replace(/-900\.webp(\?|#|$)/, "-400.webp$1"); }
+function fotoFalla(img){ const g = img.getAttribute("data-g"); if (g && img.getAttribute("src") !== g) { img.setAttribute("src", g); return true; } return false; }
 function fotoLista(img){ const b = img.parentNode; img.classList.add("ok"); if (b) { b.classList.remove("cargando"); b.classList.add("con-img"); } }
-function sinFoto(img){ const b = img && img.parentNode; if (!b) return; b.onclick = null; b.removeAttribute("title"); b.classList.remove("cargando", "con-img"); b.classList.add("sin"); b.innerHTML = SIN_FOTO_SVG + "<small>Sin foto</small>"; }
+function sinFoto(img){ if (img && fotoFalla(img)) return; const b = img && img.parentNode; if (!b) return; b.onclick = null; b.removeAttribute("title"); b.classList.remove("cargando", "con-img"); b.classList.add("sin"); b.innerHTML = SIN_FOTO_SVG + "<small>Sin foto</small>"; }
 function miniFoto(c, srv){
   if (srv) return '<span class="vta-mini vacio"></span>';   // servicios: sin foto, solo el espacio para alinear (como Ventas)
   const u = String(fotoDeCodigo(c) || "").replace(/"/g, "%22");
-  return u ? '<span class="vta-mini"><img alt="" decoding="async" src="' + u + '" onload="this.parentNode.classList.add(\'con-img\')" onerror="this.parentNode.innerHTML=SIN_FOTO_SVG"></span>'
+  return u ? '<span class="vta-mini"><img alt="" decoding="async" src="' + fotoChica(u) + '" data-g="' + u + '" onload="this.parentNode.classList.add(\'con-img\')" onerror="if(!fotoFalla(this))this.parentNode.innerHTML=SIN_FOTO_SVG"></span>'
            : '<span class="vta-mini">' + SIN_FOTO_SVG + "</span>";
 }
 // La foto del producto en la lista (la del catálogo). Sin foto, o si no carga: «Sin foto». Tocarla la muestra grande.
@@ -539,12 +590,12 @@ function fotoProd(p){
   const u = String((p && p.imagen) || "").trim().replace(/"/g, "%22");
   if (!u) return '<span class="vta-thumb sin">' + SIN_FOTO_SVG + "<small>Sin foto</small></span>";
   return '<span class="vta-thumb cargando" onclick="event.stopPropagation();verFoto(this)" ondblclick="event.stopPropagation()" title="Ver la foto">' +
-    '<img alt="" loading="lazy" decoding="async" src="' + u + '" onload="fotoLista(this)" onerror="sinFoto(this)"></span>';
+    '<img alt="" loading="lazy" decoding="async" src="' + fotoChica(u) + '" data-g="' + u + '" onload="fotoLista(this)" onerror="sinFoto(this)"></span>';
 }
 function verFoto(el){
   const img = el && el.querySelector("img"); if (!img) return;
   const nom = (el.closest(".prod-item") || {}).querySelector ? el.closest(".prod-item").querySelector(".prod-nom").textContent : "";
-  modal({ titulo: nom || "Foto", html: '<img class="foto-grande" alt="" src="' + img.getAttribute("src").replace(/"/g, "%22") + '">', botones: [{ txt: "Cerrar", v: true, cls: "green" }] });
+  modal({ titulo: nom || "Foto", html: '<img class="foto-grande" alt="" src="' + (img.getAttribute("data-g") || img.getAttribute("src")).replace(/"/g, "%22") + '">', botones: [{ txt: "Cerrar", v: true, cls: "green" }] });
 }
 function limpiarBusqueda(){ $("busca").value = ""; buscar(); $("busca").focus(); }
 function buscarEnter(){
@@ -580,8 +631,10 @@ async function agregar(p){
   if (ya) ya.cantidad = r3((Number(ya.cantidad) || 0) + 1);
   else F.items.push({ key: ++F.seq, tipo: p.tipo, codigo: p.codigo, nombre: p.nombre, codigoBarras: p.codigoBarras || p.codigo,
     cantidad: 1, libro: pr.base, base: basePantalla(pr.base), iva: pr.iva, manual: false, tipoIdx: F.tipoPrecio });   // libro: base del sistema (divisas con TasaBin) · base: en pantalla
+  const habia = $("busca").value !== "";
   $("busca").value = "";
-  buscar(); pintarFactura();
+  if (habia) buscar(); else marcarEnFactura();   // 2.9: si la lista no cambia, solo el número del «+» (no se vuelven a cargar las fotos)
+  pintarFactura();
   const n = String(p.nombre || ""); toast("✅ " + (n.length > 34 ? n.slice(0, 33) + "…" : n) + "  ×" + fmtCant(cuantasEnFactura(p.codigo)));
   if (window.innerWidth > 820) $("busca").focus();
 }
@@ -749,7 +802,16 @@ function pasoCant(key, d){
   cambiarCant(key, nv);
   if (d > 0) revisarExistencia(key);
 }
-function quitarLinea(key){ F.items = F.items.filter(x => x.key !== key); pintarFactura(); buscar(); }
+function quitarLinea(key){ F.items = F.items.filter(x => x.key !== key); pintarFactura(); marcarEnFactura(); }
+// El numerito del «+» de cada producto de la lista (cuántos van en la factura), sin volver a pintar la lista
+function marcarEnFactura(){
+  const box = $("listaProd"); if (!box) return;
+  box.querySelectorAll(".mv-add[data-cod]").forEach(b => {
+    const q = cuantasEnFactura(b.dataset.cod), sp = b.querySelector(".mv-q");
+    if (q > 0) { if (sp) sp.textContent = fmtCant(q); else b.insertAdjacentHTML("beforeend", '<span class="mv-q">' + fmtCant(q) + "</span>"); }
+    else if (sp) sp.remove();
+  });
+}
 // Tipo de precio de una línea (Detal, Mayor… o Manual), como el selector TIPO de Ventas
 async function cambiarTipoLinea(key, sel){
   const i = itemDe(key); if (!i) return;
@@ -770,7 +832,7 @@ async function cambiarTipoLinea(key, sel){
   const ti = Number(val) || 0, p = cat().find(x => x.codigo === i.codigo && x.tipo === i.tipo);
   i.manual = false; i.tipoIdx = ti;
   if (p) { const pr = precioDe(p, ti); i.libro = pr.base; i.iva = pr.iva; }
-  pintarFactura(); buscar();
+  pintarFactura(); marcarEnFactura();
 }
 function elegirMonedaManual(){
   const act = F.dolares ? "div" : "bcv";
@@ -783,7 +845,7 @@ function elegirMonedaManual(){
 // Precio manual escrito en la línea (en la moneda de la pantalla; el P.U. va sin IVA, como en Ventas)
 function manualPU(key, v){
   const i = itemDe(key); if (!i) return;
-  i.base = Number(v) || 0; i.libro = libroDePantalla(i.base);
+  i.base = Math.max(0, Number(v) || 0); i.libro = libroDePantalla(i.base);   // S2: nunca negativo
   const t = $("tt_" + key); if (t) t.value = totLinea(i).toFixed(2);
   pintarTotales();
 }
@@ -801,7 +863,7 @@ function manualIVA(key, v){
 }
 function manualTot(key, v){
   const i = itemDe(key); if (!i) return;
-  const q = Number(i.cantidad) || 0, tot = Number(v) || 0;
+  const q = Number(i.cantidad) || 0, tot = Math.max(0, Number(v) || 0);   // S2: nunca negativo
   i.base = q > 0 ? tot / q / (1 + (Number(i.iva) || 0) / 100) : 0;   // sin redondear: el total escrito no se desvía
   i.libro = libroDePantalla(i.base);
   const pu = $("pu_" + key); if (pu) pu.value = r2(i.base).toFixed(2);
@@ -1060,7 +1122,19 @@ async function crearCliente(btn){
   }
 }
 // ✅ Registrar Venta, como en Ventas: si la factura está en Genérico, primero "¿A quién le vendes?"
+// S2: solo se vende con la caja abierta por el cajero del turno (el Administrador que vino a cerrar el turno de otro no vende)
+function puedeVender(){
+  if (S.cierreAdmin || (typeof BQ !== "undefined" && BQ.on)) {
+    try { cerrarPago(); } catch (e) {}
+    aviso({ icono: "🔒", titulo: "No se puede vender ahora", html: S.cierreAdmin && S.turno
+      ? "El <b>Administrador</b> entró solo para cerrar el turno de <b>" + esc(S.turno.cajeroNombre) + "</b>. Para vender, cierra ese turno y abre uno a tu nombre."
+      : "La caja está bloqueada: el cajero del turno tiene que escribir su PIN." });
+    return false;
+  }
+  return true;
+}
 async function registrarVenta(){
+  if (!puedeVender()) return;
   if (!F.items.length) { aviso({ icono: "🧾", titulo: "La venta está vacía", html: "Agrega al menos un producto." }); return; }
   const faltas = faltasExistencia();
   if (faltas.length && !await confirmar({ icono: "📦", titulo: "Hay productos sin existencia suficiente", colorOk: "naranja", ok: "Sí, vender igual",
@@ -1141,6 +1215,7 @@ function descuentoServidor(items, desc){
 function metodos(){ return (S.datos.metodos || []); }
 function metodoCredito(){ const m = metodos().find(x => x.tipo === "CRED"); return m ? m.metodo : ""; }
 async function abrirPago(){
+  if (!puedeVender()) return;
   if (!F.items.length) { aviso({ icono: "🧾", titulo: "La venta está vacía", html: "Agrega al menos un producto." }); return; }
   const malas = F.items.filter(i => !(Number(i.cantidad) > 0));
   if (malas.length) { aviso({ icono: "🔢", titulo: "Falta una cantidad", html: "La línea <b>" + esc(malas[0].nombre) + "</b> no tiene cantidad. Escríbela o quita la línea con ✕." }); return; }
@@ -1149,7 +1224,8 @@ async function abrirPago(){
   if (binOn() && !(Number(t.div) > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa Divisas", html: "Este negocio trabaja con TasaBin y el equipo no tiene la tasa Divisas. Actualiza los datos con internet, o ponla en ⚙️ → Cambiar tasa." }); return; }
   if (t.fecha !== hoyTxt() && S.tasaOkHoy !== hoyTxt()) {
     const r = await modal({ icono: "💱", titulo: "¿La tasa sigue igual?",
-      html: '<div class="m-txt">Las tasas de este equipo son del <b>' + fechaCorta(t.fecha) + "</b>: " + textoTasas() + ".<br><br>Si hoy son otras, cámbialas antes de cobrar (pide la clave sin internet).</div>",
+      html: '<div class="m-txt">' + (t.origen === "sistema" && S.online !== false ? "<b>El sistema todavía no ha actualizado la tasa BCV de hoy</b>: tiene la del <b>" + fechaCorta(t.fecha) + "</b>" : "Las tasas de este equipo son del <b>" + fechaCorta(t.fecha) + "</b>") + ": " + textoTasas() +
+        ".<br><br>Si hoy son otras, cámbialas antes de cobrar (pide la clave)" + (t.origen === "sistema" && S.online !== false ? " y avísale al administrador" : "") + ".</div>",
       botones: [{ txt: "🔒 Cambiar tasa", v: "cambiar" }, { txt: "Sí, cobrar con esas", v: "ok", cls: "green" }] });
     if (r === "cambiar") { await cambiarTasa(null); return; }
     if (r !== "ok") return;
@@ -1583,6 +1659,7 @@ function vendedorDeLaVenta(){
 }
 async function pgGuardar(pagos, vuelto){
   const btn = $("pgGuardar");
+  if (!puedeVender()) return;
   btnOcupado(btn, "Guardando…"); $("pgCerrar").disabled = true;
   if (!S.turno) { btnLibre(btn); $("pgCerrar").disabled = false; cerrarPago(); irA("vender"); return; }
   const t = S.tasas, ahora = new Date(), m = P.modo, dl = r2(P.dlvMonto || 0);
@@ -1871,7 +1948,7 @@ function htmlCierre(c){
 // ══ SUBIR LAS VENTAS AL SISTEMA ══
 function datosParaSubir(v){
   return { id: v.id, numero: v.numero, creada: v.creada, fecha: v.fecha, tasas: v.tasas, items: v.items, pago: v.pago,
-           numeroFactura: v.numeroTicket || 0, turno: v.turno || "" };
+           numeroFactura: v.numeroTicket || 0, turno: v.turno || "", caja: Number(v.caja) || 0 };   // S2: la caja donde se vendió
 }
 async function sincronizar(manual){
   if (!S.eq || !S.datos || S.sincronizando) return { subidas: 0 };
@@ -1889,8 +1966,9 @@ async function sincronizar(manual){
       catch (e) { v.msg = e.message; await ventaPut(v); cortado = e.message; break; }
       if (r && r.codigo === "EQUIPO") { revisarErrorSistema(r); v.msg = r.msg; await ventaPut(v); cortado = r.msg; break; }
       S.permisoMal = "";
+      if (!(r && r.reintentar)) v.temporales = 0;
       if (r && r.ok) {
-        v.estado = "subida"; v.numeroFactura = String(r.numero || ""); v.avisos = r.avisos || []; v.msg = ""; v.subidaEn = Date.now();
+        v.estado = "subida"; v.numeroFactura = String(r.numero || ""); v.avisos = r.avisos || []; v.msg = ""; v.subidaEn = Date.now(); v.revisar = false;
         subidas++;
       } else if (r && r.estado === "procesando") {
         v.msg = r.msg || "Se está subiendo desde otro lado.";
@@ -1898,10 +1976,13 @@ async function sincronizar(manual){
       } else if (r && r.estado === "invalida") {
         v.estado = "invalida"; v.msg = r.msg || "El sistema rechazó la venta.";
       } else if (r && r.reintentar) {
-        v.msg = r.msg || "El sistema estaba ocupado.";
-        await ventaPut(v); break;                 // se vuelve a intentar en orden, empezando por esta
+        v.msg = r.msg || "El sistema estaba ocupado."; v.temporales = (v.temporales || 0) + 1;
+        await ventaPut(v);
+        if (v.temporales < 3) break;              // se vuelve a intentar en orden, empezando por esta
+        pintarEstado(); continue;                 // S2: falló 3 veces seguidas: queda por subir, pero ya no tranca a las que siguen
       } else {
         v.estado = "pendiente"; v.msg = (r && r.msg) || "El sistema no la pudo registrar.";
+        v.revisar = !!(r && (r.codigo === "REVISAR" || r.codigo === "CLAVE"));   // S2: algo no cuadra → 🔑 Subir igual
       }
       await ventaPut(v);
       _vendidoLocal = null;
@@ -1933,6 +2014,38 @@ async function subirAhora(btn){
   else if (r && r.subidas) toast("✅ " + r.subidas + " venta" + (r.subidas > 1 ? "s subidas" : " subida"));
   else if (!c.por && !c.mal) toast("✅ Todo está subido");
   pintarVentas();
+}
+// S2: el sistema no la registró porque algo no cuadra (tasa, total, precio o caja). Si está bien así, el
+// administrador la sube igual con la clave de precio manual del sistema (la de Ventas) y queda el aviso.
+async function subirIgual(id, btn){
+  const v = S.ventas.find(x => x.id === id); if (!v) return;
+  if (!hayInternet()) { aviso({ icono: "📡", titulo: "Hace falta internet", html: "Para subirla igual, el sistema tiene que revisar la clave: conéctate a internet y vuelve a intentar." }); return; }
+  let res = null;
+  const ok = await modal({
+    icono: "🔑", titulo: "Subir igual esta venta",
+    html: '<div class="m-txt">' + esc(v.msg || "El sistema no la registró porque algo no cuadra.") + "<br><br>Si está bien así, escribe la <b>clave de precio manual</b> del sistema (la misma de Ventas): se registra tal como se cobró y queda el aviso.</div>" +
+      '<input class="inp" id="mClaveS" type="password" placeholder="Clave de precio manual" autocomplete="off" style="margin-top:10px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.closest(\'.modal\').querySelector(\'[data-v=ok]\').click();}"><div class="m-err" id="mClaveSErr"></div>',
+    botones: [{ txt: "Cancelar", v: false }, { txt: "🔑 Subir igual", v: true, cls: "green", spin: "Subiendo…" }],
+    foco: "mClaveS",
+    antes: async (x) => {
+      if (!x) return true;
+      const err = $("mClaveSErr"), val = $("mClaveS").value;
+      if (!val) { err.textContent = "Escribe la clave."; return false; }
+      try { res = await api("cj_subir", { venta: datosParaSubir(v), aprobar: val }, 120000); }
+      catch (e) { err.textContent = e.message; return false; }
+      if (res && res.codigo === "CLAVE") { err.textContent = res.msg || "La clave no es correcta."; $("mClaveS").value = ""; $("mClaveS").focus(); res = null; return false; }
+      if (res && res.codigo === "EQUIPO") { err.textContent = res.msg; return false; }
+      return true;
+    }
+  });
+  if (!ok || !res) return;
+  v.intentos = (v.intentos || 0) + 1; v.ultimoIntento = ahoraTxt();
+  if (res.ok) { v.estado = "subida"; v.numeroFactura = String(res.numero || ""); v.avisos = res.avisos || []; v.msg = ""; v.subidaEn = Date.now(); v.revisar = false; toast("✅ Venta subida: #" + v.numeroFactura); }
+  else if (res.reintentar || res.estado === "procesando") { v.estado = "por_subir"; v.msg = res.msg || ""; v.revisar = false; }
+  else { v.estado = "pendiente"; v.msg = res.msg || "El sistema no la pudo registrar."; v.revisar = res.codigo === "REVISAR"; }
+  await ventaPut(v); _vendidoLocal = null;
+  pintarEstado(); pintarBanners(); pintarVentas();
+  if (!res.ok) aviso({ icono: "⚠️", titulo: "No se registró", html: esc(v.msg) });
 }
 async function reintentar(id, btn){
   const v = S.ventas.find(x => x.id === id); if (!v) return;
@@ -1999,7 +2112,8 @@ function pintarVentas(){
       (p.vuelto || []).map(q => "<tr><td>Vuelto (" + esc(q.metodo) + ')</td><td class="r">− ' + (q.tipo === "BS" ? "Bs " : "$") + fmt(q.monto) + "</td></tr>").join("");
     let msg = "";
     if (v.estado === "subida" && v.avisos && v.avisos.length) msg = '<div class="vt-msg av"><b>Avisos del sistema:</b><br>' + v.avisos.map(esc).join("<br>") + "</div>";
-    if ((v.estado === "pendiente" || v.estado === "invalida") && v.msg) msg = '<div class="vt-msg mal"><b>Por qué no se registró:</b><br>' + esc(v.msg) + "<br><br>La venta sigue guardada en este equipo. Cuando el administrador lo corrija en el sistema, toca <b>Reintentar</b>.</div>";
+    if ((v.estado === "pendiente" || v.estado === "invalida") && v.msg) msg = '<div class="vt-msg mal"><b>Por qué no se registró:</b><br>' + esc(v.msg) + "<br><br>La venta sigue guardada en este equipo. " +
+      (v.revisar ? "Si está bien así, el administrador toca <b>🔑 Subir igual</b> y escribe la clave de precio manual." : "Cuando el administrador lo corrija en el sistema, toca <b>Reintentar</b>.") + "</div>";
     if (v.estado === "por_subir" && v.msg) msg = '<div class="vt-msg av">Último intento: ' + esc(v.msg) + "</div>";
     const nroL = v.numeroFactura ? "#" + v.numeroFactura : (v.numeroTicket ? "#" + v.numeroTicket : "PROV " + v.numero);
     if (v.numeroFactura && String(v.numeroTicket || "") !== String(v.numeroFactura)) msg = '<div class="vt-msg av">⚠️ El ticket salió ' + (v.numeroTicket ? "con el #" + esc(v.numeroTicket) : "provisional") + " y quedó registrada con el <b>#" + esc(v.numeroFactura) + "</b>. Reimprímelo si el cliente lo necesita.</div>" + msg;
@@ -2009,7 +2123,8 @@ function pintarVentas(){
       '<div class="vt-det">' + msg + "<table>" + items + "</table><table>" + pagos + "</table>" +
       '<div style="font-size:12px;color:var(--text-dim);">' + (v.unidad === "div" ? "💵 Venta en Dólares · " : "") + 'Tasa BCV Bs ' + fmt(v.tasas.bcv) + (v.tasas.div ? " · Divisas Bs " + fmt(v.tasas.div) : "") + (p.descuentoTipo !== "ninguno" && p.descuentoValor ? " · descuento " + (p.descuentoTipo === "pct" ? fmt(p.descuentoValor) + " %" : "$" + fmt(p.descuentoValor)) : "") + (p.referencia ? " · Ref: " + esc(p.referencia) : "") + (p.ordenId ? " · " + (p.canal === "WEB" ? "🌐 pedido web " : "📋 orden ") + esc(p.ordenId) : "") + "</div>" +
       '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;"><button type="button" class="btn sm" onclick="imprimirPorId(\'' + v.id + '\')">🖨️ Reimprimir</button>' +
-      ((v.estado === "pendiente" || v.estado === "invalida") ? '<button type="button" class="btn sm green" onclick="reintentar(\'' + v.id + '\',this)">🔁 Reintentar</button>' : "") + "</div></div></div>";
+      ((v.estado === "pendiente" || v.estado === "invalida") ? '<button type="button" class="btn sm green" onclick="reintentar(\'' + v.id + '\',this)">🔁 Reintentar</button>' : "") +
+      (v.estado === "pendiente" && v.revisar ? '<button type="button" class="btn sm naranja" onclick="subirIgual(\'' + v.id + '\',this)">🔑 Subir igual</button>' : "") + "</div></div></div>";
   }).join("");
 }
 function imprimirCierreN(i){ const c = S.cierres[i]; if (c) imprimirHTML(htmlCierre(c)); }

@@ -165,6 +165,14 @@ body.light .btn-primary{color:#fff;}
 .btn-primary:disabled{background:rgba(100,100,100,0.3);cursor:not-allowed;color:rgba(100,100,100,0.6);}
 .btn-secondary{padding:8px;background:#7f8c8d;border:none;color:white;font-weight:700;font-size:13px;border-radius:8px;cursor:pointer;transition:filter 0.15s;}
 .btn-secondary:hover{filter:brightness(1.1);}
+/* 2.9: Cotización y Vaciar con su color (en gris parecían apagados) */
+#btnCotizar{background:#2f6fb3;}
+#btnLimpiar{background:#c0392b;}
+.act-caja{font-size:13.5px;text-align:left;margin:4px 0 2px;line-height:1.5;}
+.act-caja .lnk{padding:2px 0 2px 4px;font-size:13px;}
+/* 2.9: barra roja cuando algo falla en la pantalla (con el texto para mandárselo a Solumaker) */
+.barra-falla{position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#c0392b;color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.4;box-shadow:0 4px 16px rgba(0,0,0,.35);}
+.barra-falla button{margin-left:6px;background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:6px;padding:3px 8px;font-weight:700;cursor:pointer;}
 .descuentos{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;flex-direction:column;gap:7px;min-width:250px;}
 .desc-title{font-size:10px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;}
 .desc-row{display:flex;align-items:center;gap:8px;}
