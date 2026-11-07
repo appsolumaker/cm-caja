@@ -133,7 +133,7 @@ async function abrirTurno(btn){
   btnOcupado(btn, "Abriendo…");
   const ahora = new Date();
   const t = { id: "T-" + (S.datos.equipo || "EQ") + "-" + ahoraTxt(ahora).replace(/\D/g, "").slice(0, 12) + "-" + uuid().slice(0, 4),
-              cajeroId: c.id, cajeroNombre: c.nombre, apertura: ahoraTxt(ahora),
+              cajeroId: c.id, cajeroNombre: c.nombre, apertura: ahoraTxt(ahora), aperturaMs: ahora.getTime(),   // 3.0: la hora exacta, para el efectivo movido desde el sistema
               fondoBs: r2(Number($("tFondoBs").value) || 0), fondoUsd: r2(Number($("tFondoUsd").value) || 0) };
   try { await kvSet("turno", t); }
   catch (e) { btnLibre(btn); aviso({ icono: "❌", titulo: "No se abrió el turno", html: "El equipo no pudo guardar el turno (" + esc(e.message) + "). Vuelve a intentar." }); return; }
@@ -147,6 +147,7 @@ async function abrirTurno(btn){
   if (S.vista !== "vender") mostrarVista("vender");
   seguro(buscar); seguro(pintarFactura);
   try { numerosAlDia(); } catch (e) {}   // numeros.js: con internet, aparta los números de factura de este turno
+  try { efectivoAlDia(true); } catch (e) {}   // 3.0: le avisa al sistema que este turno está abierto
 }
 
 // ══ CON TURNO: la caja bloqueada ══
@@ -234,3 +235,44 @@ function revisarInactividad(){
 }
 setInterval(revisarInactividad, 15000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) revisarInactividad(); });
+
+// ══ 3.0 (Tanda 3a): EFECTIVO DE LA GAVETA MOVIDO DESDE EL SISTEMA ══
+// · Con internet, la caja le avisa al sistema que su turno está abierto (al abrirlo, o cuando vuelve el internet).
+//   Así Clientes, Proveedores, Compras y Egresos ofrecen «Caja N · turno de …» cuando el pago es en efectivo.
+// · Cada 5 minutos (y al cerrar) pregunta qué se movió desde el sistema con el efectivo de esta caja y, si hay
+//   algo nuevo, se lo muestra al cajero. El cierre del turno lo suma (o lo resta) en «Debe haber».
+const EFS = { at: 0, ocupado: false };
+function turnoParaSistema(t){ return { id: t.id, cajeroId: t.cajeroId, cajeroNombre: t.cajeroNombre, apertura: t.apertura, aperturaMs: t.aperturaMs || 0, fondoBs: t.fondoBs, fondoUsd: t.fondoUsd }; }
+function efsClave(m){ return [m.ref, m.moneda, m.monto, m.origen].join("|"); }
+// forzar: aunque no hayan pasado 5 minutos · silencioso: sin el aviso al cajero (el cierre ya los muestra)
+// Devuelve la respuesta del sistema ({ ok, movs, bs, usd }) o null si no se pudo preguntar.
+async function efectivoAlDia(forzar, silencioso){
+  const t = S.turno;
+  if (!t || !S.eq || !S.datos || S.online === false) return null;
+  if (EFS.ocupado) { if (!forzar) return null; for (let i = 0; i < 40 && EFS.ocupado; i++) await new Promise(r => setTimeout(r, 250)); }
+  if (!forzar && t.avisado && Date.now() - EFS.at < 5 * 60000) return null;
+  EFS.ocupado = true;
+  let r = null;
+  try { r = await api("cj_turno", { op: "movs", id: t.id, turno: turnoParaSistema(t) }, 30000); }
+  catch (e) { r = null; }
+  finally { EFS.ocupado = false; }
+  if (!r || !r.ok || !S.turno || S.turno.id !== t.id) return r && r.ok ? r : null;
+  EFS.at = Date.now();
+  let cambio = false;
+  if (!t.avisado && r.estado === "ABIERTO") { t.avisado = true; cambio = true; }
+  const vistos = Array.isArray(t.vistos) ? t.vistos : [];
+  const nuevos = (r.movs || []).filter(m => vistos.indexOf(efsClave(m)) < 0);
+  if (nuevos.length && (silencioso || !BQ.on)) {
+    t.vistos = vistos.concat(nuevos.map(efsClave)).slice(-200); cambio = true;
+    if (!silencioso) {
+      const lin = nuevos.map(m => "<div style=\"padding:6px 0;border-bottom:1px dashed var(--border);\"><b>" + (m.monto >= 0 ? "Entraron " : "Salieron ") + (m.moneda === "BS" ? "Bs " : "$") + fmt(Math.abs(m.monto)) + "</b> · " + esc(m.etiqueta) +
+        (m.usuario ? "<br><span style=\"color:var(--text-dim);font-size:12px;\">Lo registró " + esc(m.usuario) + (m.hora ? " · " + esc(m.hora) : "") + "</span>" : "") +
+        (m.detalle ? "<br><span style=\"color:var(--text-dim);font-size:12px;\">" + esc(m.detalle) + "</span>" : "") + "</div>").join("");
+      aviso({ icono: "💵", titulo: nuevos.length === 1 ? "Se movió efectivo de esta caja" : "Se movió efectivo de esta caja (" + nuevos.length + ")",
+        html: "Desde el sistema se registró con el efectivo de esta gaveta:" + lin + "<br>Al cerrar el turno, el cierre ya lo toma en cuenta en <b>Debe haber</b>." });
+    }
+  }
+  if (cambio) { try { await kvSet("turno", t); } catch (e) {} }
+  return r;
+}
+

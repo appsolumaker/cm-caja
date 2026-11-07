@@ -18,7 +18,7 @@
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
 //  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "2.9 · 7-11-2026";
+const APP_VER = "3.0 · 7-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -140,7 +140,7 @@ async function arrancar(){
   document.body.classList.add("entrando");
   // 2.7.1: la página (index.html) y sus archivos tienen que ser de la misma versión. Justo después de subir
   // a GitHub, el navegador puede traer uno viejo un rato: se recarga una vez y, si sigue mal, lo dice.
-  const verPag = (document.querySelector('meta[name="cm-ver"]') || {}).content || "", faltaJs = typeof bloquear !== "function";
+  const verPag = (document.querySelector('meta[name="cm-ver"]') || {}).content || "", faltaJs = typeof bloquear !== "function" || typeof efectivoAlDia !== "function";
   if (verPag !== APP_VER.split(" ")[0] || faltaJs) {
     let ya = ""; try { ya = sessionStorage.getItem("cm_recargo") || ""; } catch (e) {}
     if (!ya) { try { sessionStorage.setItem("cm_recargo", "1"); } catch (e) {} location.reload(); return; }
@@ -1858,59 +1858,121 @@ function resumenTurno(t){
            metodos, efBsVentas: r2(efBs), efUsdVentas: r2(efUsd),
            efBsEsperado: r2((Number(t.fondoBs) || 0) + efBs), efUsdEsperado: r2((Number(t.fondoUsd) || 0) + efUsd) };
 }
+// 3.0 (Tanda 3a): el cierre va en pasos, como el módulo de Cambios. 1 y 2: contar el efectivo (sin ver cuánto
+// debería haber, para que el conteo sea el real) · 3: revisar, con lo que se movió desde el sistema con el
+// efectivo de esta caja (abonos, pagos a proveedores, compras, gastos, inversiones) · 4: cerrar e imprimir.
+const CIE = { paso: 1, bs: "", usd: "", obs: "", sis: null, cargando: false };
+const CIE_PASOS = [["1", "Efectivo Bs"], ["2", "Efectivo $"], ["3", "Revisar"], ["4", "Cerrar"]];
 function irCierre(){
   if (!S.turno) return;
   if (F.items.length || P) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de cerrar el turno." }); return; }
+  CIE.paso = 1; CIE.bs = ""; CIE.usd = ""; CIE.obs = ""; CIE.sis = null;
   mostrarVista("cierre"); pintarCierre();
+  cierreTraerSistema();
+}
+async function cierreTraerSistema(){
+  CIE.cargando = true; pintarCierre();
+  let r = null;
+  try { r = await efectivoAlDia(true, true); } catch (e) { r = null; }   // cajero.js
+  CIE.sis = r && r.ok ? { ok: true, movs: r.movs || [], bs: r2(r.bs), usd: r2(r.usd) } : { ok: false, movs: [], bs: 0, usd: 0 };
+  CIE.cargando = false;
+  if (S.vista === "cierre") pintarCierre();
 }
 function difHTML(d){
   if (Math.abs(d) < 0.005) return '<span class="dif-ok">✅ Cuadra</span>';
   return d > 0 ? '<span class="dif-sob">Sobra ' + fmt(d) + "</span>" : '<span class="dif-mal">Falta ' + fmt(-d) + "</span>";
 }
-function pintarCierre(){
-  const t = S.turno, R = resumenTurno(t);
-  const filasMet = R.metodos.map(m => "<tr><td>" + esc(m.desc) + '</td><td class="r">' + (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto) + "</td></tr>").join("") +
-    (R.credito ? '<tr><td>📝 A crédito (no entra a caja)</td><td class="r">$' + fmt(R.credito) + "</td></tr>" : "");
-  $("cierreCard").innerHTML =
-    '<div class="card-tit">🔒 Cerrar turno</div>' +
-    (S.cierreAdmin ? '<div class="banner av" style="margin:0 0 10px;">⭐ Lo cierra <b>' + esc(S.cierreAdmin.nombre) + "</b> porque " + esc(t.cajeroNombre) + " no está. Queda anotado en el cierre.</div>" : "") +
-    '<div class="m-txt"><b>' + esc(t.cajeroNombre) + "</b> · desde " + fechaCorta(t.apertura) + " " + horaDe(t.apertura) + "</div>" +
-    '<div class="res" style="margin-top:10px;"><div><span>Ventas</span><b>' + R.ventas + '</b></div><div><span>Total</span><b>Bs ' + fmt(R.totalBs) + '</b><span style="text-transform:none;">$' + fmt(R.totalUsd) + " BCV</span></div>" +
-    (R.descuentos ? '<div><span>Descuentos</span><b>$' + fmt(R.descuentos) + "</b></div>" : "") + "</div>" +
-    (R.sinSubir ? '<div class="banner av" style="margin:0 0 10px;">⏳ ' + R.sinSubir + " venta" + (R.sinSubir > 1 ? "s" : "") + " de este turno todavía no " + (R.sinSubir > 1 ? "están" : "está") + " en el sistema. Puedes cerrar igual: se suben solas cuando haya internet.</div>" : "") +
-    '<div class="cie-tit">Por método (cobrado menos vuelto)</div><table class="cie-tabla">' + (filasMet || '<tr><td colspan="2" style="color:var(--text-dim);">Sin ventas en este turno.</td></tr>') + "</table>" +
-    '<div class="cie-tit">Efectivo en la gaveta</div>' +
-    '<table class="cie-tabla"><tr><td></td><td class="r">Bs</td><td class="r">$</td></tr>' +
-    '<tr><td>Fondo inicial</td><td class="r">' + fmt(t.fondoBs) + '</td><td class="r">' + fmt(t.fondoUsd) + "</td></tr>" +
-    '<tr><td>+ Efectivo del turno (menos vuelto)</td><td class="r">' + fmt(R.efBsVentas) + '</td><td class="r">' + fmt(R.efUsdVentas) + "</td></tr>" +
-    '<tr><td><b>= Debe haber</b></td><td class="r">' + fmt(R.efBsEsperado) + '</td><td class="r">' + fmt(R.efUsdEsperado) + "</td></tr></table>" +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">' +
-      '<div><label class="lbl" for="cBs">Contado Bs</label><input class="inp" id="cBs" type="number" inputmode="decimal" min="0" step="any" placeholder="Cuenta el efectivo en Bs" oninput="pintarDifCierre()"><div id="cBsDif" style="font-size:13px;font-weight:800;margin-top:4px;"></div></div>' +
-      '<div><label class="lbl" for="cUsd">Contado $</label><input class="inp" id="cUsd" type="number" inputmode="decimal" min="0" step="any" placeholder="Cuenta el efectivo en $" oninput="pintarDifCierre()"><div id="cUsdDif" style="font-size:13px;font-weight:800;margin-top:4px;"></div></div>' +
-    "</div>" +
-    '<label class="lbl" for="cObs">Observación (opcional)</label><input class="inp" id="cObs" maxlength="200" placeholder="Ej. se pagó al proveedor de pan desde la gaveta">' +
-    '<div class="m-btns">' + (S.cierreAdmin ? '<button type="button" class="btn" onclick="cancelarCierreAdmin()">Cancelar</button>' : '<button type="button" class="btn" onclick="irA(\'vender\')">Volver a vender</button>') + '<button type="button" class="btn naranja" id="btnCerrarTurno" onclick="cerrarTurno(this)">🔒 Cerrar turno</button></div>';
-  $("cierreCard")._R = R;
+// Lo movido desde el sistema, por tipo (Abonos de clientes, Pagos a proveedores…), en Bs y en $
+function cierreSisGrupos(sis){
+  const g = {};
+  ((sis && sis.movs) || []).forEach(m => {
+    const k = m.etiqueta || m.origen;
+    const x = g[k] = g[k] || { etq: k, bs: 0, usd: 0 };
+    if (m.moneda === "BS") x.bs = r2(x.bs + m.monto); else x.usd = r2(x.usd + m.monto);
+  });
+  return Object.values(g);
 }
-function pintarDifCierre(){
-  const R = $("cierreCard")._R; if (!R) return;
-  const b = $("cBs").value, u = $("cUsd").value;
-  $("cBsDif").innerHTML = b === "" ? "" : difHTML(r2(Number(b) - R.efBsEsperado));
-  $("cUsdDif").innerHTML = u === "" ? "" : difHTML(r2(Number(u) - R.efUsdEsperado));
+function cierreCalc(){
+  const t = S.turno, R = resumenTurno(t), sis = CIE.sis || { ok: false, movs: [], bs: 0, usd: 0 };
+  const espBs = r2(R.efBsEsperado + (sis.bs || 0)), espUsd = r2(R.efUsdEsperado + (sis.usd || 0));
+  const bs = CIE.bs === "" ? null : r2(Number(CIE.bs)), usd = CIE.usd === "" ? null : r2(Number(CIE.usd));
+  return { t, R, sis, espBs, espUsd, bs, usd, dBs: bs == null ? null : r2(bs - espBs), dUsd: usd == null ? null : r2(usd - espUsd) };
+}
+function cierrePaso(n){
+  n = Number(n);
+  if (n > CIE.paso + 1) return;
+  if (n >= 2 && CIE.bs === "") { CIE.paso = 1; pintarCierre(); avisoConteo("Bs"); return; }
+  if (n >= 3 && CIE.usd === "") { CIE.paso = 2; pintarCierre(); avisoConteo("$"); return; }
+  CIE.paso = n; pintarCierre();
+}
+function avisoConteo(m){ aviso({ icono: "💵", titulo: "Falta el conteo en " + m, html: "Cuenta el efectivo en <b>" + m + "</b> que hay en la gaveta y escríbelo. Si no hay, escribe <b>0</b>." }); }
+function cierreGuardarCampo(id, k){ const el = $(id); if (el) CIE[k] = el.value; }
+function pintarCierre(){
+  const box = $("cierreCard"); if (!box || !S.turno) return;
+  const x = cierreCalc(), t = x.t, R = x.R;
+  const barra = '<div class="pasos">' + CIE_PASOS.map(p => {
+    const n = Number(p[0]), cls = n === CIE.paso ? "activo" : (n < CIE.paso ? "hecho" : "");
+    return '<div class="paso ' + cls + '" onclick="cierrePaso(' + n + ')"><b>' + (n < CIE.paso ? "✓" : p[0]) + '</b><span class="lbl">' + p[1] + "</span></div>";
+  }).join("") + "</div>";
+  const cab = '<div class="card-tit">🔒 Cerrar turno</div>' +
+    (S.cierreAdmin ? '<div class="banner av" style="margin:0 0 10px;">⭐ Lo cierra <b>' + esc(S.cierreAdmin.nombre) + "</b> porque " + esc(t.cajeroNombre) + " no está. Queda anotado en el cierre.</div>" : "") +
+    '<div class="m-txt"><b>' + esc(t.cajeroNombre) + "</b> · desde " + fechaCorta(t.apertura) + " " + horaDe(t.apertura) + "</div>" + barra;
+  const volver = S.cierreAdmin ? '<button type="button" class="btn" onclick="cancelarCierreAdmin()">Cancelar</button>' : '<button type="button" class="btn" onclick="irA(\'vender\')">Volver a vender</button>';
+  const atras = '<button type="button" class="btn" onclick="cierrePaso(' + (CIE.paso - 1) + ')">← Atrás</button>';
+  let cuerpo = "";
+  if (CIE.paso === 1 || CIE.paso === 2) {
+    const bs = CIE.paso === 1, id = bs ? "cBs" : "cUsd", k = bs ? "bs" : "usd", m = bs ? "Bs" : "$";
+    cuerpo = '<div class="cie-paso"><div class="cie-preg">' + (bs ? "💵 ¿Cuánto efectivo en <b>Bs</b> hay en la gaveta?" : "💵 ¿Cuánto efectivo en <b>dólares ($)</b> hay en la gaveta?") + "</div>" +
+      '<div class="cie-ayuda">Cuenta todos los billetes' + (bs ? "" : " en dólares") + ", también los del fondo con que abriste. Si no hay, escribe 0.</div>" +
+      '<input class="inp cie-num" id="' + id + '" type="number" inputmode="decimal" min="0" step="any" placeholder="' + m + ' contados" value="' + esc(CIE[k]) + '" oninput="cierreGuardarCampo(\'' + id + "','" + k + '\')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();cierrePaso(' + (CIE.paso + 1) + ');}">' +
+      "</div>" +
+      '<div class="m-btns">' + (bs ? volver : atras) + '<button type="button" class="btn green" onclick="cierrePaso(' + (CIE.paso + 1) + ')">Siguiente →</button></div>';
+  } else if (CIE.paso === 3) {
+    const filasMet = R.metodos.map(m => "<tr><td>" + esc(m.desc) + '</td><td class="r">' + (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto) + "</td></tr>").join("") +
+      (R.credito ? '<tr><td>📝 A crédito (no entra a caja)</td><td class="r">$' + fmt(R.credito) + "</td></tr>" : "");
+    const sg = cierreSisGrupos(x.sis);
+    const sgn = v => (v > 0 ? "+" : v < 0 ? "−" : "") + fmt(Math.abs(v));
+    const filasSis = sg.map(g => "<tr><td>" + (g.bs + g.usd >= 0 ? "+ " : "− ") + esc(g.etq) + ' <span class="cie-sis">(del sistema)</span></td><td class="r">' + (g.bs ? sgn(g.bs) : "—") + '</td><td class="r">' + (g.usd ? sgn(g.usd) : "—") + "</td></tr>").join("");
+    const fila = (a, b, c, cls) => '<tr' + (cls ? ' class="' + cls + '"' : "") + "><td>" + a + '</td><td class="r">' + b + '</td><td class="r">' + c + "</td></tr>";
+    cuerpo = (CIE.cargando ? '<div class="banner" style="margin:0 0 10px;background:var(--bg3);">⏳ Revisando en el sistema si se movió efectivo de esta caja…</div>' : "") +
+      (!CIE.cargando && x.sis && !x.sis.ok ? '<div class="banner av" style="margin:0 0 10px;">📡 Sin internet no pude revisar si desde el sistema se movió efectivo de esta caja (abonos, pagos a proveedores, compras, gastos). Puedes cerrar igual: cuando el cierre llegue al sistema, se le suma lo que falte y se te avisa.</div>' : "") +
+      (R.sinSubir ? '<div class="banner av" style="margin:0 0 10px;">⏳ ' + R.sinSubir + " venta" + (R.sinSubir > 1 ? "s" : "") + " de este turno todavía no " + (R.sinSubir > 1 ? "están" : "está") + " en el sistema. Puedes cerrar igual: se suben solas cuando haya internet.</div>" : "") +
+      '<div class="cie-tit">Efectivo en la gaveta</div>' +
+      '<table class="cie-tabla"><tr><td></td><td class="r">Bs</td><td class="r">$</td></tr>' +
+      fila("Fondo inicial", fmt(t.fondoBs), fmt(t.fondoUsd)) +
+      fila("+ Efectivo de las ventas (menos vuelto)", fmt(R.efBsVentas), fmt(R.efUsdVentas)) + filasSis +
+      fila("<b>= Debe haber</b>", "<b>" + fmt(x.espBs) + "</b>", "<b>" + fmt(x.espUsd) + "</b>") +
+      fila("Contaste", fmt(x.bs), fmt(x.usd)) +
+      fila("<b>Resultado</b>", difHTML(x.dBs), difHTML(x.dUsd), "cie-res") + "</table>" +
+      (x.sis && x.sis.movs.length ? '<div class="cie-tit">Movido desde el sistema</div><div class="cie-movs">' + x.sis.movs.map(m =>
+        "<div><b>" + (m.monto >= 0 ? "+" : "−") + (m.moneda === "BS" ? "Bs " : "$") + fmt(Math.abs(m.monto)) + "</b> · " + esc(m.etiqueta) + (m.usuario ? " · " + esc(m.usuario) : "") + (m.hora ? " · " + esc(m.hora) : "") +
+        (m.detalle ? '<div class="cie-sis">' + esc(m.detalle) + "</div>" : "") + "</div>").join("") + "</div>" : "") +
+      '<div class="res" style="margin-top:12px;"><div><span>Ventas</span><b>' + R.ventas + '</b></div><div><span>Total</span><b>Bs ' + fmt(R.totalBs) + '</b><span style="text-transform:none;">$' + fmt(R.totalUsd) + " BCV</span></div>" +
+      (R.descuentos ? '<div><span>Descuentos</span><b>$' + fmt(R.descuentos) + "</b></div>" : "") + "</div>" +
+      '<div class="cie-tit">Por método (cobrado menos vuelto)</div><table class="cie-tabla">' + (filasMet || '<tr><td colspan="2" style="color:var(--text-dim);">Sin ventas en este turno.</td></tr>') + "</table>" +
+      '<div class="m-btns">' + atras + '<button type="button" class="btn green" onclick="cierrePaso(4)">Siguiente →</button></div>';
+  } else {
+    const cuadra = Math.abs(x.dBs) < 0.005 && Math.abs(x.dUsd) < 0.005;
+    cuerpo = '<div class="cie-paso"><div class="cie-preg">' + (cuadra ? "✅ El efectivo cuadra." : "⚠️ El efectivo no cuadra: Bs " + difHTML(x.dBs) + " · $ " + difHTML(x.dUsd)) + "</div>" +
+      '<div class="cie-ayuda">Se cierra el turno de <b>' + esc(t.cajeroNombre) + "</b> con " + R.ventas + " venta" + (R.ventas === 1 ? "" : "s") + " por Bs " + fmt(R.totalBs) + "." +
+      (cuadra ? "" : " Si sabes por qué no cuadra, escríbelo aquí abajo: queda en el cierre.") + "</div>" +
+      '<label class="lbl" for="cObs">Observación (opcional)</label><input class="inp" id="cObs" maxlength="200" placeholder="Ej. el dueño se llevó $20 para el banco" value="' + esc(CIE.obs) + '" oninput="cierreGuardarCampo(\'cObs\',\'obs\')"></div>' +
+      '<div class="m-btns">' + atras + '<button type="button" class="btn naranja" id="btnCerrarTurno" onclick="cerrarTurno(this)">🔒 Cerrar turno</button></div>';
+  }
+  box.innerHTML = cab + cuerpo;
+  if (CIE.paso <= 2) setTimeout(() => { const i = $(CIE.paso === 1 ? "cBs" : "cUsd"); if (i && window.innerWidth > 820) i.focus(); }, 30);
 }
 async function cerrarTurno(btn){
-  const t = S.turno, R = resumenTurno(t);
-  const b = $("cBs").value, u = $("cUsd").value;
-  if (b === "" || u === "") { aviso({ icono: "💵", titulo: "Falta el conteo", html: "Cuenta el efectivo de la gaveta y escribe cuánto hay en <b>Bs</b> y en <b>$</b> (si no hay, escribe 0)." }); return; }
-  const dBs = r2(Number(b) - R.efBsEsperado), dUsd = r2(Number(u) - R.efUsdEsperado);
-  const txtDif = (Math.abs(dBs) >= 0.005 || Math.abs(dUsd) >= 0.005)
-    ? "<br><br>⚠️ El efectivo no cuadra: Bs " + (dBs >= 0 ? "+" : "") + fmt(dBs) + " · $" + (dUsd >= 0 ? "+" : "") + fmt(dUsd) + ". Queda anotado en el cierre." : "<br><br>✅ El efectivo cuadra.";
-  if (!await confirmar({ icono: "🔒", titulo: "Cerrar el turno de " + t.cajeroNombre, ok: "Sí, cerrar turno", colorOk: "naranja", html: "Se cierra el turno con " + R.ventas + " venta" + (R.ventas === 1 ? "" : "s") + " por Bs " + fmt(R.totalBs) + "." + txtDif })) return;
+  if (btn && btn.disabled) return;
+  if (CIE.bs === "" || CIE.usd === "") { cierrePaso(CIE.bs === "" ? 1 : 2); return; }
+  if (CIE.cargando) { aviso({ icono: "⏳", titulo: "Un momento", html: "Todavía estoy revisando en el sistema si se movió efectivo de esta caja. Espera unos segundos y vuelve a tocar <b>Cerrar turno</b>." }); return; }
+  const x = cierreCalc(), t = x.t, R = x.R, sis = x.sis;
   btnOcupado(btn, "Cerrando…");
-  const c = Object.assign({ id: t.id, cajeroId: t.cajeroId, cajeroNombre: t.cajeroNombre, apertura: t.apertura, cierre: ahoraTxt(),
-    fondoBs: t.fondoBs, fondoUsd: t.fondoUsd, efBsContado: r2(Number(b)), efUsdContado: r2(Number(u)), efBsDif: dBs, efUsdDif: dUsd,
-    obs: ((S.cierreAdmin ? "Lo cerró " + S.cierreAdmin.nombre + " (" + t.cajeroNombre + " no estaba). " : "") + $("cObs").value.trim()).trim(), cerradoPor: S.cierreAdmin ? S.cierreAdmin.nombre : t.cajeroNombre,
-    caja: S.datos.caja, equipo: S.datos.equipo, estado: "por_subir", msg: "" }, R);
+  const c = Object.assign({}, R, { id: t.id, cajeroId: t.cajeroId, cajeroNombre: t.cajeroNombre, apertura: t.apertura, aperturaMs: t.aperturaMs || 0, cierre: ahoraTxt(), cierreMs: Date.now(),
+    fondoBs: t.fondoBs, fondoUsd: t.fondoUsd, efBsContado: x.bs, efUsdContado: x.usd, efBsEsperado: x.espBs, efUsdEsperado: x.espUsd, efBsDif: x.dBs, efUsdDif: x.dUsd,
+    sistemaOk: !!sis.ok, sistemaBs: r2(sis.bs || 0), sistemaUsd: r2(sis.usd || 0), sistemaGrupos: cierreSisGrupos(sis),
+    obs: ((S.cierreAdmin ? "Lo cerró " + S.cierreAdmin.nombre + " (" + t.cajeroNombre + " no estaba). " : "") + String(CIE.obs || "").trim()).trim(), cerradoPor: S.cierreAdmin ? S.cierreAdmin.nombre : t.cajeroNombre,
+    caja: S.datos.caja, equipo: S.datos.equipo, estado: "por_subir", msg: "" });
   c.metodos = R.metodos.map(m => ({ metodo: m.metodo, tipo: m.tipo, desc: m.desc, neto: m.neto, efectivo: m.efectivo }));
   S.cierres.push(c);
   try { await kvSet("cierres", S.cierres); await kvSet("turno", null); }
@@ -1929,6 +1991,9 @@ function htmlCierre(c){
   const d = S.datos || {}, cfg = d.impresion || {}, fmtT = formatoTicket();
   const fila = (a, b) => "<tr><td>" + a + '</td><td style="text-align:right;">' + b + "</td></tr>";
   const dif = x => Math.abs(x) < 0.005 ? "CUADRA" : (x > 0 ? "SOBRA " : "FALTA ") + fmt(Math.abs(x));
+  const sgn = v => (v >= 0 ? "+" : "-") + fmt(Math.abs(v));
+  const sis = (c.sistemaGrupos || []), sisBs = sis.filter(g => g.bs), sisUsd = sis.filter(g => g.usd);
+  const sinSis = c.sistemaOk === false ? '<tr><td colspan="2">(Sin internet al cerrar: falta lo movido desde el sistema)</td></tr>' : "";
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cierre ' + esc(c.cajeroNombre) + "</title>" + estiloPapel(fmtT) + "</head><body>" +
     '<div style="text-align:center;padding:8px 0 5px;"><div style="font-size:13px;">' + esc(d.negocio || "") + "</div><div>CIERRE DE CAJA</div><div>Caja " + esc(c.caja || d.caja) + " · equipo " + esc(c.equipo || d.equipo) + "</div></div>" +
     '<hr class="sep"><table>' + fila("Cajero:", esc(c.cajeroNombre)) + fila("Apertura:", esc(c.apertura)) + fila("Cierre:", esc(c.cierre)) + fila("Ventas:", c.ventas) +
@@ -1936,9 +2001,11 @@ function htmlCierre(c){
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Por método (menos vuelto)</div><table>' +
     (c.metodos || []).map(m => fila(esc(String(m.desc || m.metodo).replace(/^[^\wÁÉÍÓÚÑáéíóúñ]+\s*/, "")), (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto))).join("") + (c.credito ? fila("A crédito:", "$" + fmt(c.credito)) : "") + "</table>" +
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Efectivo Bs</div><table>' +
-    fila("Fondo:", fmt(c.fondoBs)) + fila("Del turno:", fmt(c.efBsVentas)) + fila("Debe haber:", fmt(c.efBsEsperado)) + fila("Contado:", fmt(c.efBsContado)) + fila("Resultado:", dif(c.efBsDif)) + "</table>" +
+    fila("Fondo:", fmt(c.fondoBs)) + fila("Ventas:", fmt(c.efBsVentas)) + sisBs.map(g => fila(esc(g.etq) + ":", sgn(g.bs))).join("") + sinSis +
+    fila("Debe haber:", fmt(c.efBsEsperado)) + fila("Contado:", fmt(c.efBsContado)) + fila("Resultado:", dif(c.efBsDif)) + "</table>" +
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Efectivo $</div><table>' +
-    fila("Fondo:", fmt(c.fondoUsd)) + fila("Del turno:", fmt(c.efUsdVentas)) + fila("Debe haber:", fmt(c.efUsdEsperado)) + fila("Contado:", fmt(c.efUsdContado)) + fila("Resultado:", dif(c.efUsdDif)) + "</table>" +
+    fila("Fondo:", fmt(c.fondoUsd)) + fila("Ventas:", fmt(c.efUsdVentas)) + sisUsd.map(g => fila(esc(g.etq) + ":", sgn(g.usd))).join("") + sinSis +
+    fila("Debe haber:", fmt(c.efUsdEsperado)) + fila("Contado:", fmt(c.efUsdContado)) + fila("Resultado:", dif(c.efUsdDif)) + "</table>" +
     (c.sinSubir ? '<hr class="sep"><div>Ventas sin subir al cerrar: ' + c.sinSubir + "</div>" : "") +
     (c.obs ? '<hr class="sep"><div>Obs: ' + esc(c.obs) + "</div>" : "") +
     '<div style="margin-top:28px;border-top:1px solid #000;text-align:center;padding-top:3px;">Firma del cajero</div>' +
@@ -1955,7 +2022,7 @@ async function sincronizar(manual){
   if (S.permisoMal && !manual) return { subidas: 0 };
   // De la más vieja a la más nueva (y a igual hora, por número de ticket)
   const cola = S.ventas.filter(v => v.estado === "por_subir").sort((a, b) => String(a.creada).localeCompare(String(b.creada)) || (Number(a.numeroTicket) || 0) - (Number(b.numeroTicket) || 0));
-  if (!cola.length) { await subirCierres(); await numerosAlDia(); await ordAlDia(); if (manual) await actualizarDatos(null, true); return { subidas: 0 }; }
+  if (!cola.length) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); if (manual) await actualizarDatos(null, true); return { subidas: 0 }; }
   S.sincronizando = true; pintarEstado();
   let subidas = 0, cortado = "";
   try {
@@ -1993,7 +2060,7 @@ async function sincronizar(manual){
     pintarEstado(); pintarBanners();
     if (S.vista === "ventas") pintarVentas();
   }
-  if (!cortado) { await subirCierres(); await numerosAlDia(); await ordAlDia(); }
+  if (!cortado) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); }   // 3.0: cajero.js
   if (subidas && S.online) { await actualizarDatos(null, true); contarOrdenes(); }   // existencias al día (y las órdenes que se convirtieron)
   return { subidas, cortado };
 }
@@ -2001,7 +2068,18 @@ async function subirCierres(){
   for (const c of S.cierres.filter(x => x.estado === "por_subir")) {
     let r;
     try { r = await api("cj_cierre", { cierre: c }, 60000); } catch (e) { return; }
-    if (r && r.ok) { c.estado = "subido"; c.msg = ""; } else { c.msg = (r && r.msg) || "No se pudo subir."; if (r && r.codigo === "EQUIPO") return; }
+    if (r && r.ok) {
+      c.estado = "subido"; c.msg = "";
+      if (r.sistema && r.sistema.cambio) {   // 3.0: el sistema le sumó al cierre efectivo movido desde el sistema que la caja no alcanzó a ver
+        c.sistemaFinal = { bs: r2(r.sistema.bs), usd: r2(r.sistema.usd), difBs: r2(r.sistema.difBs), difUsd: r2(r.sistema.difUsd) };
+        const falta = (v, m) => Math.abs(v) < 0.005 ? "" : (v > 0 ? "+" : "−") + (m === "BS" ? "Bs " : "$") + fmt(Math.abs(v));
+        const extraBs = r2(c.sistemaFinal.bs - (c.sistemaBs || 0)), extraUsd = r2(c.sistemaFinal.usd - (c.sistemaUsd || 0));
+        await kvSet("cierres", S.cierres);
+        aviso({ icono: "💵", titulo: "El sistema completó un cierre", html: "Al cierre del turno de <b>" + esc(c.cajeroNombre) + "</b> (" + esc(fechaCorta(c.apertura)) + " " + esc(horaDe(c.apertura)) + ") le faltaba efectivo movido desde el sistema: " +
+          [falta(extraBs, "BS"), falta(extraUsd, "USD")].filter(Boolean).join(" y ") + " (abonos, pagos a proveedores, compras o gastos de esta caja).<br><br>" +
+          "Con eso el resultado real es:<br>• Bs: " + difHTML(c.sistemaFinal.difBs) + "<br>• $: " + difHTML(c.sistemaFinal.difUsd) + "<br><br>Queda anotado en el sistema." });
+      }
+    } else { c.msg = (r && r.msg) || "No se pudo subir."; if (r && r.codigo === "EQUIPO") return; }
     await kvSet("cierres", S.cierres);
   }
 }

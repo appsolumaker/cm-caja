@@ -603,3 +603,23 @@ body:not(.v-vender) #btnOrdenes{display:none;}
 @keyframes vtaPulso{0%,100%{opacity:.45}50%{opacity:.9}}
 @media (prefers-reduced-motion: reduce){ .vta-thumb.cargando{animation:none;} .vta-thumb img{transition:none;} }
 @media print{ .vta-thumb,.vta-mini{display:none!important;} }
+
+/* 3.0 · Cierre del turno en pasos (como el módulo de Cambios) */
+.pasos{display:flex;gap:4px;margin:12px 0 4px;}
+.paso{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 4px;border-radius:8px;font-size:12px;font-weight:700;color:var(--text-dim);background:transparent;border:1px solid transparent;cursor:pointer;user-select:none;}
+.paso b{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;background:var(--bg3);border:1px solid var(--border);flex-shrink:0;}
+.paso.activo{color:var(--green);background:var(--green-dim);border-color:var(--border-g);}
+.paso.activo b{background:var(--green);color:var(--btn-txt);border-color:transparent;}
+.paso.hecho{color:var(--text);}
+.paso.hecho b{color:var(--green);border-color:var(--border-g);}
+.paso .lbl{white-space:nowrap;}
+@media (max-width:520px){ .paso .lbl{display:none;} .paso.activo .lbl{display:inline;} }
+.cie-paso{margin-top:12px;}
+.cie-preg{font-size:17px;font-weight:700;line-height:1.4;}
+.cie-ayuda{font-size:13px;color:var(--text-dim);margin:6px 0 10px;line-height:1.45;}
+.inp.cie-num{font-size:24px;font-weight:800;padding:14px;text-align:center;}
+.cie-sis{font-size:11px;color:var(--text-dim);font-weight:400;}
+.cie-res td{border-bottom:none;font-size:14px;}
+.cie-movs{font-size:13px;}
+.cie-movs > div{padding:6px 0;border-bottom:1px dashed var(--border);}
+.cie-tabla td.r + td.r{padding-left:12px;}
