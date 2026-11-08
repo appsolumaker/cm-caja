@@ -262,11 +262,13 @@ function cancelarCierreAdmin(){ S.cierreAdmin = null; bloquear(); }
 document.addEventListener("keydown", e => {
   if (document.body.classList.contains("entrando")) return;
   const enTurno = !BQ.on && S.vista === "turno" && PK.c && PK.pre === "tp";
-  if (!BQ.on && !enTurno) return;
-  if (!BQ.on) {
+  const enAdmin = !BQ.on && PK.c && PK.pre === "pa" && !!$("paTec");   // 3.3 (gaveta.js): el PIN del Administrador en una ventana
+  if (!BQ.on && !enTurno && !enAdmin) return;
+  if (BQ.on) { e.stopPropagation(); if (e.key !== "Tab") e.preventDefault(); }   // bloqueada: nada llega a la caja
+  else if (!enAdmin) {
     if (document.querySelector(".mfondo:not(.oculto)")) return;
     const t = e.target; if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "")) return;
-  } else { e.stopPropagation(); if (e.key !== "Tab") e.preventDefault(); }   // bloqueada: nada llega a la caja
+  }
   if (!PK.c || e.ctrlKey || e.altKey || e.metaKey) return;
   if (/^\d$/.test(e.key)) { e.preventDefault(); pkTecla(e.key); }
   else if (e.key === "Backspace") { e.preventDefault(); pkTecla("x"); }

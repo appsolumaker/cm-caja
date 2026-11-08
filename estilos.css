@@ -665,3 +665,15 @@ body:not(.v-vender) #btnOrdenes{display:none;}
 .cie-mot.on{border-color:var(--amber);background:var(--bg);box-shadow:inset 3px 0 0 var(--amber);}
 .cie-arreglo{font-size:13px;line-height:1.5;margin:4px 0 8px;padding:8px 10px;border-radius:8px;background:var(--bg2);}
 .cie-desc textarea.inp{resize:vertical;min-height:52px;font-family:inherit;}
+
+/* 3.3 (Tanda 1c): la gaveta — cierre que cuadra, sacar efectivo */
+.cie-mon{margin:10px 0 4px;}
+.cie-mon .cie-preg{font-size:15px;}
+.cie-mot small{display:block;font-size:12px;font-weight:500;color:var(--text-dim);margin-top:2px;line-height:1.35;}
+.cie-queda{display:flex;flex-direction:column;gap:6px;text-align:left;}
+.cie-queda > div{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;padding:10px 12px;border-radius:8px;font-size:14px;line-height:1.4;}
+.cie-queda > div b{font-size:17px;margin-left:auto;white-space:nowrap;}
+.cie-queda .q-si{background:var(--green-dim, rgba(34,197,94,.12));border:1px solid var(--green, #22c55e);}
+.cie-queda .q-sale{background:var(--bg2);border:1px solid var(--border);}
+.gv-mon{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.gv-mon .cie-mot{text-align:center;}

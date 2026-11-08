@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
 <meta name="cm-caja-web" content="ControlMaster · Caja">
-<meta name="cm-ver" content="3.2">
+<meta name="cm-ver" content="3.3">
 <title>Caja · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="estilos.css?v=3.2">
+<link rel="stylesheet" href="estilos.css?v=3.3">
 </head>
 <body class="light entrando">
 
@@ -41,6 +41,7 @@
   <button type="button" class="menu-vta-item" onclick="menuVtaAccion('actualizar')"><span class="mv-ico">🔄</span><span><span class="mv-tit">Actualizar datos</span><span class="mv-sub">Productos, precios, clientes y tasas del sistema (con internet)</span></span></button>
   <button type="button" class="menu-vta-item" data-v="ajustes" onclick="menuVtaAccion('ajustes')"><span class="mv-ico">⚙️</span><span><span class="mv-tit">Ajustes del equipo</span><span class="mv-sub">Ticket, tasas, sesión y datos de este equipo</span></span></button>
   <button type="button" class="menu-vta-item" id="menuBloq" onclick="menuVtaAccion('bloquear')"><span class="mv-ico">🔐</span><span><span class="mv-tit">Bloquear la caja</span><span class="mv-sub">Si te vas a parar: se abre con tu PIN</span></span></button>
+  <button type="button" class="menu-vta-item" id="menuSacar" onclick="menuVtaAccion('sacar')"><span class="mv-ico">💸</span><span><span class="mv-tit">Sacar efectivo</span><span class="mv-sub">Un gasto pagado con el efectivo de la gaveta (con el PIN del Administrador)</span></span></button>
   <button type="button" class="menu-vta-item" id="menuCierre" onclick="menuVtaAccion('cierre')"><span class="mv-ico">🔒</span><span><span class="mv-tit">Cerrar turno</span><span class="mv-sub">Cuenta el dinero de la caja e imprime el cierre</span></span></button>
 </div>
 
@@ -307,11 +308,12 @@
 <div class="bloqueo oculto" id="bloqueo"><div class="bq-box" id="bloqCuerpo"></div></div>
 <div class="toast" id="toast"></div>
 
-<script src="app.js?v=3.2"></script>
-<script src="api.js?v=3.2"></script>
-<script src="sesion.js?v=3.2"></script>
-<script src="numeros.js?v=3.2"></script>
-<script src="ordenes.js?v=3.2"></script>
-<script src="cajero.js?v=3.2"></script>
+<script src="app.js?v=3.3"></script>
+<script src="api.js?v=3.3"></script>
+<script src="sesion.js?v=3.3"></script>
+<script src="numeros.js?v=3.3"></script>
+<script src="ordenes.js?v=3.3"></script>
+<script src="cajero.js?v=3.3"></script>
+<script src="gaveta.js?v=3.3"></script>
 </body>
 </html>
