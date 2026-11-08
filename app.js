@@ -29,8 +29,10 @@
 //  (gasto, faltante o sobrante, con el PIN del Administrador; los centavos solos) y el turno arranca con lo que dejó.
 //  3.5: el PAGO EN PASOS — ① ¿incluye crédito? (no · sí, todo o una parte · Cashea) ② ¿cómo paga? (Bs · $ · mixto, y por
 //  dónde) ③ ¿cuánto? (en efectivo: ¿con cuánto te pagó? y el vuelto) [el delivery] ④ revisar y registrar. Mismas cuentas.
+//  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
+//  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.5 · 8-11-2026";
+const APP_VER = "3.6 · 8-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -1548,7 +1550,7 @@ function pgPintarLineas(){
     const cab = '<div class="pl-cab"><span>' + esc(pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo })) + '</span><button type="button" class="pgu-x" onclick="pgQuitar(' + l.id + ')" title="Quitar">✕</button></div>';
     if (l === resto && pgEsEf(l)) {   // 3.5: efectivo por lo que falta: se cobra exacto y se pregunta con cuánto pagó (para el vuelto)
       h += '<div class="pl ' + cls + ' pl-ef">' + cab + '<div class="pl-cobra">Cobra <b id="pgX_' + l.id + '">' + (l.tipo === "BS" ? "Bs " : "$") + fmt(l.exacto || 0) + "</b></div>" +
-        '<label class="pl-lbl" for="pgR_' + l.id + '">¿Con cuánto te pagó?</label><div class="pl-cuerpo"><span class="mon">' + mon + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgR_' + l.id + '" placeholder="Vacío = exacto" value="' + esc(l.recibido || "") + '" oninput="pgRecibido(' + l.id + ',this.value)">' +
+        '<label class="pl-lbl" for="pgR_' + l.id + '">¿Con cuánto te pagó?</label><div class="pl-cuerpo"><span class="mon">' + mon + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgR_' + l.id + '" placeholder="Vacío = exacto" value="' + esc(pgRecibidoVal(l)) + '" oninput="pgRecibido(' + l.id + ',this.value)">' +
         pgTasasHTML(l) + '</div><div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
       return;
     }
@@ -1601,9 +1603,9 @@ function pgActualizar(){
   let h = "";
   if (st.hay) {
     if (st.pend > TOL) h = '<div class="bal falta">⚠️ Falta ' + txtU(st.pend) + bs(st.pendX) + "</div>";
-    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran ' + txtU(-st.pend) + bs(-st.pendX) + "</div>" + (P.sinVuelto   // 3.5: el vuelto se pregunta ahí mismo
-        ? '<div class="pw-sinvt">No se da vuelto: queda como diferencial a favor. <button type="button" class="lnk" onclick="P.sinVuelto=false;pgActualizar()">Dar vuelto</button></div>'
-        : '<div class="pw-vtq">💸 ¿En qué le das el vuelto?</div>' + pgFilasMetodos("pgVtDirecto", [], false) + '<div style="text-align:center;margin-top:6px;"><button type="button" class="lnk" onclick="P.sinVuelto=true;pgActualizar()">No le doy vuelto</button></div>');
+    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran ' + txtU(-st.pend) + bs(-st.pendX) + "</div>" + (P.sinVuelto   // 3.6: el vuelto va en su propio paso
+        ? '<div class="pw-sinvt">No se da vuelto: queda como diferencial a favor.</div>'
+        : '<div class="pw-sinvt">Toca <b>Siguiente →</b> para elegir en qué le das el vuelto.</div>');
     else if (P.vt.on && st.pend < -TOL) {
       if (Math.abs(st.queda) <= TOL) h = '<div class="bal ok">✅ Pago exacto con vuelto</div>';
       else if (st.queda > 0) h = '<div class="bal sobra">Faltan ' + txtU(st.queda) + " por devolver" + bs(st.queda) + "</div>";
@@ -1665,7 +1667,7 @@ function pgAgregar(i){
   setTimeout(() => { const inp = $("pgM_" + l.id); if (inp) { inp.focus(); inp.select(); } }, 30);
 }
 function pgQuitar(id){ P.lineas = P.lineas.filter(l => l.id !== id); P.listo = null; pgWzSync(); pgPintarMetodos(); pgPintarLineas(); pgVtAjustar(); pgActualizar(); }
-function pgMonto(id, v){ const l = P.lineas.find(x => x.id === id); if (l) { l.monto = v; if (l !== pgResto()) pgWzSync(); pgVtAjustar(); pgActualizar(); } }
+function pgMonto(id, v){ const l = P.lineas.find(x => x.id === id); if (l) { l.monto = v; P.listo = null; if (l === pgResto()) l.recibido = v; else pgWzSync(); pgVtAjustar(); pgActualizar(); if (P.paso) pgWzBarra(); } }
 async function pgElegirTasa(id, modo){
   const l = P.lineas.find(x => x.id === id); if (!l) return;
   if (modo === "otra" && S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq) {
@@ -1741,7 +1743,7 @@ async function pgDlvModo(k){
 }
 function pgDlvMetodo(i){ const m = metodos()[i]; if (!m || !P) return; P.dlv.metodo = m.metodo; pgActualizar(); }
 function pgVueltoAbrir(){ P.vt = { on: true, lineas: [] }; pgPintarVuelto(); pgActualizar(); }
-function pgVueltoCerrar(){ P.vt = { on: false, lineas: [] }; pgPintarVuelto(); pgActualizar(); }
+function pgVueltoCerrar(){ P.vt = { on: false, lineas: [] }; P.listo = null; pgPintarVuelto(); pgActualizar(); if (P.paso === "V") pgWzPintar(); }
 function pgVtAgregar(i){
   const m = metodos()[i]; if (!m || P.vt.lineas.length >= 2 || P.vt.lineas.some(v => v.metodo === m.metodo)) return;
   const v = { metodo: m.metodo, tipo: m.tipo, monto: "" };
@@ -1768,13 +1770,16 @@ function pgWzSync(){
   const r = pgResto(); if (!r) return;
   pgAutocompletar(r);
   r.exacto = Number(r.monto) || 0;
-  if (pgEsEf(r) && Number(r.recibido) > 0) r.monto = String(r2(Number(r.recibido)));
+  if (Number(r.recibido) > 0) r.monto = String(r2(Number(r.recibido)));   // lo que escribió el cajero manda (efectivo o no)
   const x = $("pgX_" + r.id); if (x) x.textContent = (r.tipo === "BS" ? "Bs " : "$") + fmt(r.exacto);
+  const ri = $("pgR_" + r.id); if (ri && document.activeElement !== ri) ri.value = pgRecibidoVal(r);   // 3.6: trae el total (se puede cambiar)
 }
+// 3.6: «¿Con cuánto te pagó?» trae el total de una vez; si lo cambia, queda lo que escribió
+function pgRecibidoVal(l){ return l.recibido !== "" && l.recibido != null ? String(l.recibido) : ((Number(l.exacto) || 0) > 0 ? (Number(l.exacto)).toFixed(2) : ""); }
 function pgRecibido(id, v){
   const l = P && P.lineas.find(x => x.id === id); if (!l) return;
   l.recibido = v; P.listo = null;
-  pgWzSync(); pgVtAjustar(); pgActualizar();
+  pgWzSync(); pgVtAjustar(); pgActualizar(); pgWzBarra();
 }
 // Si cambia lo que sobra y el vuelto es de un solo método, el vuelto se ajusta solo
 function pgVtAjustar(){
@@ -1786,22 +1791,25 @@ function pgVtAjustar(){
   v.monto = x > 0.004 ? x.toFixed(2) : "";
   const inp = $("pgVM_0"); if (inp && document.activeElement !== inp) inp.value = v.monto;
 }
-function pgVtDirecto(i){ if (!P) return; P.vt = { on: true, lineas: [] }; P.sinVuelto = false; pgVtAgregar(i); }
+function pgVtDirecto(i){ if (!P) return; P.vt = { on: true, lineas: [] }; P.sinVuelto = false; P.listo = null; pgVtAgregar(i); pgWzPintar(); }
+function pgWzSinVuelto(si){ if (!P) return; P.sinVuelto = si; P.listo = null; if (si && P.vt.on) pgVueltoCerrar(); pgActualizar(); pgWzPintar(); }
 // Lo que se paga ahora (sin lo que paga el saldo a favor ni lo que financia Cashea), en la unidad de la venta
 function pgPorPagarAhora(){ return P ? r2(P.total - pgSafPant() - (P.cred.on && P.cred.cashea ? pgCredValor() : 0)) : 0; }
 function pgUsdDe(x){ return P.modo === "div" ? r2(x) : r2(x * tBcv() / ((P.modo === "off" ? (tDivOff() || tBcv()) : tDiv()) || tBcv())); }
 function pgNadaAhora(){ return !!P && ((P.tipo === "credito" && P.credTodo === true) || (P.tipo !== "credito" && !!P.tipo && pgPorPagarAhora() <= TOL)); }
 function pgWzPasos(){
   const salta = pgNadaAhora();
-  const l = [["1", "¿Crédito?"], ["2", "Cómo paga"], ["3", "Cuánto"]];
+  const l = [["1", "Pago"], ["2", "Moneda"], ["M", "Método"], ["3", "Monto"]];
+  if (!salta && (P.vt.on || P.sinVuelto || pgHaySobra())) l.push(["V", "Vuelto"]);   // 3.6: solo si sobra
   if (P.dlv.on) l.push(["D", P.dlv.tipo === "envio" ? "Envío" : "Delivery"]);
   l.push(["4", "Revisar"]);
-  return l.map(x => ({ k: x[0], lbl: x[1], salta: salta && (x[0] === "2" || x[0] === "3") }));
+  return l.map(x => ({ k: x[0], lbl: x[1], salta: salta && (x[0] === "2" || x[0] === "M" || x[0] === "3") }));
 }
+function pgHaySobra(){ return !!P && P.lineas.length > 0 && pgEstado().pend < -TOL; }
 function pgIr(k){
   if (!P) return;
   P.paso = k; if (k !== "4") P.listo = null; P.verOtros = false;
-  if (k === "3") { pgWzSync(); pgPintarLineas(); pgPintarVuelto(); pgActualizar(); }
+  if (k === "3" || k === "V") { pgWzSync(); pgPintarLineas(); pgVtAjustar(); pgPintarVuelto(); pgActualizar(); }
   pgWzPintar();
   setTimeout(() => {
     if (!P || P.paso !== k) return;
@@ -1809,12 +1817,13 @@ function pgIr(k){
     if (k === "3") f = [...document.querySelectorAll("#pgLineas input")].find(i => !i.value) || document.querySelector("#pgLineas input");
     else if (k === "4") f = $("pgGuardar");
     else if (k === "1" || k === "2") f = document.querySelector("#pgS" + k + " .pw-op.on") || document.querySelector("#pgS" + k + " .pw-op:not([disabled])");
+    else if (k === "M" || k === "V") f = document.querySelector("#pgS" + k + " .pgu-chip:not([disabled])") || $("pgSig");
     else f = $("pgSig");
     if (f && (window.innerWidth > 820 || f.tagName === "BUTTON")) f.focus();
   }, 40);
 }
 function pgWzCard(on, fn, ico, tit, sub, dis){
-  return '<button type="button" class="pw-op' + (on ? " on" : "") + '"' + (dis ? " disabled" : "") + ' onclick="' + fn + '"><span class="pw-ico">' + ico + "</span><span class=\"pw-t\"><b>" + tit + "</b>" + (sub ? "<small>" + sub + "</small>" : "") + "</span></button>";
+  return '<button type="button" class="pw-op' + (on ? " on" : "") + (ico ? "" : " sin-ico") + '"' + (dis ? " disabled" : "") + ' onclick="' + fn + '">' + (ico ? '<span class="pw-ico">' + ico + "</span>" : "") + "<span class=\"pw-t\"><b>" + tit + "</b>" + (sub ? "<small>" + sub + "</small>" : "") + "</span></button>";
 }
 function pgDiasHTML(id){
   const pl = (S.datos.plazosCredito || []).filter(p => p.activo && p.dias > 0);
@@ -1822,39 +1831,49 @@ function pgDiasHTML(id){
   return '<div class="pw-dias"><label for="' + id + '">📅 Días de crédito</label><select class="inp" id="' + id + '" onchange="P.dias=Number(this.value)||0;P.listo=null">' +
     pl.map(p => '<option value="' + p.dias + '"' + (Number(P.dias) === p.dias ? " selected" : "") + ">" + p.dias + " días</option>").join("") + '<option value="0"' + (Number(P.dias) === 0 ? " selected" : "") + ">Sin plazo</option></select></div>";
 }
-function pgWzPintar(){
-  if (!P) return;
+// La barra de pasos (también al escribir: el paso «Vuelto» aparece si sobra)
+function pgWzBarra(){
+  if (!P || !$("pgPasos")) return -1;
   const k = P.paso, pasos = pgWzPasos().filter(x => !x.salta), idx = pasos.findIndex(x => x.k === k);
   $("pgPasos").innerHTML = pasos.map((x, i) => '<div class="paso ' + (i === idx ? "activo" : i < idx ? "hecho" : "") + '"' + (i < idx ? ' onclick="pgIr(\'' + x.k + '\')"' : "") + "><b>" + (i < idx ? "✓" : i + 1) + '</b><span class="lbl">' + x.lbl + "</span></div>").join("");
-  ["1", "2", "3", "D", "4"].forEach(s => $("pgS" + s).classList.toggle("oculto", s !== k));
-  $("pgHint").classList.toggle("oculto", !(k === "2" || k === "3"));
+  return idx;
+}
+function pgWzPintar(){
+  if (!P) return;
+  const k = P.paso, idx = pgWzBarra();
+  ["1", "2", "M", "3", "V", "D", "4"].forEach(s => $("pgS" + s).classList.toggle("oculto", s !== k));
+  $("pgHint").classList.toggle("oculto", !(k === "2" || k === "M" || k === "3"));
   // ① ¿La venta incluye crédito?
   if (k === "1") {
     const div = P.modo === "div";
-    let h = '<div class="pw-preg">¿La venta incluye crédito?</div><div class="pw-ops">' +
-      pgWzCard(P.tipo === "contado", "pgWzTipo('contado')", "✅", "No, paga todo ahora", "") +
-      (metodoCredito() ? pgWzCard(P.tipo === "credito", "pgWzTipo('credito')", "📝", "Sí, queda a deber", "Todo o una parte, a nombre del cliente") : "") +
+    let h = '<div class="pw-preg">¿Cómo pagará el cliente?</div><div class="pw-ops">' +
+      pgWzCard(P.tipo === "contado", "pgWzTipo('contado')", "✅", "De contado", "Paga todo ahora") +
+      (metodoCredito() ? pgWzCard(P.tipo === "credito", "pgWzTipo('credito')", "📝", "Con crédito", "Total o parcial") : "") +
       (pgCsPuede() && !P.dlv.on ? pgWzCard(P.tipo === "cashea", "pgWzTipo('cashea')", '<span class="cs-marca">Cashea</span>', "Con Cashea", div ? "Va a precio BCV: quita 💵 Venta en Dólares para usarlo" : "Paga un inicial y Cashea el resto", div) : "") + "</div>";
     if (P.tipo === "credito") {
       const resto = r2(P.total - pgSafPant());
-      h += pgDiasHTML("pgDiasSel") + '<div class="pw-preg pw-sub">¿Paga algo ahora?</div><div class="pw-ops dos">' +
-        pgWzCard(P.credTodo === true, "pgWzCredTodo(true)", "📝", "No, todo a crédito", "Queda a deber " + txtU(resto)) +
-        pgWzCard(P.credTodo === false, "pgWzCredTodo(false)", "💵", "Sí, una parte ahora", "Lo demás queda a deber") + "</div>";
+      h += pgDiasHTML("pgDiasSel") + '<div class="pw-preg pw-sub">¿Crédito total o parcial?</div><div class="pw-ops dos">' +
+        pgWzCard(P.credTodo === true, "pgWzCredTodo(true)", "", "Crédito total", "Queda a deber " + txtU(resto)) +
+        pgWzCard(P.credTodo === false, "pgWzCredTodo(false)", "", "Crédito parcial", "Paga una parte ahora y el resto queda a deber") + "</div>";
     }
     $("pgP1").innerHTML = h;
   }
   // ② ¿Cómo paga?
   if (k === "2") {
     const ahora = pgPorPagarAhora(), parte = P.tipo === "credito", hayBs = metodos().some(m => m.tipo === "BS"), hayUsd = metodos().some(m => m.tipo === "USD");
-    let h = '<div class="pw-preg">' + (P.tipo === "cashea" ? "¿Cómo paga el inicial?" : parte ? "¿Cómo paga la parte de contado?" : "¿Cómo paga?") + "</div>" +
-      (!P.cs.on && P.saf.disp > 0.004 && !P.saf.on ? '<div class="pw-aviso">🎁 ' + esc(F.cliente.nombre) + " tiene <b>" + txtU(pgSafDispPant()) + '</b> a favor. Para usarlo, toca <button type="button" class="lnk" onclick="pgIr(\'1\')">← paso ①</button>.</div>' : "") +
+    let h = '<div class="pw-preg">' + (P.tipo === "cashea" ? "¿En qué moneda paga el inicial?" : parte ? "¿En qué moneda paga la parte de contado?" : "¿En qué moneda paga?") + "</div>" +
+      (!P.cs.on && P.saf.disp > 0.004 && !P.saf.on ? '<div class="pw-aviso">🎁 ' + esc(F.cliente.nombre) + " tiene <b>" + txtU(pgSafDispPant()) + '</b> a favor. Para usarlo, toca <button type="button" class="lnk" onclick="pgIr(\'1\')">← el primer paso</button>.</div>' : "") +
       '<div class="pw-ops tres">' +
-      (hayBs ? pgWzCard(P.como === "BS", "pgWzComo('BS')", "💙", "Bs", parte ? "Bolívares" : "Bs " + fmt(r2(ahora * bsPorU()))) : "") +
-      (hayUsd ? pgWzCard(P.como === "USD", "pgWzComo('USD')", "💚", "$", parte ? "Dólares" : "$" + fmt(pgUsdDe(ahora))) : "") +
-      (hayBs && hayUsd ? pgWzCard(P.como === "MIX", "pgWzComo('MIX')", "🔀", "Pago mixto", "Una parte en Bs y otra en $") : "") + "</div>";
-    if (P.como) h += '<div class="pw-preg pw-sub">' + (P.como === "MIX" ? "Toca un método en <b>Bs</b> y uno en <b>$</b>" : "¿Por dónde paga?") + "</div>" +
-      pgFilasMetodos("pgWzMetodo", P.lineas.map(l => l.metodo), false, P.como === "MIX" ? null : P.como);
+      (hayBs ? pgWzCard(P.como === "BS", "pgWzComo('BS')", "", "Bolívares", parte ? "" : "Bs " + fmt(r2(ahora * bsPorU()))) : "") +
+      (hayUsd ? pgWzCard(P.como === "USD", "pgWzComo('USD')", "", "Dólares", parte ? "" : "$" + fmt(pgUsdDe(ahora))) : "") +
+      (hayBs && hayUsd ? pgWzCard(P.como === "MIX", "pgWzComo('MIX')", "", "Pago mixto", "Una parte en Bs y otra en $") : "") + "</div>";
     $("pgP2").innerHTML = h;
+  }
+  // ③ El método (3.6: pantalla aparte, solo de la moneda elegida)
+  if (k === "M") {
+    const mon = P.como === "BS" ? "Bolívares" : P.como === "USD" ? "Dólares" : "";
+    $("pgPM").innerHTML = '<div class="pw-preg">' + (P.como === "MIX" ? "Toca un método en <b>Bs</b> y uno en <b>$</b>" : "¿Por dónde paga en " + mon + "?") + "</div>" +
+      pgFilasMetodos("pgWzMetodo", P.lineas.map(l => l.metodo), false, P.como === "MIX" ? null : P.como);
   }
   // ③ ¿Cuánto?
   if (k === "3") {
@@ -1862,8 +1881,16 @@ function pgWzPintar(){
     $("pgP3").innerHTML = '<div class="pw-preg">' + (P.tipo === "credito" ? "¿Cuánto paga ahora?" : mix ? "¿Cuánto paga en " + (P.lineas[0].tipo === "USD" ? "$" : "Bs") + "? Lo demás se calcula solo." : "¿Cuánto paga?") + "</div>" +
       (P.tipo === "credito" ? '<div class="cie-ayuda" style="text-align:center;">Lo que no pague ahora queda a deber.</div>' : "");
     $("pgOtrosBox").innerHTML = P.lineas.length >= 3 ? "" : (P.verOtros
-      ? '<div class="pw-preg pw-sub">Toca el otro método</div>' + pgFilasMetodos("pgWzOtro", P.lineas.map(l => l.metodo), false) + '<div style="text-align:center;"><button type="button" class="lnk" onclick="P.verOtros=false;pgWzPintar()">Cancelar</button></div>'
+      ? '<div class="pw-preg pw-sub">Toca el otro método</div>' + pgFilasMetodos("pgWzOtro", P.lineas.map(l => l.metodo), false, P.como === "MIX" ? null : P.como) + '<div style="text-align:center;"><button type="button" class="lnk" onclick="P.verOtros=false;pgWzPintar()">Cancelar</button></div>'
       : '<div style="text-align:center;margin:6px 0;"><button type="button" class="pgu-mas" onclick="P.verOtros=true;pgWzPintar()">＋ Paga con otro método también</button></div>');
+  }
+  // El vuelto (3.6: pantalla aparte)
+  if (k === "V") {
+    const st = pgEstado(), sobraX = -st.pendX;
+    $("pgPV").innerHTML = '<div class="pw-preg">💸 Sobran ' + (sobraX > 0 ? txtU(-st.pend) + " · Bs " + fmt(r2(sobraX * bsPorU())) : "") + "</div>" +
+      (P.sinVuelto ? '<div class="pw-sinvt" style="font-size:15px;">No le das vuelto: queda como diferencial a favor del negocio.<br><button type="button" class="lnk" onclick="pgWzSinVuelto(false)">Mejor sí le doy vuelto</button></div>'
+        : P.vt.on ? "" : '<div class="pw-preg pw-sub">¿En qué le das el vuelto?</div>' + pgFilasMetodos("pgVtDirecto", [], false) +
+          '<div style="text-align:center;margin-top:8px;"><button type="button" class="lnk" onclick="pgWzSinVuelto(true)">No le doy vuelto (queda a favor del negocio)</button></div>');
   }
   // Delivery: los días si queda a deber y no los eligió en el paso ①
   if (k === "D") $("pgDiasDlv").innerHTML = P.dlv.modo === "cred" && P.tipo !== "credito" ? pgDiasHTML("pgDiasSelD") : "";
@@ -1906,7 +1933,7 @@ function pgWzCredTodo(todo){
 function pgWzComo(c){
   if (!P) return;
   P.como = c; P.lineas = []; P.vt = { on: false, lineas: [] }; P.sinVuelto = false; P.listo = null;
-  pgActualizar(); pgWzPintar();
+  pgActualizar(); pgIr("M");
   // Un solo método en esa moneda: se elige solo
   const con = mon => metodos().map((m, i) => ({ m, i })).filter(o => o.m.tipo === mon && o.m.conCuenta);
   if (c !== "MIX") { const l = con(c); if (l.length === 1) pgWzMetodo(l[0].i); }
@@ -1919,7 +1946,7 @@ function pgWzMetodo(i){
     P.lineas = P.lineas.filter(l => l.tipo !== m.tipo);
     pgAgregar(i);
     const us = P.lineas.find(l => l.tipo === "USD"), bs = P.lineas.find(l => l.tipo === "BS");
-    if (!(us && bs)) { pgWzPintar(); return; }
+    if (!(us && bs)) { pgWzPintar(); return; }   // falta el de la otra moneda
     P.lineas = [us, bs];   // primero lo que da en $; los Bs se calculan solos
     us.monto = ""; us.recibido = ""; bs.recibido = "";
     pgIr("3"); return;
@@ -1940,24 +1967,36 @@ async function pgSiguiente(){
   if (!P) return;
   const k = P.paso;
   if (k === "1") {
-    if (!P.tipo) { aviso({ icono: "👆", titulo: "Elige una opción", html: "¿La venta incluye crédito? Toca <b>No, paga todo ahora</b>" + (metodoCredito() ? ", <b>Sí, queda a deber</b>" : "") + (pgCsPuede() && !P.dlv.on ? " o <b>Con Cashea</b>" : "") + "." }); return; }
-    if (P.tipo === "credito" && P.credTodo === null) { aviso({ icono: "📝", titulo: "¿Paga algo ahora?", html: "Toca <b>No, todo a crédito</b> o <b>Sí, una parte ahora</b>." }); return; }
+    if (!P.tipo) { aviso({ icono: "👆", titulo: "Elige una opción", html: "¿Cómo pagará el cliente? Toca <b>De contado</b>" + (metodoCredito() ? ", <b>Con crédito</b>" : "") + (pgCsPuede() && !P.dlv.on ? " o <b>Con Cashea</b>" : "") + "." }); return; }
+    if (P.tipo === "credito" && P.credTodo === null) { aviso({ icono: "📝", titulo: "¿Crédito total o parcial?", html: "Toca <b>Crédito total</b> o <b>Crédito parcial</b>." }); return; }
     if (P.tipo === "cashea") {
       const ini = pgCsIni();
       if (!(ini > 0)) { aviso({ icono: "🛍️", titulo: "Falta el inicial", html: "Toca el porcentaje (" + CASHEA_PCTS.join(", ") + " %) o escribe el inicial que indica la app de Cashea." }); return; }
-      if (ini >= P.total - 0.009) { aviso({ icono: "🛍️", titulo: "Revisa el inicial", html: "Con un inicial de " + txtU(ini) + " no queda nada para que Cashea financie (total " + txtU(P.total) + "). Si el cliente paga todo, toca <b>No, paga todo ahora</b>." }); return; }
+      if (ini >= P.total - 0.009) { aviso({ icono: "🛍️", titulo: "Revisa el inicial", html: "Con un inicial de " + txtU(ini) + " no queda nada para que Cashea financie (total " + txtU(P.total) + "). Si el cliente paga todo, toca <b>De contado</b>." }); return; }
     }
     const sp = pgSafProblema(); if (sp) { aviso({ icono: "🎁", titulo: "Revisa el saldo a favor", html: esc(sp) }); return; }
     if (pgNadaAhora()) { P.lineas = []; P.vt = { on: false, lineas: [] }; pgActualizar(); return pgDespuesDe3(); }
     pgIr("2"); return;
   }
   if (k === "2") {
-    if (!P.como) { aviso({ icono: "👆", titulo: "¿Cómo paga?", html: "Toca <b>Bs</b>, <b>$</b> o <b>Pago mixto</b>." }); return; }
+    if (!P.como) { aviso({ icono: "👆", titulo: "¿En qué moneda paga?", html: "Toca <b>Bolívares</b>, <b>Dólares</b> o <b>Pago mixto</b>." }); return; }
+    pgIr("M"); return;
+  }
+  if (k === "M") {
     if (!P.lineas.length) { aviso({ icono: "👆", titulo: "¿Por dónde paga?", html: "Toca el método con que paga el cliente." }); return; }
     if (P.como === "MIX" && !(P.lineas.some(l => l.tipo === "BS") && P.lineas.some(l => l.tipo === "USD"))) { aviso({ icono: "🔀", titulo: "Falta un método", html: "En el pago mixto toca un método en <b>Bs</b> y uno en <b>$</b>." }); return; }
     pgIr("3"); return;
   }
-  if (k === "3") { if (!P.lineas.length && P.tipo !== "credito") { aviso({ icono: "👆", titulo: "No hay forma de pago", html: "Vuelve al paso <b>②</b> y toca cómo paga el cliente." }); return; } return pgDespuesDe3(); }
+  if (k === "3") {
+    if (!P.lineas.length && P.tipo !== "credito") { aviso({ icono: "👆", titulo: "No hay forma de pago", html: "Vuelve atrás y toca cómo paga el cliente." }); return; }
+    if (pgHaySobra()) { pgIr("V"); return; }   // 3.6: sobra → el vuelto en su pantalla
+    P.vt = { on: false, lineas: [] }; P.sinVuelto = false;
+    return pgDespuesDe3();
+  }
+  if (k === "V") {
+    if (!P.vt.on && !P.sinVuelto) { aviso({ icono: "💸", titulo: "¿En qué le das el vuelto?", html: "Toca el método con que le das el vuelto, o <b>No le doy vuelto</b>." }); return; }
+    return pgDespuesDe3();
+  }
   if (k === "D") return pgA4();
 }
 function pgDespuesDe3(){ if (P.dlv.on) { pgIr("D"); return; } return pgA4(); }
@@ -2050,7 +2089,7 @@ function pgCsPct(p){
 function pgCsMonto(v){ if (!P || !P.cs.on) return; P.cs.pct = 0; P.cs.inicial = v; pgCsCambio(); }
 // Cambió el inicial: cambia lo financiado y, si hay UN solo método, se ajusta a lo que falta (como Ventas)
 function pgCsCambio(){
-  pgCsSync(); pgWzSync(); pgPintarMetodos(); pgPintarLineas();
+  pgCsSync(); { const r = pgResto(); if (r) r.recibido = ""; } pgWzSync(); pgPintarMetodos(); pgPintarLineas();   // cambió lo que se paga ahora: vuelve al total
   pgActualizar();
 }
 
@@ -2090,7 +2129,7 @@ function pgSaf(on){
 }
 function pgSafMonto(v){ if (!P) return; P.saf.monto = v; pgSafCambio(); }
 function pgSafTodo(){ if (!P) return; P.saf.monto = r2(Math.min(pgSafDispPant(), P.total)).toFixed(2); const i = $("pgSafM"); if (i) i.value = P.saf.monto; pgSafCambio(); }
-function pgSafCambio(){ P.listo = null; pgWzSync(); pgPintarLineas(); pgActualizar(); }
+function pgSafCambio(){ P.listo = null; const r = pgResto(); if (r) r.recibido = ""; pgWzSync(); pgPintarLineas(); pgActualizar(); }
 function pgSafProblema(){
   if (!P || !P.saf.on) return "";
   const m = pgSafPant();
@@ -2209,11 +2248,11 @@ async function pgConfirmar(revisar){
   const st = pgEstado();
   const bs = v => " (Bs " + fmt(r2(v * bsPorU())) + ")";
   if (st.pend > TOL) {
-    if (!await confirmar({ icono: "⚠️", titulo: "Falta dinero", colorOk: "naranja", ok: "Sí, guardar", html: "El pago cubre " + txtU(st.cubT) + " de " + txtU(P.total) + ": <b>falta " + txtU(st.pend) + "</b>" + bs(st.pendX) + ".<br><br>Si la guardas así, esa diferencia queda como diferencial cambiario en contra. Si queda a deber, vuelve al paso <b>①</b> y elige <b>Sí, queda a deber</b>.<br><br>¿Seguir igualmente?" })) return;
-  } else if (st.pend < -TOL && !P.vt.on) {
+    if (!await confirmar({ icono: "⚠️", titulo: "Falta dinero", colorOk: "naranja", ok: "Sí, guardar", html: "El pago cubre " + txtU(st.cubT) + " de " + txtU(P.total) + ": <b>falta " + txtU(st.pend) + "</b>" + bs(st.pendX) + ".<br><br>Si la guardas así, esa diferencia queda como diferencial cambiario en contra. Si queda a deber, vuelve al primer paso y elige <b>Con crédito</b>.<br><br>¿Seguir igualmente?" })) return;
+  } else if (st.pend < -TOL && !P.vt.on && !P.sinVuelto) {   // 3.6: si ya dijo «No le doy vuelto», no pregunta otra vez
     const r = await modal({ icono: "💰", titulo: "Sobra dinero", html: '<div class="m-txt">El pago cubre ' + txtU(st.cubT) + ": <b>sobran " + txtU(-st.pend) + "</b>" + bs(-st.pendX) + ".<br><br>¿Le das vuelto al cliente, o queda como diferencial cambiario a favor (" + txtL(st.dif) + ")?</div>",
       botones: [{ txt: "💸 Dar vuelto", v: "vuelto" }, { txt: "Queda como diferencial a favor", v: "ok", cls: "green" }] });
-    if (r === "vuelto") { P.sinVuelto = false; if (P.paso !== "3") pgIr("3"); else pgActualizar(); return; }
+    if (r === "vuelto") { P.sinVuelto = false; pgIr("V"); return; }
     if (r !== "ok") return;
   } else if (P.vt.on && st.queda < -TOL) {
     if (!await confirmar({ icono: "⚠️", titulo: "El vuelto pasa de lo que sobra", colorOk: "naranja", ok: "Sí, guardar", html: "Sobraban " + txtU(-st.pend) + " y el vuelto devuelve " + txtU(st.vtCub) + ": <b>" + txtU(-st.queda) + " de más</b>.<br><br>Esa diferencia queda como diferencial cambiario en contra. ¿Guardar igualmente?" })) return;
@@ -2847,7 +2886,9 @@ function pintarVentas(){
     (v.pago.vuelto || []).forEach(p => { const k = p.metodo + "|" + p.tipo; porMet[k] = (porMet[k] || 0) - (Number(p.monto) || 0); });
   });
   const tu = S.turno;   // 1b: con cuánto abrió el turno y quién
-  let h = (tu ? '<div><span>Turno abierto</span><b>' + esc(tu.cajeroNombre) + '</b><span style="text-transform:none;">desde ' + horaDe(tu.apertura) + " · abrió con Bs " + fmt(tu.fondoContado ? tu.fondoContado.bs : tu.fondoBs) + " y $" + fmt(tu.fondoContado ? tu.fondoContado.usd : tu.fondoUsd) + "</span></div>" : "") +
+  const fi = tu ? (tu.fondoContado || { bs: tu.fondoBs, usd: tu.fondoUsd }) : null;   // 3.6: lo que había en la gaveta al abrir
+  let h = (tu ? '<div><span>Turno abierto</span><b>' + esc(tu.cajeroNombre) + '</b><span style="text-transform:none;">desde las ' + horaDe(tu.apertura) + "</span></div>" +
+      '<div class="res-fondo"><span>💵 Fondo inicial de la caja</span><b>Bs ' + fmt(fi.bs) + "</b><b>$" + fmt(fi.usd) + "</b></div>" : "") +
     '<div><span>Ventas de hoy</span><b>' + deHoy.length + "</b></div>" +
     '<div><span>Total hoy</span><b>Bs ' + fmt(sumBs) + '</b><span style="text-transform:none;">$' + fmt(sumUsd) + " BCV</span></div>" +
     '<div><span>Por subir</span><b style="color:var(--blue);">' + c.por + "</b></div>" +
