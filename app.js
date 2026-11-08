@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.7 · 8-11-2026";
+const APP_VER = "3.8 · 8-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -2358,8 +2358,9 @@ function htmlTicket(v){
       : '<tr><td style="padding:2px 0;vertical-align:top;width:48%;line-height:1.5;">' + esc(it.nombre) + '</td><td style="padding:2px 0;text-align:center;width:19.2%;vertical-align:top;white-space:nowrap;">' + fmtCant(it.cantidad) + '</td><td style="padding:2px 0;text-align:right;width:32.8%;vertical-align:top;white-space:nowrap;">' + sym + " " + conv(tl) + "</td></tr>";
   }).join("");
   const pagosOrd = (p.pagos || []).filter(q => q.tipo !== "CRED").concat((p.pagos || []).filter(q => q.tipo === "CRED"));
+  const soloMet = m => String(m || "").split(" · ")[0];   // 3.8: «Pago Móvil · BDV» → el ticket dice solo «Pago Móvil» (la cuenta queda registrada igual)
   const filasPago = pagosOrd.map(q => {
-    let f = '<tr style="' + (q.tipo === "CRED" ? "font-style:italic;" : "") + '"><td style="padding:1px 0;">' + esc(q.etiqueta || q.metodo) + '</td><td style="text-align:right;padding:1px 0;">' +
+    let f = '<tr style="' + (q.tipo === "CRED" ? "font-style:italic;" : "") + '"><td style="padding:1px 0;">' + esc(q.etiqueta || soloMet(q.metodo)) + '</td><td style="text-align:right;padding:1px 0;">' +
     (q.etiqueta === "Cashea" ? "Bs. " + fmt(r2(q.monto * (Number(v.tasas && v.tasas.bcv) || 0))) : (q.tipo === "BS" ? "Bs." : "$") + " " + fmt(q.monto)) + "</td></tr>";   // 1b: Cashea en Bs a la BCV
     if (q.tipo === "CRED" && Number(p.diasCredito) > 0) {
       const venc = vencimiento(v.fecha, p.diasCredito);
@@ -2367,7 +2368,7 @@ function htmlTicket(v){
       if (venc) f += '<tr><td colspan="2" style="padding:0 0 2px 6px;font-style:italic;">Fecha de Vencimiento: ' + venc + "</td></tr>";
     }
     return f;
-  }).join("") + (p.vuelto || []).map(q => '<tr><td style="padding:1px 0;">Vuelto (' + esc(q.metodo) + ')</td><td style="text-align:right;padding:1px 0;">- ' + (q.tipo === "BS" ? "Bs." : "$") + " " + fmt(q.monto) + "</td></tr>").join("");
+  }).join("") + (p.vuelto || []).map(q => '<tr><td style="padding:1px 0;">Vuelto (' + esc(soloMet(q.metodo)) + ')</td><td style="text-align:right;padding:1px 0;">- ' + (q.tipo === "BS" ? "Bs." : "$") + " " + fmt(q.monto) + "</td></tr>").join("");
   // Persona del comprobante (Configuración → Impresión)
   let modo = cfg.personaComprobante || "vendedor";
   if (!d.trabajoVendedores && !String(p.vendedorNombre || "").trim()) modo = "cajero";
