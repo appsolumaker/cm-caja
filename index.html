@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
 <meta name="cm-caja-web" content="ControlMaster · Caja">
-<meta name="cm-ver" content="3.4">
+<meta name="cm-ver" content="3.5">
 <title>Caja · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="estilos.css?v=3.4">
+<link rel="stylesheet" href="estilos.css?v=3.5">
 </head>
 <body class="light entrando">
 
@@ -262,29 +262,36 @@
           <div class="usd" id="pgTotal"></div>
           <div class="bs" id="pgTotalBs"></div>
         </div>
+        <!-- 3.5: el pago en pasos ① ¿crédito? ② ¿cómo paga? ③ ¿cuánto? [delivery] ④ revisar (app.js, «PAGO EN PASOS») -->
+        <div class="pasos pw-pasos" id="pgPasos"></div>
         <div class="pgu-hint" id="pgHint"></div>
-        <div id="pgExtras"></div>
-        <div class="paso-tit oculto" id="pgPaso1"><span><span class="paso-n">1</span>¿Cómo paga los PRODUCTOS?</span><b id="pgPaso1M"></b></div>
-        <div id="pgMetodos"></div>
-        <div class="oculto" id="pgMas"><button type="button" class="pgu-mas" onclick="P.verMet=true;pgActualizar()">＋ Otro método o crédito</button></div>
-        <div class="pgu-lineas-tit oculto" id="pgLineasTit">Pagos de esta venta</div>
-        <div id="pgLineas"></div>
-        <div id="pgDias" class="oculto">
-          <div class="fg" style="margin-top:8px;"><label for="selDias">Días de crédito</label>
-          <select id="selDias" onchange="P.dias=Number(this.value)||0"></select></div>
+        <div class="pw-s" id="pgS1"><div id="pgSafBox"></div><div id="pgP1"></div><div id="pgExtras"></div></div>
+        <div class="pw-s oculto" id="pgS2"><div id="pgP2"></div></div>
+        <div class="pw-s oculto" id="pgS3">
+          <div id="pgP3"></div>
+          <div class="pgu-lineas-tit oculto" id="pgLineasTit">Pagos de esta venta</div>
+          <div id="pgLineas"></div>
+          <div id="pgOtrosBox"></div>
+          <div id="pgBal"></div>
+          <div id="pgVuelto" class="oculto pgu-vt">
+            <div class="pgu-vt-cab"><span>💸 Vuelto</span><span class="pgu-vt-sobra" id="pgVtSobra"></span><button type="button" class="btn-m gray" style="padding:4px 10px;font-size:12px;" onclick="pgVueltoCerrar()">Quitar vuelto</button></div>
+            <div id="pgVtMetodos"></div>
+            <div id="pgVtLineas"></div>
+          </div>
         </div>
-        <div id="pgBal"></div>
-        <div id="pgDlv" class="oculto"></div>
-        <div id="pgVuelto" class="oculto pgu-vt">
-          <div class="pgu-vt-cab"><span>💸 Vuelto</span><span class="pgu-vt-sobra" id="pgVtSobra"></span><button type="button" class="btn-m gray" style="padding:4px 10px;font-size:12px;" onclick="pgVueltoCerrar()">Quitar vuelto</button></div>
-          <div id="pgVtMetodos"></div>
-          <div id="pgVtLineas"></div>
+        <div class="pw-s oculto" id="pgSD"><div id="pgDlv" class="oculto"></div><div id="pgDiasDlv"></div><div id="pgTodo"></div></div>
+        <div class="pw-s oculto" id="pgS4">
+          <div id="pgResumen"></div>
+          <div class="fg" style="margin-top:12px;"><label for="pgRef">Referencia (opcional)</label>
+          <input id="pgRef" placeholder="Nro. transferencia..." maxlength="60"></div>
+          <div class="fg" style="margin-top:10px;"><label for="pgObs">Observaciones (se imprime en el ticket)</label>
+          <textarea id="pgObs" rows="2" placeholder="Ej: Entregar en la tarde..." maxlength="200"></textarea></div>
         </div>
-        <div id="pgTodo"></div>
-        <div class="fg" style="margin-top:12px;"><label for="pgRef">Referencia (opcional)</label>
-        <input id="pgRef" placeholder="Nro. transferencia..." maxlength="60"></div>
-        <div class="fg" style="margin-top:10px;"><label for="pgObs">Observaciones (se imprime en el ticket)</label>
-        <textarea id="pgObs" rows="2" placeholder="Ej: Entregar en la tarde..." maxlength="200"></textarea></div>
+        <div class="oculto">
+          <div class="paso-tit" id="pgPaso1"><b id="pgPaso1M"></b></div>
+          <div id="pgMetodos"></div><div id="pgMas"></div>
+          <div id="pgDias"><select id="selDias"></select></div>
+        </div>
       </div>
       <div id="pgOk" class="okpanel oculto">
         <div style="font-size:42px;">✅</div>
@@ -294,8 +301,9 @@
       </div>
     </div>
     <div class="mf" id="pgPie">
-      <button type="button" class="btn-m gray" id="pgCerrar" onclick="cerrarPago()">Cancelar</button>
-      <button type="button" class="btn-m green" id="pgGuardar" onclick="pgConfirmar()">✅ Registrar</button>
+      <button type="button" class="btn-m gray" id="pgCerrar" onclick="pgAtras()">Cancelar</button>
+      <button type="button" class="btn-m green" id="pgSig" onclick="pgSiguiente()">Siguiente →</button>
+      <button type="button" class="btn-m green oculto" id="pgGuardar" onclick="pgRegistrar()">✅ Registrar</button>
     </div>
     <div class="mf oculto" id="pgPieOk">
       <button type="button" class="btn-m gray" onclick="pgTerminar(false)">Sin imprimir</button>
@@ -308,12 +316,12 @@
 <div class="bloqueo oculto" id="bloqueo"><div class="bq-box" id="bloqCuerpo"></div></div>
 <div class="toast" id="toast"></div>
 
-<script src="app.js?v=3.4"></script>
-<script src="api.js?v=3.4"></script>
-<script src="sesion.js?v=3.4"></script>
-<script src="numeros.js?v=3.4"></script>
-<script src="ordenes.js?v=3.4"></script>
-<script src="cajero.js?v=3.4"></script>
-<script src="gaveta.js?v=3.4"></script>
+<script src="app.js?v=3.5"></script>
+<script src="api.js?v=3.5"></script>
+<script src="sesion.js?v=3.5"></script>
+<script src="numeros.js?v=3.5"></script>
+<script src="ordenes.js?v=3.5"></script>
+<script src="cajero.js?v=3.5"></script>
+<script src="gaveta.js?v=3.5"></script>
 </body>
 </html>

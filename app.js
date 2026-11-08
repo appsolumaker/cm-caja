@@ -27,8 +27,10 @@
 //  💸 Sacar efectivo durante el turno; el paso 4 dice claro lo que queda y lo que sale; Escape cierra el pago.
 //  3.4: al ABRIR también tiene que cuadrar: si lo contado no es lo que dejó el turno anterior, se registra lo que pasó
 //  (gasto, faltante o sobrante, con el PIN del Administrador; los centavos solos) y el turno arranca con lo que dejó.
+//  3.5: el PAGO EN PASOS — ① ¿incluye crédito? (no · sí, todo o una parte · Cashea) ② ¿cómo paga? (Bs · $ · mixto, y por
+//  dónde) ③ ¿cuánto? (en efectivo: ¿con cuánto te pagó? y el vuelto) [el delivery] ④ revisar y registrar. Mismas cuentas.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.4 · 8-11-2026";
+const APP_VER = "3.5 · 8-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -1384,7 +1386,8 @@ async function abrirPago(){
   const tot = aparte ? T.prod : T.total;
   P = { modo: m, lineas: [], cred: { on: false, monto: "", editado: false }, vt: { on: false, lineas: [] }, seq: 0, verMet: false, dias: 0, total: tot, desbloq: false,
         dlvMonto: T.dlv, dlv: { on: aparte, monto: T.dlv, tipo: F.dlv.tipo, modo: "", metodo: "" },
-        cs: { on: false, pct: 0, inicial: "", orden: "" }, saf: { disp: 0, on: false, monto: "", ced: "", pide: 0 } };   // Tanda 1: Cashea y saldo a favor
+        cs: { on: false, pct: 0, inicial: "", orden: "" }, saf: { disp: 0, on: false, monto: "", ced: "", pide: 0 },   // Tanda 1: Cashea y saldo a favor
+        paso: "1", tipo: "", credTodo: null, como: "", listo: null, sinVuelto: false, verOtros: false };   // 3.5: el pago en pasos
   if (aparte) {
     $("pgTotal").innerHTML = '<div class="tp-filas"><div class="tp-fila"><span>🛒 Productos</span><span>$' + fmt(T.prod) + ' <small>div</small></span></div>' +
       '<div class="tp-fila"><span>' + (F.dlv.tipo === "envio" ? "📦 " : "🛵 ") + dlvTxt() + '</span><span>$' + fmt(T.dlv) + " <small>(o Bs " + fmt(r2(T.dlv * tBcv())) + ")</small></span></div></div>";
@@ -1407,7 +1410,9 @@ async function abrirPago(){
   $("selDias").innerHTML = pl.map(p => '<option value="' + p.dias + '">' + p.dias + " días</option>").join("") + '<option value="0">Sin plazo</option>';
   P.dias = pl.length ? pl[0].dias : 0; $("selDias").value = String(P.dias);
   pgPintarExtras(); pgPintarMetodos(); pgPintarLineas(); pgPintarVuelto(); pgActualizar();
+  pgWzPintar();   // 3.5
   $("mPago").classList.remove("oculto");
+  setTimeout(() => { const b = document.querySelector("#pgP1 .pw-op"); if (b && P && P.paso === "1") b.focus(); }, 40);
   pgSafCargar();   // Tanda 1: ¿el cliente tiene saldo a favor? (con internet)
 }
 function cerrarPago(){ $("mPago").classList.add("oculto"); P = null; if (window.innerWidth > 820) setTimeout(() => { if (!document.querySelector(".mfondo:not(.oculto)")) $("busca").focus(); }, 30); }   // no le quita el cursor a otro modal
@@ -1505,9 +1510,10 @@ function pguDesc(m){
   return g[1] + " " + (pguNorm(e) === pguNorm(g[2]) || pguNorm(e).indexOf(pguNorm(g[2])) === 0 ? e : g[2] + " · " + e);
 }
 function metodoDe(nombre){ return metodos().find(x => x.metodo === nombre) || null; }
-function pgFilasMetodos(fn, usados, conCredito){
+function pgFilasMetodos(fn, usados, conCredito, soloMon){
   const cols = [];
   [["BS", "bs", "💙 En bolívares"], ["USD", "usd", "💚 En dólares"]].forEach(([mon, cls, tit]) => {
+    if (soloMon && soloMon !== mon) return;   // 3.5: el paso ② muestra solo la moneda elegida
     const ms = metodos().map((m, i) => ({ m, i })).filter(o => o.m.tipo === mon);
     if (!ms.length) return;
     let h = '<div class="pgu-col"><div class="pgu-mon-tit ' + cls + '">' + tit + "</div>";
@@ -1536,16 +1542,25 @@ function pgTasasHTML(l){
 }
 function pgPintarLineas(){
   let h = "";
+  const resto = pgResto();
   P.lineas.forEach(l => {
-    const cls = l.tipo === "BS" ? "bs" : "usd";
-    h += '<div class="pl ' + cls + '"><div class="pl-cab"><span>' + esc(pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo })) + '</span><button type="button" class="pgu-x" onclick="pgQuitar(' + l.id + ')" title="Quitar">✕</button></div>' +
-      '<div class="pl-cuerpo"><span class="mon">' + (l.tipo === "BS" ? "Bs" : "$") + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgM_' + l.id + '" placeholder="' + (l.tipo === "BS" ? "Monto en Bs" : "Monto en $") + '" value="' + esc(l.monto) + '" oninput="pgMonto(' + l.id + ',this.value)">' +
+    const cls = l.tipo === "BS" ? "bs" : "usd", mon = l.tipo === "BS" ? "Bs" : "$";
+    const cab = '<div class="pl-cab"><span>' + esc(pguDesc(metodoDe(l.metodo) || { metodo: l.metodo, tipo: l.tipo })) + '</span><button type="button" class="pgu-x" onclick="pgQuitar(' + l.id + ')" title="Quitar">✕</button></div>';
+    if (l === resto && pgEsEf(l)) {   // 3.5: efectivo por lo que falta: se cobra exacto y se pregunta con cuánto pagó (para el vuelto)
+      h += '<div class="pl ' + cls + ' pl-ef">' + cab + '<div class="pl-cobra">Cobra <b id="pgX_' + l.id + '">' + (l.tipo === "BS" ? "Bs " : "$") + fmt(l.exacto || 0) + "</b></div>" +
+        '<label class="pl-lbl" for="pgR_' + l.id + '">¿Con cuánto te pagó?</label><div class="pl-cuerpo"><span class="mon">' + mon + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgR_' + l.id + '" placeholder="Vacío = exacto" value="' + esc(l.recibido || "") + '" oninput="pgRecibido(' + l.id + ',this.value)">' +
+        pgTasasHTML(l) + '</div><div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
+      return;
+    }
+    const ph = P.tipo === "credito" ? "¿Cuánto paga ahora en " + mon + "?" : (l === resto ? "Monto en " + mon : "¿Cuánto paga en " + mon + "?");
+    h += '<div class="pl ' + cls + '">' + cab +
+      '<div class="pl-cuerpo"><span class="mon">' + mon + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgM_' + l.id + '" placeholder="' + ph + '" value="' + esc(l.monto) + '" oninput="pgMonto(' + l.id + ',this.value)">' +
       pgTasasHTML(l) + '</div><div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
   });
   if (P.cred.on && P.cred.cashea) {   // Tanda 1: lo que financia Cashea (sale del inicial; no se escribe)
     h += '<div class="pl cred cs"><div class="pl-cab"><span>🛍️ Cashea financia · ' + esc(F.cliente.nombre) + '</span></div><div class="pl-cuerpo"><b class="cs-fin">Bs ' + fmt(r2(pgCredValor() * tBcv())) + '</b> <span class="cs-fin-u">$' + fmt(pgCredValor()) + ' a la BCV</span></div><div class="pl-eq" id="pgE_cred"></div></div>';   // 1b: en Bs a la BCV
   } else if (P.cred.on) {
-    h += '<div class="pl cred"><div class="pl-cab"><span>📝 Crédito · ' + esc(F.cliente.nombre) + '</span><button type="button" class="pgu-x" onclick="pgCredito()" title="Quitar el crédito">✕</button></div>' +
+    h += '<div class="pl cred"><div class="pl-cab"><span>📝 Queda a deber · ' + esc(F.cliente.nombre) + '</span></div>' +
       '<div class="pl-cuerpo"><span class="mon">$</span><input type="number" inputmode="decimal" min="0" step="any" id="pgCred" placeholder="Monto a crédito ($ ' + unidadU() + ')" value="' + esc(P.cred.monto) + '" oninput="P.cred.monto=this.value;P.cred.editado=true;pgActualizar()">' +
       '<button type="button" class="btn-m gray" onclick="P.cred.editado=false;pgActualizar();$(\'pgCred\').value=P.cred.monto;">↺ Lo que falta</button></div><div class="pl-eq" id="pgE_cred"></div></div>';
   }
@@ -1586,7 +1601,9 @@ function pgActualizar(){
   let h = "";
   if (st.hay) {
     if (st.pend > TOL) h = '<div class="bal falta">⚠️ Falta ' + txtU(st.pend) + bs(st.pendX) + "</div>";
-    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran ' + txtU(-st.pend) + bs(-st.pendX) + '</div><div style="text-align:center;margin-top:8px;"><button type="button" class="pgu-mas" onclick="pgVueltoAbrir()">💸 Dar vuelto</button></div>';
+    else if (st.pend < -TOL && !P.vt.on) h = '<div class="bal sobra">💰 Sobran ' + txtU(-st.pend) + bs(-st.pendX) + "</div>" + (P.sinVuelto   // 3.5: el vuelto se pregunta ahí mismo
+        ? '<div class="pw-sinvt">No se da vuelto: queda como diferencial a favor. <button type="button" class="lnk" onclick="P.sinVuelto=false;pgActualizar()">Dar vuelto</button></div>'
+        : '<div class="pw-vtq">💸 ¿En qué le das el vuelto?</div>' + pgFilasMetodos("pgVtDirecto", [], false) + '<div style="text-align:center;margin-top:6px;"><button type="button" class="lnk" onclick="P.sinVuelto=true;pgActualizar()">No le doy vuelto</button></div>');
     else if (P.vt.on && st.pend < -TOL) {
       if (Math.abs(st.queda) <= TOL) h = '<div class="bal ok">✅ Pago exacto con vuelto</div>';
       else if (st.queda > 0) h = '<div class="bal sobra">Faltan ' + txtU(st.queda) + " por devolver" + bs(st.queda) + "</div>";
@@ -1643,11 +1660,12 @@ function pgAgregar(i){
   if (P.lineas.length >= 3) { aviso({ icono: "💳", titulo: "Máximo 3 métodos", html: "Una venta se puede cobrar con hasta 3 métodos de pago. Quita uno con ✕ para usar otro." }); return; }
   const l = { id: ++P.seq, metodo: m.metodo, tipo: m.tipo, monto: "", tasaModo: P.modo === "off" ? (tDivOff() > 0 ? "div" : "bcv") : "div", tasaOtra: "" };
   P.lineas.push(l);
-  pgPintarMetodos(); pgPintarLineas(); pgAutocompletar(l); pgActualizar();
+  if (P.tipo === "credito") l.monto = ""; else pgWzSync();   // 3.5: con crédito se escribe lo que paga ahora; si no, va lo que falta
+  pgPintarMetodos(); pgPintarLineas(); pgActualizar();
   setTimeout(() => { const inp = $("pgM_" + l.id); if (inp) { inp.focus(); inp.select(); } }, 30);
 }
-function pgQuitar(id){ P.lineas = P.lineas.filter(l => l.id !== id); pgPintarMetodos(); pgPintarLineas(); pgActualizar(); }
-function pgMonto(id, v){ const l = P.lineas.find(x => x.id === id); if (l) { l.monto = v; pgActualizar(); } }
+function pgQuitar(id){ P.lineas = P.lineas.filter(l => l.id !== id); P.listo = null; pgWzSync(); pgPintarMetodos(); pgPintarLineas(); pgVtAjustar(); pgActualizar(); }
+function pgMonto(id, v){ const l = P.lineas.find(x => x.id === id); if (l) { l.monto = v; if (l !== pgResto()) pgWzSync(); pgVtAjustar(); pgActualizar(); } }
 async function pgElegirTasa(id, modo){
   const l = P.lineas.find(x => x.id === id); if (!l) return;
   if (modo === "otra" && S.datos.pideClave && S.datos.pideClave.tasa && !P.desbloq) {
@@ -1657,14 +1675,14 @@ async function pgElegirTasa(id, modo){
   l.tasaModo = modo;
   pgPintarLineas();
   if (modo === "otra") setTimeout(() => { const t = $("pgT_" + id); if (t) t.focus(); }, 30);
-  else pgAutocompletar(l);
-  pgActualizar();
+  else pgWzSync();
+  pgVtAjustar(); pgActualizar();
 }
 function pgTasaOtra(id, val){
   const l = P.lineas.find(x => x.id === id); if (!l) return;
   l.tasaOtra = val;
-  if (Number(val) > 0) pgAutocompletar(l);
-  pgActualizar();
+  if (Number(val) > 0) pgWzSync();
+  pgVtAjustar(); pgActualizar();
 }
 // El crédito necesita un cliente con cédula: si la venta está en Genérico, se elige (o se crea) antes
 async function pgClienteParaCredito(){
@@ -1737,6 +1755,258 @@ function pgVtAgregar(i){
 }
 function pgVtQuitar(k){ P.vt.lineas.splice(k, 1); pgPintarVuelto(); pgActualizar(); }
 
+// ══ PAGO EN PASOS (3.5, 8-11-2026) — «que hasta un niño lo entienda» ══
+//  ① ¿La venta incluye crédito?  No, paga todo ahora · Sí, queda a deber (todo, o una parte ahora) · Con Cashea (el inicial)
+//  ② ¿Cómo paga?  💙 Bs · 💚 $ · 🔀 Pago mixto (Bs y $), y por dónde (los métodos de esa moneda)
+//  ③ ¿Cuánto?  Lo que falta va solo en el último método. En efectivo: «¿Con cuánto te pagó?» y el vuelto, ahí mismo.
+//  [Delivery]  Venta en Dólares con delivery: cómo paga el delivery (como antes, paso aparte)
+//  ④ Revisar y registrar.  Las cuentas, tasas, revisiones y lo que se guarda son los mismos de siempre (pgConfirmar).
+function pgEsEf(l){ return !!l && esEfectivo({ metodo: l.metodo, tipo: l.tipo }); }
+// El método que se lleva «lo que falta» (el último). Con crédito no hay: lo que no se paga queda a deber.
+function pgResto(){ return (!P || P.tipo === "credito") ? null : (P.lineas[P.lineas.length - 1] || null); }
+function pgWzSync(){
+  const r = pgResto(); if (!r) return;
+  pgAutocompletar(r);
+  r.exacto = Number(r.monto) || 0;
+  if (pgEsEf(r) && Number(r.recibido) > 0) r.monto = String(r2(Number(r.recibido)));
+  const x = $("pgX_" + r.id); if (x) x.textContent = (r.tipo === "BS" ? "Bs " : "$") + fmt(r.exacto);
+}
+function pgRecibido(id, v){
+  const l = P && P.lineas.find(x => x.id === id); if (!l) return;
+  l.recibido = v; P.listo = null;
+  pgWzSync(); pgVtAjustar(); pgActualizar();
+}
+// Si cambia lo que sobra y el vuelto es de un solo método, el vuelto se ajusta solo
+function pgVtAjustar(){
+  if (!P || !P.vt.on || P.vt.lineas.length !== 1) return;
+  const st = pgEstado(), sobra = -st.pendX;
+  if (!(sobra > TOL)) { pgVueltoCerrar(); return; }
+  const v = P.vt.lineas[0];
+  const x = v.tipo === "BS" ? r2(sobra * bsPorU()) : (P.modo === "div" ? r2(sobra) : r2(sobra * tBcv() / pgTasaVueltoUSD()));
+  v.monto = x > 0.004 ? x.toFixed(2) : "";
+  const inp = $("pgVM_0"); if (inp && document.activeElement !== inp) inp.value = v.monto;
+}
+function pgVtDirecto(i){ if (!P) return; P.vt = { on: true, lineas: [] }; P.sinVuelto = false; pgVtAgregar(i); }
+// Lo que se paga ahora (sin lo que paga el saldo a favor ni lo que financia Cashea), en la unidad de la venta
+function pgPorPagarAhora(){ return P ? r2(P.total - pgSafPant() - (P.cred.on && P.cred.cashea ? pgCredValor() : 0)) : 0; }
+function pgUsdDe(x){ return P.modo === "div" ? r2(x) : r2(x * tBcv() / ((P.modo === "off" ? (tDivOff() || tBcv()) : tDiv()) || tBcv())); }
+function pgNadaAhora(){ return !!P && ((P.tipo === "credito" && P.credTodo === true) || (P.tipo !== "credito" && !!P.tipo && pgPorPagarAhora() <= TOL)); }
+function pgWzPasos(){
+  const salta = pgNadaAhora();
+  const l = [["1", "¿Crédito?"], ["2", "Cómo paga"], ["3", "Cuánto"]];
+  if (P.dlv.on) l.push(["D", P.dlv.tipo === "envio" ? "Envío" : "Delivery"]);
+  l.push(["4", "Revisar"]);
+  return l.map(x => ({ k: x[0], lbl: x[1], salta: salta && (x[0] === "2" || x[0] === "3") }));
+}
+function pgIr(k){
+  if (!P) return;
+  P.paso = k; if (k !== "4") P.listo = null; P.verOtros = false;
+  if (k === "3") { pgWzSync(); pgPintarLineas(); pgPintarVuelto(); pgActualizar(); }
+  pgWzPintar();
+  setTimeout(() => {
+    if (!P || P.paso !== k) return;
+    let f = null;
+    if (k === "3") f = [...document.querySelectorAll("#pgLineas input")].find(i => !i.value) || document.querySelector("#pgLineas input");
+    else if (k === "4") f = $("pgGuardar");
+    else if (k === "1" || k === "2") f = document.querySelector("#pgS" + k + " .pw-op.on") || document.querySelector("#pgS" + k + " .pw-op:not([disabled])");
+    else f = $("pgSig");
+    if (f && (window.innerWidth > 820 || f.tagName === "BUTTON")) f.focus();
+  }, 40);
+}
+function pgWzCard(on, fn, ico, tit, sub, dis){
+  return '<button type="button" class="pw-op' + (on ? " on" : "") + '"' + (dis ? " disabled" : "") + ' onclick="' + fn + '"><span class="pw-ico">' + ico + "</span><span class=\"pw-t\"><b>" + tit + "</b>" + (sub ? "<small>" + sub + "</small>" : "") + "</span></button>";
+}
+function pgDiasHTML(id){
+  const pl = (S.datos.plazosCredito || []).filter(p => p.activo && p.dias > 0);
+  if (!pl.length) { P.dias = 0; return ""; }
+  return '<div class="pw-dias"><label for="' + id + '">📅 Días de crédito</label><select class="inp" id="' + id + '" onchange="P.dias=Number(this.value)||0;P.listo=null">' +
+    pl.map(p => '<option value="' + p.dias + '"' + (Number(P.dias) === p.dias ? " selected" : "") + ">" + p.dias + " días</option>").join("") + '<option value="0"' + (Number(P.dias) === 0 ? " selected" : "") + ">Sin plazo</option></select></div>";
+}
+function pgWzPintar(){
+  if (!P) return;
+  const k = P.paso, pasos = pgWzPasos().filter(x => !x.salta), idx = pasos.findIndex(x => x.k === k);
+  $("pgPasos").innerHTML = pasos.map((x, i) => '<div class="paso ' + (i === idx ? "activo" : i < idx ? "hecho" : "") + '"' + (i < idx ? ' onclick="pgIr(\'' + x.k + '\')"' : "") + "><b>" + (i < idx ? "✓" : i + 1) + '</b><span class="lbl">' + x.lbl + "</span></div>").join("");
+  ["1", "2", "3", "D", "4"].forEach(s => $("pgS" + s).classList.toggle("oculto", s !== k));
+  $("pgHint").classList.toggle("oculto", !(k === "2" || k === "3"));
+  // ① ¿La venta incluye crédito?
+  if (k === "1") {
+    const div = P.modo === "div";
+    let h = '<div class="pw-preg">¿La venta incluye crédito?</div><div class="pw-ops">' +
+      pgWzCard(P.tipo === "contado", "pgWzTipo('contado')", "✅", "No, paga todo ahora", "") +
+      (metodoCredito() ? pgWzCard(P.tipo === "credito", "pgWzTipo('credito')", "📝", "Sí, queda a deber", "Todo o una parte, a nombre del cliente") : "") +
+      (pgCsPuede() && !P.dlv.on ? pgWzCard(P.tipo === "cashea", "pgWzTipo('cashea')", '<span class="cs-marca">Cashea</span>', "Con Cashea", div ? "Va a precio BCV: quita 💵 Venta en Dólares para usarlo" : "Paga un inicial y Cashea el resto", div) : "") + "</div>";
+    if (P.tipo === "credito") {
+      const resto = r2(P.total - pgSafPant());
+      h += pgDiasHTML("pgDiasSel") + '<div class="pw-preg pw-sub">¿Paga algo ahora?</div><div class="pw-ops dos">' +
+        pgWzCard(P.credTodo === true, "pgWzCredTodo(true)", "📝", "No, todo a crédito", "Queda a deber " + txtU(resto)) +
+        pgWzCard(P.credTodo === false, "pgWzCredTodo(false)", "💵", "Sí, una parte ahora", "Lo demás queda a deber") + "</div>";
+    }
+    $("pgP1").innerHTML = h;
+  }
+  // ② ¿Cómo paga?
+  if (k === "2") {
+    const ahora = pgPorPagarAhora(), parte = P.tipo === "credito", hayBs = metodos().some(m => m.tipo === "BS"), hayUsd = metodos().some(m => m.tipo === "USD");
+    let h = '<div class="pw-preg">' + (P.tipo === "cashea" ? "¿Cómo paga el inicial?" : parte ? "¿Cómo paga la parte de contado?" : "¿Cómo paga?") + "</div>" +
+      (!P.cs.on && P.saf.disp > 0.004 && !P.saf.on ? '<div class="pw-aviso">🎁 ' + esc(F.cliente.nombre) + " tiene <b>" + txtU(pgSafDispPant()) + '</b> a favor. Para usarlo, toca <button type="button" class="lnk" onclick="pgIr(\'1\')">← paso ①</button>.</div>' : "") +
+      '<div class="pw-ops tres">' +
+      (hayBs ? pgWzCard(P.como === "BS", "pgWzComo('BS')", "💙", "Bs", parte ? "Bolívares" : "Bs " + fmt(r2(ahora * bsPorU()))) : "") +
+      (hayUsd ? pgWzCard(P.como === "USD", "pgWzComo('USD')", "💚", "$", parte ? "Dólares" : "$" + fmt(pgUsdDe(ahora))) : "") +
+      (hayBs && hayUsd ? pgWzCard(P.como === "MIX", "pgWzComo('MIX')", "🔀", "Pago mixto", "Una parte en Bs y otra en $") : "") + "</div>";
+    if (P.como) h += '<div class="pw-preg pw-sub">' + (P.como === "MIX" ? "Toca un método en <b>Bs</b> y uno en <b>$</b>" : "¿Por dónde paga?") + "</div>" +
+      pgFilasMetodos("pgWzMetodo", P.lineas.map(l => l.metodo), false, P.como === "MIX" ? null : P.como);
+    $("pgP2").innerHTML = h;
+  }
+  // ③ ¿Cuánto?
+  if (k === "3") {
+    const mix = P.lineas.some(l => l.tipo === "BS") && P.lineas.some(l => l.tipo === "USD");
+    $("pgP3").innerHTML = '<div class="pw-preg">' + (P.tipo === "credito" ? "¿Cuánto paga ahora?" : mix ? "¿Cuánto paga en " + (P.lineas[0].tipo === "USD" ? "$" : "Bs") + "? Lo demás se calcula solo." : "¿Cuánto paga?") + "</div>" +
+      (P.tipo === "credito" ? '<div class="cie-ayuda" style="text-align:center;">Lo que no pague ahora queda a deber.</div>' : "");
+    $("pgOtrosBox").innerHTML = P.lineas.length >= 3 ? "" : (P.verOtros
+      ? '<div class="pw-preg pw-sub">Toca el otro método</div>' + pgFilasMetodos("pgWzOtro", P.lineas.map(l => l.metodo), false) + '<div style="text-align:center;"><button type="button" class="lnk" onclick="P.verOtros=false;pgWzPintar()">Cancelar</button></div>'
+      : '<div style="text-align:center;margin:6px 0;"><button type="button" class="pgu-mas" onclick="P.verOtros=true;pgWzPintar()">＋ Paga con otro método también</button></div>');
+  }
+  // Delivery: los días si queda a deber y no los eligió en el paso ①
+  if (k === "D") $("pgDiasDlv").innerHTML = P.dlv.modo === "cred" && P.tipo !== "credito" ? pgDiasHTML("pgDiasSelD") : "";
+  // ④ Revisar
+  if (k === "4") $("pgResumen").innerHTML = pgResumenHTML();
+  // Pie: Cancelar/Atrás · Siguiente o Registrar
+  $("pgCerrar").textContent = idx <= 0 ? "Cancelar" : "← Atrás";
+  $("pgSig").classList.toggle("oculto", k === "4");
+  $("pgGuardar").classList.toggle("oculto", k !== "4");
+}
+async function pgWzTipo(t){
+  if (!P) return;
+  P.listo = null;
+  if (t !== "cashea" && P.cs.on) { P.cs = { on: false, pct: 0, inicial: "", orden: "" }; pgCsSync(); pgPintarExtras(); }
+  const nuevo = () => { P.lineas = []; P.vt = { on: false, lineas: [] }; P.como = ""; P.sinVuelto = false; P.credTodo = null; };
+  if (t === "contado") {
+    P.cred = { on: false, monto: "", editado: false }; P.tipo = "contado"; nuevo();
+    pgActualizar(); pgWzPintar(); pgSiguiente(); return;
+  }
+  if (t === "credito") {
+    if (!await pgClienteParaCredito()) { if (P) pgWzPintar(); return; }
+    if (!P) return;
+    P.cred = { on: true, monto: "", editado: false }; P.tipo = "credito"; nuevo();
+    pgActualizar(); pgWzPintar(); return;
+  }
+  if (t === "cashea") {
+    if (P.modo === "div") return;
+    await pgCashea(true);
+    if (!P) return;
+    if (P.cs.on) { P.tipo = "cashea"; nuevo(); }
+    pgWzPintar();
+  }
+}
+function pgWzCredTodo(todo){
+  if (!P) return;
+  P.credTodo = todo; P.listo = null; P.lineas = []; P.vt = { on: false, lineas: [] }; P.como = "";
+  P.cred = { on: true, monto: "", editado: false };
+  pgActualizar(); pgWzPintar(); pgSiguiente();
+}
+function pgWzComo(c){
+  if (!P) return;
+  P.como = c; P.lineas = []; P.vt = { on: false, lineas: [] }; P.sinVuelto = false; P.listo = null;
+  pgActualizar(); pgWzPintar();
+  // Un solo método en esa moneda: se elige solo
+  const con = mon => metodos().map((m, i) => ({ m, i })).filter(o => o.m.tipo === mon && o.m.conCuenta);
+  if (c !== "MIX") { const l = con(c); if (l.length === 1) pgWzMetodo(l[0].i); }
+  else { const b = con("BS"), u = con("USD"); if (b.length === 1 && u.length === 1) { pgWzMetodo(u[0].i); pgWzMetodo(b[0].i); } }
+}
+function pgWzMetodo(i){
+  const m = metodos()[i]; if (!P || !m || !m.conCuenta) return;
+  P.vt = { on: false, lineas: [] }; P.sinVuelto = false; P.listo = null;
+  if (P.como === "MIX") {
+    P.lineas = P.lineas.filter(l => l.tipo !== m.tipo);
+    pgAgregar(i);
+    const us = P.lineas.find(l => l.tipo === "USD"), bs = P.lineas.find(l => l.tipo === "BS");
+    if (!(us && bs)) { pgWzPintar(); return; }
+    P.lineas = [us, bs];   // primero lo que da en $; los Bs se calculan solos
+    us.monto = ""; us.recibido = ""; bs.recibido = "";
+    pgIr("3"); return;
+  }
+  P.lineas = [];
+  pgAgregar(i);
+  pgIr("3");
+}
+function pgWzOtro(i){
+  if (!P) return;
+  const r = pgResto();
+  if (r && P.lineas.length < 3 && !P.lineas.some(l => l.metodo === (metodos()[i] || {}).metodo)) { r.monto = ""; r.recibido = ""; }   // el que tenía todo pasa a escribirse
+  pgAgregar(i);
+  P.verOtros = false; P.listo = null;
+  pgWzSync(); pgPintarLineas(); pgVtAjustar(); pgActualizar(); pgWzPintar();
+}
+async function pgSiguiente(){
+  if (!P) return;
+  const k = P.paso;
+  if (k === "1") {
+    if (!P.tipo) { aviso({ icono: "👆", titulo: "Elige una opción", html: "¿La venta incluye crédito? Toca <b>No, paga todo ahora</b>" + (metodoCredito() ? ", <b>Sí, queda a deber</b>" : "") + (pgCsPuede() && !P.dlv.on ? " o <b>Con Cashea</b>" : "") + "." }); return; }
+    if (P.tipo === "credito" && P.credTodo === null) { aviso({ icono: "📝", titulo: "¿Paga algo ahora?", html: "Toca <b>No, todo a crédito</b> o <b>Sí, una parte ahora</b>." }); return; }
+    if (P.tipo === "cashea") {
+      const ini = pgCsIni();
+      if (!(ini > 0)) { aviso({ icono: "🛍️", titulo: "Falta el inicial", html: "Toca el porcentaje (" + CASHEA_PCTS.join(", ") + " %) o escribe el inicial que indica la app de Cashea." }); return; }
+      if (ini >= P.total - 0.009) { aviso({ icono: "🛍️", titulo: "Revisa el inicial", html: "Con un inicial de " + txtU(ini) + " no queda nada para que Cashea financie (total " + txtU(P.total) + "). Si el cliente paga todo, toca <b>No, paga todo ahora</b>." }); return; }
+    }
+    const sp = pgSafProblema(); if (sp) { aviso({ icono: "🎁", titulo: "Revisa el saldo a favor", html: esc(sp) }); return; }
+    if (pgNadaAhora()) { P.lineas = []; P.vt = { on: false, lineas: [] }; pgActualizar(); return pgDespuesDe3(); }
+    pgIr("2"); return;
+  }
+  if (k === "2") {
+    if (!P.como) { aviso({ icono: "👆", titulo: "¿Cómo paga?", html: "Toca <b>Bs</b>, <b>$</b> o <b>Pago mixto</b>." }); return; }
+    if (!P.lineas.length) { aviso({ icono: "👆", titulo: "¿Por dónde paga?", html: "Toca el método con que paga el cliente." }); return; }
+    if (P.como === "MIX" && !(P.lineas.some(l => l.tipo === "BS") && P.lineas.some(l => l.tipo === "USD"))) { aviso({ icono: "🔀", titulo: "Falta un método", html: "En el pago mixto toca un método en <b>Bs</b> y uno en <b>$</b>." }); return; }
+    pgIr("3"); return;
+  }
+  if (k === "3") { if (!P.lineas.length && P.tipo !== "credito") { aviso({ icono: "👆", titulo: "No hay forma de pago", html: "Vuelve al paso <b>②</b> y toca cómo paga el cliente." }); return; } return pgDespuesDe3(); }
+  if (k === "D") return pgA4();
+}
+function pgDespuesDe3(){ if (P.dlv.on) { pgIr("D"); return; } return pgA4(); }
+async function pgA4(){ const b = $("pgSig"); btnOcupado(b, "Revisando…"); let ok = false; try { ok = await pgConfirmar(true); } finally { btnLibre(b); } if (ok && P) pgIr("4"); }
+function pgAtras(){
+  if (!P) { cerrarPago(); return; }
+  if ($("pgCerrar").disabled) return;
+  const l = pgWzPasos().filter(x => !x.salta), i = l.findIndex(x => x.k === P.paso);
+  if (i <= 0) { cerrarPago(); return; }
+  pgIr(l[i - 1].k);
+}
+async function pgRegistrar(){
+  if (!P) return;
+  if (!P.listo) { if (!await pgConfirmar(true)) return; }
+  await pgGuardar(P.listo.pagos, P.listo.vuelto);
+}
+// ④ Lo que se va a registrar, en grande
+function pgResumenHTML(){
+  const L = P.listo || { pagos: [], vuelto: [] }, st = pgEstado();
+  const fila = (a, b, cls) => "<tr" + (cls ? ' class="' + cls + '"' : "") + "><td>" + a + '</td><td class="r">' + b + "</td></tr>";
+  const desc = p => esc(pguDesc(metodoDe(p.metodo) || { metodo: p.metodo, tipo: p.tipo }));
+  let h = '<div class="pw-preg">Revisa y toca ✅ Registrar</div><table class="cie-tabla pw-res">' +
+    fila("👤 Cliente", "<b>" + esc(F.cliente.nombre || "Genérico") + "</b>" + (F.cliente.cedula ? " · " + esc(F.cliente.cedula) : "")) +
+    fila("🧾 Total", "<b>" + txtU(r2(P.total + (P.dlv.on ? P.dlvMonto : 0))) + "</b> · Bs " + fmt(P.dlv.on ? r2(P.total * bsPorU() + P.dlvMonto * tBcv()) : r2(P.total * bsPorU())));
+  L.pagos.forEach(p => {
+    if (p.tipo === "CRED") h += p.etiqueta === "Cashea" ? fila("🛍️ Cashea financia", "Bs " + fmt(r2(p.monto * tBcv()))) : fila("📝 Queda a deber" + (Number(P.dias) > 0 ? " (" + P.dias + " días)" : ""), "<b>" + txtU(p.monto) + "</b>", "pw-cred");
+    else if (p.tipo === "SAF") h += fila("🎁 Saldo a favor", txtU(p.monto));
+    else {
+      const l = P.lineas.find(x => x.metodo === p.metodo), rec = l && pgEsEf(l) && Number(l.recibido) > 0;
+      h += fila(desc(p) + (rec ? ' <span class="cie-sis">(pagó con)</span>' : ""), "<b>" + (p.tipo === "BS" ? "Bs " : "$") + fmt(p.monto) + "</b>");
+    }
+  });
+  L.vuelto.forEach(v => { h += fila("💸 Vuelto · " + desc(v), "<b>− " + (v.tipo === "BS" ? "Bs " : "$") + fmt(v.monto) + "</b>", "pw-vt"); });
+  h += "</table>";
+  if (Math.abs(st.dif) > 0.01) h += '<div class="dif ' + (st.dif > 0 ? "afavor" : "encontra") + '">💹 Diferencial ' + (st.dif > 0 ? "a favor" : "en contra") + ": <b>" + txtL(Math.abs(st.dif)) + "</b>." + pgMotivoDif() + "</div>";
+  return h;
+}
+// Teclado: Enter sigue (o registra); en una lista de botones, Enter toca el botón
+document.addEventListener("keydown", e => {
+  if (e.key !== "Enter" || !P || e.ctrlKey || e.altKey || e.metaKey) return;
+  const mp = $("mPago"); if (!mp || mp.classList.contains("oculto") || $("pgPie").classList.contains("oculto")) return;
+  if (document.querySelector(".mfondo:not(.oculto):not(#mPago)")) return;
+  const t = e.target, tag = (t && t.tagName) || "";
+  if (tag === "TEXTAREA" || tag === "BUTTON" || tag === "SELECT") return;
+  if ($("pgCerrar").disabled) return;
+  e.preventDefault();
+  if (P.paso === "4") pgRegistrar(); else pgSiguiente();
+});
+
 // ══ CASHEA (Tanda 1, 3.1) — como Ventas ══
 //  El cliente paga el INICIAL con los métodos de siempre. Lo que financia Cashea va como el crédito del pago (pago CRED con
 //  etiqueta «Cashea», el ticket lo dice así) y el sistema lo pone a nombre del cliente especial Cashea (Cashea.gs).
@@ -1780,8 +2050,7 @@ function pgCsPct(p){
 function pgCsMonto(v){ if (!P || !P.cs.on) return; P.cs.pct = 0; P.cs.inicial = v; pgCsCambio(); }
 // Cambió el inicial: cambia lo financiado y, si hay UN solo método, se ajusta a lo que falta (como Ventas)
 function pgCsCambio(){
-  pgCsSync(); pgPintarMetodos(); pgPintarLineas();
-  if (P.lineas.length === 1) pgAutocompletar(P.lineas[0]);
+  pgCsSync(); pgWzSync(); pgPintarMetodos(); pgPintarLineas();
   pgActualizar();
 }
 
@@ -1821,7 +2090,7 @@ function pgSaf(on){
 }
 function pgSafMonto(v){ if (!P) return; P.saf.monto = v; pgSafCambio(); }
 function pgSafTodo(){ if (!P) return; P.saf.monto = r2(Math.min(pgSafDispPant(), P.total)).toFixed(2); const i = $("pgSafM"); if (i) i.value = P.saf.monto; pgSafCambio(); }
-function pgSafCambio(){ if (P.lineas.length === 1) pgAutocompletar(P.lineas[0]); pgActualizar(); }
+function pgSafCambio(){ P.listo = null; pgWzSync(); pgPintarLineas(); pgActualizar(); }
 function pgSafProblema(){
   if (!P || !P.saf.on) return "";
   const m = pgSafPant();
@@ -1834,31 +2103,29 @@ function pgSafProblema(){
 // Cashea y saldo a favor, arriba de los métodos de pago (se pintan al abrir y al marcar; los textos, en cada cambio)
 function pgPintarExtras(){
   const box = $("pgExtras"); if (!box || !P) return;
-  let h = "";
-  if (pgCsPuede() && !P.dlv.on) {
-    const div = P.modo === "div";
-    h += '<div class="cs-box' + (P.cs.on ? " on" : "") + '"><label class="cs-check"><input type="checkbox" id="pgCsChk"' + (P.cs.on ? " checked" : "") + (div ? " disabled" : "") +
-      ' onchange="pgCashea(this.checked)"><span class="cs-marca">Cashea</span><span class="cs-txt">Venta con Cashea</span></label>';
-    if (div) h += '<div class="cs-nota">Cashea va a precio BCV: quita <b>💵 Venta en Dólares</b> en la factura para usarlo.</div>';
-    if (P.cs.on) {
+  let h = "", hs = "";
+  if (pgCsPuede() && !P.dlv.on && P.cs.on) {   // 3.5: se elige en el paso ① (la tarjeta «Con Cashea»)
+    h += '<div class="cs-box on"><div class="cs-check"><span class="cs-marca">Cashea</span><span class="cs-txt">Venta con Cashea</span></div>';
+    {
       h += '<div class="cs-preg"><span class="paso-n">1</span><span>¿Cuánto paga de inicial? <small>Lo dice la app de Cashea.</small></span></div>' +
         '<div class="cs-pcts">' + CASHEA_PCTS.map(p => '<button type="button" class="cs-pct' + (P.cs.pct === p ? " on" : "") + '" data-p="' + p + '" onclick="pgCsPct(' + p + ')">' + p + " %</button>").join("") +
         '<input type="number" inputmode="decimal" min="0" step="any" class="cs-inp" id="pgCsIni" placeholder="Otro monto ($ ' + unidadU() + ')" value="' + esc(P.cs.inicial) + '" oninput="pgCsMonto(this.value)"></div>' +
         '<input type="text" class="cs-inp cs-orden" id="pgCsOrden" maxlength="40" placeholder="N° de orden Cashea (opcional)" value="' + esc(P.cs.orden) + '" oninput="P.cs.orden=this.value" autocomplete="off">' +
-        '<div class="cs-res" id="pgCsRes"></div>' +
-        '<div class="cs-preg"><span class="paso-n">2</span><span id="pgCsPaga">¿Con qué paga el cliente el inicial?</span></div>';
+        '<div class="cs-res" id="pgCsRes"></div>';
     }
     h += "</div>";
   }
   if (!P.cs.on && P.saf.disp > 0.004) {
-    h += '<div class="saf-box' + (P.saf.on ? " on" : "") + '"><label class="cs-check"><input type="checkbox" id="pgSafChk"' + (P.saf.on ? " checked" : "") + ' onchange="pgSaf(this.checked)"><span class="cs-txt">🎁 Usar saldo a favor</span></label>' +
+    hs += '<div class="saf-box' + (P.saf.on ? " on" : "") + '"><label class="cs-check"><input type="checkbox" id="pgSafChk"' + (P.saf.on ? " checked" : "") + ' onchange="pgSaf(this.checked)"><span class="cs-txt">🎁 Usar saldo a favor</span></label>' +
       '<span class="saf-disp">' + esc(F.cliente.nombre) + " tiene <b>" + txtU(pgSafDispPant()) + "</b> a favor" + (pgSafFactor() !== 1 ? " ($" + fmt(P.saf.disp) + " div)" : "") + "</span>";
-    if (P.saf.on) h += '<div class="saf-fila"><span class="mon">$</span><input type="number" inputmode="decimal" min="0" step="any" class="cs-inp" id="pgSafM" placeholder="Cuánto se usa ($ ' + unidadU() + ')" value="' + esc(P.saf.monto) + '" oninput="pgSafMonto(this.value)">' +
+    if (P.saf.on) hs += '<div class="saf-fila"><span class="mon">$</span><input type="number" inputmode="decimal" min="0" step="any" class="cs-inp" id="pgSafM" placeholder="Cuánto se usa ($ ' + unidadU() + ')" value="' + esc(P.saf.monto) + '" oninput="pgSafMonto(this.value)">' +
       '<button type="button" class="btn-m gray" onclick="pgSafTodo()">Todo lo que se pueda</button></div><div class="cs-res" id="pgSafRes"></div>';
-    h += "</div>";
+    hs += "</div>";
   }
   box.innerHTML = h;
+  const sb = $("pgSafBox"); if (sb) sb.innerHTML = hs;
   pgExtrasTxt();
+  if (P.paso === "2") pgWzPintar();   // el aviso del saldo a favor en el paso ②
 }
 function pgExtrasTxt(){
   if (!P) return;
@@ -1881,7 +2148,8 @@ function pgExtrasTxt(){
   }
 }
 
-async function pgConfirmar(){
+// revisar (3.5): hace todas las revisiones (y las preguntas) sin guardar; deja listo lo que se registra en P.listo
+async function pgConfirmar(revisar){
   const m = P.modo;
   if (P.cs.on) {   // Tanda 1: Cashea (las mismas revisiones de Ventas)
     const ini = pgCsIni(), N = P.total;
@@ -1941,11 +2209,11 @@ async function pgConfirmar(){
   const st = pgEstado();
   const bs = v => " (Bs " + fmt(r2(v * bsPorU())) + ")";
   if (st.pend > TOL) {
-    if (!await confirmar({ icono: "⚠️", titulo: "Falta dinero", colorOk: "naranja", ok: "Sí, guardar", html: "El pago cubre " + txtU(st.cubT) + " de " + txtU(P.total) + ": <b>falta " + txtU(st.pend) + "</b>" + bs(st.pendX) + ".<br><br>Si la guardas así, esa diferencia queda como diferencial cambiario en contra. Si queda a deber, toca <b>A crédito</b>.<br><br>¿Guardar igualmente?" })) return;
+    if (!await confirmar({ icono: "⚠️", titulo: "Falta dinero", colorOk: "naranja", ok: "Sí, guardar", html: "El pago cubre " + txtU(st.cubT) + " de " + txtU(P.total) + ": <b>falta " + txtU(st.pend) + "</b>" + bs(st.pendX) + ".<br><br>Si la guardas así, esa diferencia queda como diferencial cambiario en contra. Si queda a deber, vuelve al paso <b>①</b> y elige <b>Sí, queda a deber</b>.<br><br>¿Seguir igualmente?" })) return;
   } else if (st.pend < -TOL && !P.vt.on) {
     const r = await modal({ icono: "💰", titulo: "Sobra dinero", html: '<div class="m-txt">El pago cubre ' + txtU(st.cubT) + ": <b>sobran " + txtU(-st.pend) + "</b>" + bs(-st.pendX) + ".<br><br>¿Le das vuelto al cliente, o queda como diferencial cambiario a favor (" + txtL(st.dif) + ")?</div>",
       botones: [{ txt: "💸 Dar vuelto", v: "vuelto" }, { txt: "Queda como diferencial a favor", v: "ok", cls: "green" }] });
-    if (r === "vuelto") { pgVueltoAbrir(); return; }
+    if (r === "vuelto") { P.sinVuelto = false; if (P.paso !== "3") pgIr("3"); else pgActualizar(); return; }
     if (r !== "ok") return;
   } else if (P.vt.on && st.queda < -TOL) {
     if (!await confirmar({ icono: "⚠️", titulo: "El vuelto pasa de lo que sobra", colorOk: "naranja", ok: "Sí, guardar", html: "Sobraban " + txtU(-st.pend) + " y el vuelto devuelve " + txtU(st.vtCub) + ": <b>" + txtU(-st.queda) + " de más</b>.<br><br>Esa diferencia queda como diferencial cambiario en contra. ¿Guardar igualmente?" })) return;
@@ -1954,6 +2222,7 @@ async function pgConfirmar(){
   } else if (st.dif < -0.01) {
     if (!await confirmar({ icono: "⚠️", titulo: "Diferencial en contra", colorOk: "naranja", ok: "Sí, guardar", html: "Lo recibido vale " + txtL(r2(st.vale + st.credVale - st.vtVale)) + " y la venta vale " + txtL(st.valorVenta) + ": <b>" + txtL(-st.dif) + " en contra</b>." + pgMotivoDif() + "<br><br>¿Guardar igualmente?" })) return;
   }
+  if (revisar) { P.listo = { pagos: pagos, vuelto: vuelto }; return true; }
   await pgGuardar(pagos, vuelto);
 }
 function vendedorDeLaVenta(){
