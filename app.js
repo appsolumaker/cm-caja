@@ -25,8 +25,10 @@
 //  Tanda 1c (3.3): el turno NO se cierra si el efectivo no cuadra. Lo que falta o sobra se registra con el PIN del
 //  Administrador (gaveta.js: gasto pagado con la gaveta, faltante o sobrante de caja) y los centavos solos (redondeo);
 //  💸 Sacar efectivo durante el turno; el paso 4 dice claro lo que queda y lo que sale; Escape cierra el pago.
+//  3.4: al ABRIR también tiene que cuadrar: si lo contado no es lo que dejó el turno anterior, se registra lo que pasó
+//  (gasto, faltante o sobrante, con el PIN del Administrador; los centavos solos) y el turno arranca con lo que dejó.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.3 · 8-11-2026";
+const APP_VER = "3.4 · 8-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -2576,7 +2578,7 @@ function pintarVentas(){
     (v.pago.vuelto || []).forEach(p => { const k = p.metodo + "|" + p.tipo; porMet[k] = (porMet[k] || 0) - (Number(p.monto) || 0); });
   });
   const tu = S.turno;   // 1b: con cuánto abrió el turno y quién
-  let h = (tu ? '<div><span>Turno abierto</span><b>' + esc(tu.cajeroNombre) + '</b><span style="text-transform:none;">desde ' + horaDe(tu.apertura) + " · abrió con Bs " + fmt(tu.fondoBs) + " y $" + fmt(tu.fondoUsd) + "</span></div>" : "") +
+  let h = (tu ? '<div><span>Turno abierto</span><b>' + esc(tu.cajeroNombre) + '</b><span style="text-transform:none;">desde ' + horaDe(tu.apertura) + " · abrió con Bs " + fmt(tu.fondoContado ? tu.fondoContado.bs : tu.fondoBs) + " y $" + fmt(tu.fondoContado ? tu.fondoContado.usd : tu.fondoUsd) + "</span></div>" : "") +
     '<div><span>Ventas de hoy</span><b>' + deHoy.length + "</b></div>" +
     '<div><span>Total hoy</span><b>Bs ' + fmt(sumBs) + '</b><span style="text-transform:none;">$' + fmt(sumUsd) + " BCV</span></div>" +
     '<div><span>Por subir</span><b style="color:var(--blue);">' + c.por + "</b></div>" +

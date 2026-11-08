@@ -89,22 +89,45 @@ function pintarTurno(){
       '. Después, aquí con internet, toca <b>🔄 Actualizar datos</b>.</div><div style="margin-top:14px;"><button type="button" class="btn green" onclick="actualizarDatos(this)">🔄 Actualizar datos</button></div>';
     return;
   }
-  // 3b) 1b: lo contado no coincide con lo que dejó el turno anterior → explicar antes de abrir
+  // 3b) 1b/1c: lo contado no coincide con lo que dejó el turno anterior → se registra lo que pasó (PIN del Administrador)
   if (_turnoOk && FD.noCoincide) {
     const c = cajeroPorId(_turnoOk), pv = FD.prev, n = FD.noCoincide;
     if (!c || !pv) { FD.noCoincide = null; pintarTurno(); return; }
     const dif = (a, b) => { const d = r2(a - b); return Math.abs(d) < 0.005 ? "igual" : (d > 0 ? "sobra " : "falta ") + fmt(Math.abs(d)); };
-    box.innerHTML = '<div class="pk-hola">⚠️ No coincide</div>' +
-      '<div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la gaveta.</div>' +
-      '<table class="cie-tabla" style="text-align:left;margin:6px 0 10px;"><tr><td></td><td class="r">Bs</td><td class="r">$</td></tr>' +
+    const tabla = '<table class="cie-tabla" style="text-align:left;margin:6px 0 10px;"><tr><td></td><td class="r">Bs</td><td class="r">$</td></tr>' +
       '<tr><td>Dejó ' + esc(pv.cajero || "el turno anterior") + (pv.cierre ? " (" + esc(fechaCorta(pv.cierre)) + " " + esc(horaDe(pv.cierre)) + ")" : "") + '</td><td class="r">' + fmt(pv.bs) + '</td><td class="r">' + fmt(pv.usd) + "</td></tr>" +
       '<tr><td>Contaste</td><td class="r">' + fmt(n.bs) + '</td><td class="r">' + fmt(n.usd) + "</td></tr>" +
-      '<tr class="cie-res"><td><b>Diferencia</b></td><td class="r">' + dif(n.bs, pv.bs) + '</td><td class="r">' + dif(n.usd, pv.usd) + "</td></tr></table>" +
-      '<label class="lbl" for="tFondoExpl" style="text-align:left;">¿Por qué no coincide? (obligatorio para abrir)</label>' +
-      '<textarea class="inp" id="tFondoExpl" rows="2" maxlength="200" placeholder="Ej. el dueño sacó Bs 200 para pagar el agua"></textarea>' +
+      '<tr class="cie-res"><td><b>Diferencia</b></td><td class="r">' + dif(n.bs, pv.bs) + '</td><td class="r">' + dif(n.usd, pv.usd) + "</td></tr></table>";
+    const grandes = fdGrandes();
+    // Sin un efectivo con cuenta en el sistema no se puede registrar: queda como antes (explicar y abrir)
+    if (grandes.some(z => !gvMetodos(z[0]).length)) {
+      box.innerHTML = '<div class="pk-hola">⚠️ No coincide</div><div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la gaveta.</div>' + tabla +
+        '<div class="cie-arreglo" style="text-align:left;">No se puede registrar la diferencia porque en el sistema no hay un método de <b>efectivo</b> ligado a una cuenta (Configuración → métodos de pago).</div>' +
+        '<label class="lbl" for="tFondoExpl" style="text-align:left;">¿Por qué no coincide? (obligatorio para abrir)</label>' +
+        '<textarea class="inp" id="tFondoExpl" rows="2" maxlength="200" placeholder="Ej. el dueño sacó Bs 200 para pagar el agua"></textarea>' +
+        '<div class="m-err" id="tFondoErr" style="text-align:left;"></div>' +
+        '<div class="m-btns"><button type="button" class="btn" onclick="fondoVolverAContar()">← Volver a contar</button><button type="button" class="btn green" id="btnAbrirIgual" onclick="abrirTurno(this, true)">🔓 Abrir igual</button></div>';
+      return;
+    }
+    const tipos = ((S.datos && S.datos.tiposEgreso) || []).filter(Boolean), lt = tipos.length ? tipos : ["Otros"];
+    const bloque = (mon, d) => {
+      const p = gvPlata(mon, d), a = FD.aj[mon] || {};
+      if (d > 0) return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔺 Sobran <b>' + p + "</b>.</div>" +
+        '<div class="cie-mots"><button type="button" class="cie-mot on">💰 Registrar sobrante de caja de ' + p + "<small>Se registra como ingreso extra «Sobrante de caja».</small></button></div></div>";
+      return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔻 Faltan <b>' + p + "</b>. ¿Qué pasó?</div>" +
+        '<div class="cie-mots"><button type="button" class="cie-mot' + (a.tipo === "gasto" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'gasto\')">💸 Se pagó un gasto con el efectivo de la gaveta<small>Agua, hielo, un flete… Se registra en Egresos con su tipo.</small></button>' +
+        (a.tipo === "gasto" ? '<div class="cie-arreglo"><label class="lbl" for="fdCat' + mon + '" style="margin-top:0;">Tipo de gasto</label><select class="inp" id="fdCat' + mon + '" onchange="FD.aj.' + mon + '.cat=this.value"><option value="">— Elige —</option>' +
+          lt.map(t => '<option value="' + esc(t) + '"' + (a.cat === t ? " selected" : "") + ">" + esc(t) + "</option>").join("") + "</select>" +
+          '<label class="lbl" for="fdDesc' + mon + '">¿Qué se pagó?</label><input class="inp" id="fdDesc' + mon + '" maxlength="120" placeholder="Ej. 2 botellones de agua" value="' + esc(a.desc || "") + '" oninput="FD.aj.' + mon + '.desc=this.value"></div>' : "") +
+        '<button type="button" class="cie-mot' + (a.tipo === "faltante" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'faltante\')">💱 Registrar faltante de caja de ' + p + "<small>Un billete que no aparece, un error en el cierre anterior… Se registra como gasto «Faltante de caja».</small></button></div></div>";
+    };
+    box.innerHTML = '<div class="pk-hola">⚠️ No coincide</div>' +
+      '<div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la gaveta. Para abrir, se registra lo que pasó (lo autoriza el <b>Administrador</b> con su PIN) y así las cuentas del negocio quedan como la gaveta.</div>' + tabla +
+      grandes.map(z => bloque(z[0], z[1])).join("") +
+      '<label class="lbl" for="tFondoNota" style="text-align:left;">¿Qué pasó? (opcional)</label>' +
+      '<input class="inp" id="tFondoNota" maxlength="120" placeholder="Ej. el dueño sacó Bs 200 y no lo anotó" value="' + esc(FD.nota || "") + '" oninput="FD.nota=this.value">' +
       '<div class="m-err" id="tFondoErr" style="text-align:left;"></div>' +
-      '<div class="m-btns"><button type="button" class="btn" onclick="fondoVolverAContar()">← Volver a contar</button><button type="button" class="btn green" id="btnAbrirIgual" onclick="abrirTurno(this, true)">🔓 Abrir igual</button></div>';
-    setTimeout(() => { const e = $("tFondoExpl"); if (e && window.innerWidth > 820) e.focus(); }, 30);
+      '<div class="m-btns"><button type="button" class="btn" onclick="fondoVolverAContar()">← Volver a contar</button><button type="button" class="btn green" id="btnAbrirIgual" onclick="abrirConAjuste(this)">⭐ Registrar y abrir</button></div>';
     return;
   }
   // 3) Ya puso su PIN: con cuánto efectivo arranca
@@ -146,10 +169,35 @@ function elegirCajero(id){
 }
 // ══ FONDO ENCADENADO (Tanda 1b, 3.2) ══
 //  Al cerrar, la caja anota cuánto queda en la gaveta para el próximo turno. Al abrir, el cajero cuenta SIN VER ese
-//  monto y la caja lo compara: si no coincide (más de Bs 1 o $0,50), no abre hasta que explique por qué (va al cierre).
+//  monto y la caja lo compara: si no coincide (más de Bs 1 o $0,50), no abre hasta que se registre lo que pasó (1c).
 //  Lo que dejó: el último cierre de esta caja en el sistema (cualquier equipo, con internet) o el de este equipo, el
 //  más nuevo de los dos. Sin ninguno (equipo nuevo, o cierres de antes de 3.2), abre libre como antes.
-const FD = { prev: null, noCoincide: null, contado: null, pide: 0 };
+const FD = { prev: null, noCoincide: null, contado: null, pide: 0, aj: {}, nota: "" };   // aj (1c): { BS|USD: { tipo, cat, desc } }
+// 1c: las monedas que no coinciden por más de Bs 1 o $0,50 → [[moneda, diferencia], …] (+ sobra · − falta)
+function fdGrandes(){
+  const pv = FD.prev, n = FD.noCoincide; if (!pv || !n) return [];
+  return [["BS", r2(n.bs - pv.bs)], ["USD", r2(n.usd - pv.usd)]].filter(z => Math.abs(z[1]) > (z[0] === "BS" ? CIE_TOL.bs : CIE_TOL.usd) + 0.0001);
+}
+function fdElegir(mon, tipo){ FD.aj[mon] = Object.assign(FD.aj[mon] || {}, { tipo: tipo }); pintarTurno(); }
+async function abrirConAjuste(btn){
+  if (btn && btn.disabled) return;
+  const err = t => { const e = $("tFondoErr"); if (e) e.innerHTML = t; };
+  const grandes = fdGrandes(), lin = [];
+  for (const [mon, d] of grandes) {
+    const a = FD.aj[mon] = FD.aj[mon] || {}, p = gvPlata(mon, d);
+    if (d > 0) { a.tipo = "sobrante"; lin.push("Sobrante de caja: <b>" + p + "</b>"); continue; }
+    if (!a.tipo) { err("Elige qué pasó con los <b>" + p + "</b> que faltan."); return; }
+    if (a.tipo === "gasto") {
+      if (!a.cat) { err("Elige el tipo de gasto de los <b>" + p + "</b>."); return; }
+      if (String(a.desc || "").trim().length < 3) { err("Escribe qué se pagó con los <b>" + p + "</b>."); return; }
+      lin.push("Gasto (" + esc(a.cat) + "): <b>" + p + "</b> · " + esc(String(a.desc).trim()));
+    } else lin.push("Faltante de caja: <b>" + p + "</b>");
+  }
+  err("");
+  const adm = await gvPinAdmin("Autorizar y abrir el turno", lin.join("<br>"));
+  if (!adm) return;
+  await abrirTurno(btn, { autorizo: adm.nombre });
+}
 async function fondoPrevCargar(){
   const caja = Number(S.datos && S.datos.caja) || 0, loc = S.ultFondo && Number(S.ultFondo.caja) === caja ? S.ultFondo : null, pide = ++FD.pide;
   FD.prev = loc ? { bs: Number(loc.bs) || 0, usd: Number(loc.usd) || 0, cajero: loc.cajero || "", cierre: loc.cierre || "" } : null;
@@ -160,30 +208,52 @@ async function fondoPrevCargar(){
   if (!FD.prev || String(r.cierre || "") > String(FD.prev.cierre || "")) FD.prev = { bs: Number(r.bs) || 0, usd: Number(r.usd) || 0, cajero: r.cajero || "", cierre: r.cierre || "" };
   if (_turnoOk && !FD.noCoincide && $("tFondoBs")) pintarTurno();   // cambia el texto de la pregunta (lo escrito se queda)
 }
-function fondoVolverAContar(){ FD.contado = FD.noCoincide; FD.noCoincide = null; pintarTurno(); setTimeout(() => { const i = $("tFondoBs"); if (i) { i.focus(); i.select(); } }, 30); }
-async function abrirTurno(btn, igual){
+function fondoVolverAContar(){ FD.contado = FD.noCoincide; FD.noCoincide = null; FD.aj = {}; FD.nota = ""; pintarTurno(); setTimeout(() => { const i = $("tFondoBs"); if (i) { i.focus(); i.select(); } }, 30); }
+// modo: nada = el botón 🔓 Abrir turno · true = abrir igual con explicación (sin efectivo con cuenta) ·
+// { autorizo } (1c) = ya se eligió qué pasó con la diferencia y el Administrador puso su PIN
+async function abrirTurno(btn, modo){
   if (btn && btn.disabled) return;
   const c = cajeroPorId(_turnoOk);
   if (!c) { _turnoOk = null; pintarTurno(); return; }
-  const fb = igual && FD.noCoincide ? FD.noCoincide.bs : r2(Number($("tFondoBs").value) || 0), fu = igual && FD.noCoincide ? FD.noCoincide.usd : r2(Number($("tFondoUsd").value) || 0);
+  const igual = modo === true, aj = modo && typeof modo === "object" ? modo : null;
+  const fb = (igual || aj) && FD.noCoincide ? FD.noCoincide.bs : r2(Number($("tFondoBs").value) || 0), fu = (igual || aj) && FD.noCoincide ? FD.noCoincide.usd : r2(Number($("tFondoUsd").value) || 0);
   const pv = FD.prev;
   let expl = "";
-  if (pv && !igual && (Math.abs(fb - pv.bs) > 1.0001 || Math.abs(fu - pv.usd) > 0.5001)) {   // 1b: no coincide con lo que dejó el turno anterior
-    FD.noCoincide = { bs: fb, usd: fu }; pintarTurno(); return;
+  if (pv && !igual && !aj && (Math.abs(fb - pv.bs) > CIE_TOL.bs + 0.0001 || Math.abs(fu - pv.usd) > CIE_TOL.usd + 0.0001)) {   // 1b: no coincide con lo que dejó el turno anterior
+    FD.noCoincide = { bs: fb, usd: fu }; FD.aj = {}; FD.nota = ""; pintarTurno(); return;
   }
   if (igual) {
     expl = String(($("tFondoExpl") || {}).value || "").trim();
     if (expl.length < 10) { const e = $("tFondoErr"); if (e) e.textContent = "Escribe por qué no coincide (por lo menos una frase corta). Queda anotado en el cierre de este turno."; return; }
   }
+  // 1c: el turno arranca con lo que dejó el anterior y la diferencia se registra en el turno (gaveta.js): así «Debe haber»
+  // y las cuentas del negocio quedan como lo contado. Los centavos (hasta Bs 1 o $0,50) van solos como redondeo.
+  const movs = [], fondo = { BS: fb, USD: fu }, notas = [];
+  if (pv && !igual) {
+    const nota = String(FD.nota || "").replace(/\s+/g, " ").trim();
+    [["BS", fb, pv.bs], ["USD", fu, pv.usd]].forEach(([mon, contado, dejo]) => {
+      const d = r2(contado - dejo), l = gvMetodos(mon);
+      if (Math.abs(d) < 0.005 || !l.length) return;
+      const chico = Math.abs(d) <= (mon === "BS" ? CIE_TOL.bs : CIE_TOL.usd) + 0.0001;
+      const a = chico ? { tipo: "redondeo" } : (d > 0 ? { tipo: "sobrante" } : (FD.aj[mon] || {}));
+      if (!a.tipo) return;
+      fondo[mon] = dejo;
+      movs.push({ tipo: a.tipo, moneda: mon, metodo: l[0].metodo, monto: Math.abs(d), signo: d > 0 ? 1 : -1, cat: a.tipo === "gasto" ? a.cat : "",
+                  desc: a.tipo === "gasto" ? String(a.desc || "").trim() : (chico ? "al abrir el turno" : (nota || "al abrir el turno")), autorizo: chico ? "" : (aj ? aj.autorizo : "") });
+      if (!chico) notas.push((d > 0 ? "sobraban " : "faltaban ") + gvPlata(mon, d) + " (" + (a.tipo === "gasto" ? "gasto " + a.cat + ": " + String(a.desc || "").trim() : a.tipo === "faltante" ? "faltante de caja" : "sobrante de caja") + ", autorizó " + (aj ? aj.autorizo : "") + ")");
+    });
+    if (notas.length) expl = notas.join(" y ") + (nota ? ". " + nota : "");
+  }
   btnOcupado(btn, "Abriendo…");
   const ahora = new Date();
   const t = { id: "T-" + (S.datos.equipo || "EQ") + "-" + ahoraTxt(ahora).replace(/\D/g, "").slice(0, 12) + "-" + uuid().slice(0, 4),
               cajeroId: c.id, cajeroNombre: c.nombre, apertura: ahoraTxt(ahora), aperturaMs: ahora.getTime(),   // 3.0: la hora exacta, para el efectivo movido desde el sistema
-              fondoBs: fb, fondoUsd: fu,
+              fondoBs: r2(fondo.BS), fondoUsd: r2(fondo.USD), fondoContado: { bs: fb, usd: fu },
               fondoPrev: pv ? { bs: pv.bs, usd: pv.usd, cajero: pv.cajero, cierre: pv.cierre } : null, fondoExpl: expl };   // 1b
   try { await kvSet("turno", t); }
   catch (e) { btnLibre(btn); aviso({ icono: "❌", titulo: "No se abrió el turno", html: "El equipo no pudo guardar el turno (" + esc(e.message) + "). Vuelve a intentar." }); return; }
-  S.turno = t; _turnoOk = null; _turnoSel = null; FD.noCoincide = null; FD.contado = null;
+  S.turno = t; _turnoOk = null; _turnoSel = null; FD.noCoincide = null; FD.contado = null; FD.aj = {}; FD.nota = "";
+  for (const m of movs) await gvRegistrar(m);   // 1c (gaveta.js): la diferencia queda registrada en este turno
   btnLibre(btn);
   desbloquear();
   toast("✅ Turno abierto: " + c.nombre);
