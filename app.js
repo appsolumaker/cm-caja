@@ -17,8 +17,10 @@
 //  esa caja, del último usuario que entró en el equipo) y los cajeros solo eligen su nombre y ponen su PIN.
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
 //  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
+//  Tanda 1 (3.1): como Ventas — 🛍️ Cashea en el pago, 🎁 pagar con saldo a favor (con internet) y 📅 venta de otro
+//  día (con su fecha y las tasas de ese día; su efectivo no cuenta en el cierre de hoy).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.0 · 7-11-2026";
+const APP_VER = "3.1 · 7-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -61,7 +63,7 @@ const S = {
   vista: "vender"
 };
 const F = nuevaFactura();   // la venta que se está armando
-function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, dolares: false, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, claveCon: "", seq: 0, avisoEx: {}, orden: null, dlv: { tipo: "delivery", monto: 0 } }; }   // dolares: Venta en Dólares (TasaBin), se apaga en cada venta como en Ventas
+function nuevaFactura(){ return { items: [], cliente: { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }, tipoPrecio: 0, dolares: false, desc: { tipo: "ninguno", valor: 0 }, vend: "", claveOk: false, claveCon: "", seq: 0, avisoEx: {}, orden: null, dlv: { tipo: "delivery", monto: 0 }, fechaAnt: null }; }   // fechaAnt: { fecha, bcv, div } venta de otro día (Tanda 1)   // dolares: Venta en Dólares (TasaBin), se apaga en cada venta como en Ventas
 let P = null;              // el pago abierto
 let _ventaGuardada = null; // la que se acaba de guardar (para imprimir)
 
@@ -364,7 +366,8 @@ function pintarCabecera(){
 function tasaVieja(){ const t = S.tasas || {}; return !!(t.fecha && t.fecha !== hoyTxt()); }
 function pintarTasa(){
   const t = S.tasas || {}, oc = !!S.pref.tasaOculta;
-  $("tasaDisplay").innerHTML = oc ? "••••••" : (tasaVieja() ? '<span class="vieja">⚠️ ' + fechaCorta(t.fecha).slice(0, 5) + " · </span>" : "") + "Bs " + fmt(t.bcv);
+  $("tasaDisplay").innerHTML = oc ? "••••••" : F.fechaAnt ? '<span class="vieja">📅 ' + fechaCorta(F.fechaAnt.fecha).slice(0, 5) + " · </span>Bs " + fmt(F.fechaAnt.bcv)   // Tanda 1: venta de otro día
+    : (tasaVieja() ? '<span class="vieja">⚠️ ' + fechaCorta(t.fecha).slice(0, 5) + " · </span>" : "") + "Bs " + fmt(t.bcv);
   $("btnOcultarTasa").title = oc ? "Mostrar tasa" : "Ocultar tasa";
 }
 async function toggleTasaVisible(){
@@ -647,7 +650,12 @@ function pintarNumFactura(){
 function pintarSelectores(){
   const d = S.datos; if (!d) return;
   pintarNumFactura();
-  $("fechaVenta").value = fechaCorta(hoyTxt());
+  $("fechaVenta").value = fechaCorta(F.fechaAnt ? F.fechaAnt.fecha : hoyTxt());   // Tanda 1: tocarla abre «Venta de otro día»
+  $("fechaVenta").classList.toggle("otro-dia", !!F.fechaAnt);
+  const bo = $("bannerOtroDia");
+  if (bo) { bo.classList.toggle("oculto", !F.fechaAnt); bo.innerHTML = F.fechaAnt ? "📅 <b>Venta del " + fechaCorta(F.fechaAnt.fecha) + "</b> con las tasas de ese día: " + textoTasasFA() + ". Su efectivo no cuenta en el cierre de hoy. " +
+    '<button type="button" class="btn sm" onclick="ponerFechaAnt(null)">↩️ Volver a hoy</button>' : ""; }
+  pintarTasa();
   // Tipo de precio para lo que se agregue (los que tienen precio en algún producto)
   const tp = tiposConPrecio();
   $("selTipoPrecio").innerHTML = tp.map(o => '<option value="' + o.i + '"' + (o.i === F.tipoPrecio ? " selected" : "") + ">" + esc(o.n) + "</option>").join("");
@@ -964,6 +972,128 @@ async function cambiarTipoDesc(sel){
 }
 function cambiarValorDesc(val){ F.desc.valor = Math.max(0, Number(val) || 0); pintarTotales(); }
 function quitarDescuento(){ F.desc = { tipo: "ninguno", valor: 0 }; pintarSelectores(); pintarTotales(); }
+// ══ VENTA DE OTRO DÍA (Tanda 1, 3.1) — como Ventas (TasasVenta.gs) ══
+//  Para registrar una venta que se olvidó: va con su fecha y las tasas de ESE día (así no queda diferencial cambiario).
+//  Se toca la fecha de la factura. Pide la misma clave que «Cambiar tasa» si Configuración la pide (N4). Con internet trae
+//  las tasas que guardó el sistema ese día y avisa de las cuentas ya conciliadas; sin internet se escriben a mano.
+//  Hasta FA_DIAS_MAX días atrás (el sistema no sube ventas más viejas). Su efectivo NO cuenta en el cierre de hoy.
+const FA_DIAS_MAX = 60;
+function diaMenos(n){ const d = new Date(); d.setDate(d.getDate() - n); return hoyTxt(d); }
+function textoTasasFA(fa){
+  fa = fa || F.fechaAnt; if (!fa) return "";
+  if (binOn()) return "BCV <b>Bs " + fmt(fa.bcv) + "</b> · Divisas <b>Bs " + fmt(fa.div) + "</b>" + (fa.bcv > 0 && fa.div > 0 ? " (brecha " + fmt((fa.div / fa.bcv - 1) * 100) + " %)" : "");
+  return "BCV <b>Bs " + fmt(fa.bcv) + "</b>" + (fa.div > 0 ? " · Divisas efectivo <b>Bs " + fmt(fa.div) + "</b>" : "");
+}
+async function abrirFechaVenta(){
+  if (!S.datos || P || !puedeVender()) return;
+  if (F.fechaAnt) {
+    const r = await modal({ icono: "📅", titulo: "Venta de otro día", html: '<div class="m-txt">Esta venta lleva fecha del <b>' + fechaCorta(F.fechaAnt.fecha) + "</b> con las tasas de ese día: " + textoTasasFA() + ".</div>",
+      botones: [{ txt: "Cancelar", v: false }, { txt: "↩️ Volver a hoy", v: "hoy" }, { txt: "✏️ Cambiar día o tasas", v: "cambiar", cls: "green" }] });
+    if (r === "hoy") { ponerFechaAnt(null); return; }
+    if (r !== "cambiar") return;
+  } else if (S.datos.pideClave && S.datos.pideClave.tasa && !await claveFactura("Venta de otro día", "para registrar una venta con la fecha y las tasas de otro día")) return;
+  const on = binOn(), hoy = hoyTxt(), min = diaMenos(FA_DIAS_MAX), ayer = diaMenos(1), ya = F.fechaAnt;
+  let res = null;
+  const r = await modal({
+    icono: "📅", titulo: "Venta de otro día", clase: "fa-modal",
+    html: '<div class="m-txt" style="font-size:13px;color:var(--text-dim);">Para una venta que se olvidó registrar. Se cobra completa con las tasas de ese día (precios, pago, vuelto, crédito y delivery); las tasas de hoy no se tocan. <b>Su efectivo no cuenta en el cierre de hoy.</b></div>' +
+      '<div class="cs-preg"><span class="paso-n">1</span><span>¿De qué día es la venta?</span></div>' +
+      '<input class="inp" id="faFecha" type="date" min="' + min + '" max="' + ayer + '" value="' + (ya ? ya.fecha : "") + '">' +
+      '<div class="act-nota">Del ' + fechaCorta(min) + " hasta ayer.</div>" +
+      '<div id="faTasas"' + (ya ? "" : ' class="oculto"') + '><div class="cs-preg"><span class="paso-n">2</span><span>Tasas de ese día</span></div>' +
+        '<div class="act-nota" id="faEstado"></div>' +
+        '<label class="lbl" for="faBcv">Tasa BCV de ese día (Bs por $1 BCV)</label><input class="inp" id="faBcv" type="number" inputmode="decimal" min="0" step="any" placeholder="Ej. 900,00" value="' + (ya ? ya.bcv : "") + '">' +
+        (on ? '<label class="lbl" for="faBre">% de brecha cambiaria de ese día</label><input class="inp" id="faBre" type="number" inputmode="decimal" min="0" step="any" placeholder="Ej. 11,11">' +
+              '<label class="lbl" for="faDiv">o la tasa Divisas de ese día (Bs por $1 en divisas), sin brecha</label><input class="inp" id="faDiv" type="number" inputmode="decimal" min="0" step="any" placeholder="Ej. 1000,00" value="' + (ya ? ya.div : "") + '">'
+            : '<label class="lbl" for="faDiv">Tasa Divisas de ese día — los $ en efectivo (opcional)</label><input class="inp" id="faDiv" type="number" inputmode="decimal" min="0" step="any" placeholder="Opcional" value="' + (ya && ya.div ? ya.div : "") + '">') +
+        '<div class="act-nota" id="faHint"></div><div class="banner av oculto" id="faConc" style="margin:10px 0 0;"></div></div>' +
+      '<div class="m-err" id="faErr"></div>',
+    botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Usar esa fecha", v: true, cls: "green" }],
+    foco: "faFecha",
+    alAbrir: () => {
+      const val = () => {
+        const b = Number($("faBcv").value) || 0;
+        if (!on) return { bcv: b, div: Number($("faDiv").value) || 0 };
+        const pct = Number($("faBre").value) || 0, inp = $("faDiv");
+        if (pct > 0) { const d = b > 0 ? r2(b * (1 + pct / 100)) : 0; inp.value = d > 0 ? d.toFixed(2) : ""; inp.disabled = true; return { bcv: b, div: d }; }
+        inp.disabled = false; return { bcv: b, div: Number(inp.value) || 0 };
+      };
+      const hint = () => {
+        const v = val();
+        $("faHint").innerHTML = on && v.bcv > 0 && v.div > 0 ? "$1 BCV = <b>Bs " + fmt(v.bcv) + "</b> · $1 en divisas = <b>Bs " + fmt(v.div) + "</b> (brecha " + fmt((v.div / v.bcv - 1) * 100) + " %)" : "";
+      };
+      ["faBcv", "faBre", "faDiv"].forEach(id => { const e = $(id); if (e) e.addEventListener("input", hint); });
+      let pide = 0;
+      $("faFecha").addEventListener("change", async () => {
+        const f = $("faFecha").value, est = $("faEstado"), conc = $("faConc");
+        $("faErr").textContent = "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
+        $("faTasas").classList.remove("oculto");
+        ["faBcv", "faBre", "faDiv"].forEach(id => { const e = $(id); if (e) { e.value = ""; e.disabled = false; } });   // las de otro día no sirven
+        conc.classList.add("oculto"); conc.innerHTML = "";
+        const brHoy = on && Number((S.tasas || {}).brecha) > 0 ? Number(S.tasas.brecha) : 0;
+        const ponerBrecha = () => { if (brHoy > 0 && !$("faBre").value && !$("faDiv").value) { $("faBre").value = String(r2(brHoy)); return true; } return false; };
+        if (!hayInternet() || !sesionViva()) {
+          est.innerHTML = "📡 Sin internet: escribe las tasas de ese día." + (ponerBrecha() ? " (Se puso tu % de brecha de hoy: revísalo.)" : "");
+          hint(); return;
+        }
+        const yo = ++pide;
+        est.textContent = "⏳ Buscando las tasas que guardó el sistema ese día…";
+        let t = null;
+        try { t = await api("cj_tasas_fecha", { fecha: f }, 20000); } catch (e) { t = null; }
+        if (yo !== pide || $("faFecha").value !== f) return;
+        if (!t || !t.ok) { est.innerHTML = "No pude buscar las tasas guardadas de ese día: escríbelas." + (ponerBrecha() ? " (Se puso tu % de brecha de hoy: revísalo.)" : ""); hint(); return; }
+        const poner = (id, v) => { const e = $(id); if (e && !e.value && Number(v) > 0) e.value = String(r2(v)); };
+        poner("faBcv", t.bcv);
+        let br = false;
+        if (on) { if (Number(t.div) > 0) poner("faDiv", t.div); else br = ponerBrecha(); }
+        else poner("faDiv", t.divOff);
+        est.innerHTML = t.encontrada ? "✅ Se llenaron con las tasas que guardó el sistema ese día. Revísalas." : "El sistema no tiene tasas guardadas de ese día: escríbelas." + (br ? " (Se puso tu % de brecha de hoy: revísalo.)" : "");
+        if (t.conciliadas && t.conciliadas.length) {
+          conc.innerHTML = "⚠️ Estas cuentas ya están conciliadas con el banco a esa fecha: <b>" + t.conciliadas.map(c => esc(c.cuenta) + " (hasta el " + esc(c.hasta) + ")").join(", ") + "</b>. No podrás cobrar esta venta con un método que entre a ellas.";
+          conc.classList.remove("oculto");
+        }
+        hint();
+      });
+      if (ya) hint();
+    },
+    antes: (v) => {
+      if (!v) return true;
+      const err = $("faErr"), f = $("faFecha").value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) { err.textContent = "Elige el día de la venta."; return false; }
+      if (f >= hoy) { err.textContent = "Para una venta de hoy no hace falta: cierra esta ventana. Una venta no puede llevar una fecha que todavía no llega."; return false; }
+      if (f < min) { err.textContent = "El sistema no registra ventas de hace más de " + FA_DIAS_MAX + " días. Avísale al administrador."; return false; }
+      const b = Number($("faBcv").value) || 0;
+      if (!(b > 0)) { err.textContent = "Escribe la tasa BCV de ese día."; return false; }
+      const bHoy = Number((S.tasas || {}).bcv) || 0;
+      if (bHoy > 0 && (b > bHoy * 1.5 || b < bHoy * 0.3)) { err.textContent = "Esa tasa BCV (Bs " + fmt(b) + ") está muy lejos de la de hoy (Bs " + fmt(bHoy) + "). Revisa el número."; return false; }
+      let d;
+      if (on) {
+        const pct = Number($("faBre").value) || 0;
+        d = pct > 0 ? r2(b * (1 + pct / 100)) : Number($("faDiv").value) || 0;
+        if (!(d > 0)) { err.textContent = "Escribe el % de brecha de ese día, o la tasa Divisas."; return false; }
+        if (d < b) { err.textContent = "La tasa Divisas no puede quedar por debajo de la BCV."; return false; }
+      } else {
+        d = Number($("faDiv").value) || 0;
+        if (d && d < b * 0.9) { err.textContent = "La tasa Divisas no puede quedar por debajo de la BCV."; return false; }
+      }
+      res = { fecha: f, bcv: b, div: d || 0 };
+      return true;
+    }
+  });
+  if (r && res) ponerFechaAnt(res);
+}
+// Pone (o quita, con null) la fecha de otro día: la factura en pantalla se recalcula con esas tasas
+function ponerFechaAnt(fa){
+  const antes = F.items.length ? totales(F.items, F.desc).total : null;
+  F.fechaAnt = fa ? { fecha: fa.fecha, bcv: Number(fa.bcv) || 0, div: Number(fa.div) || 0 } : null;
+  repreciar(); pintarSelectores(); buscar(); pintarFactura();
+  const ahora = F.items.length ? totales(F.items, F.desc).total : null;
+  if (antes != null && Math.abs(ahora - antes) >= 0.005)
+    aviso({ icono: "💱", titulo: "Precios recalculados", html: (fa ? "La venta lleva fecha del <b>" + fechaCorta(fa.fecha) + "</b>: se usan las tasas de ese día." : "La venta vuelve a la fecha de hoy: se usan las tasas de hoy.") +
+      "<br><br>Total: <b>" + txtU(antes) + "</b> → <b>" + txtU(ahora) + "</b> (Bs " + fmt(r2(ahora * bsPorU())) + ")." });
+  else toast(fa ? "📅 Venta del " + fechaCorta(fa.fecha) + " con sus tasas" : "📅 La venta vuelve a hoy");
+}
 // ── Delivery / envío (Etapa 2B), como en Ventas: se escribe en $ BCV (es para el motorizado o la agencia) ──
 //  En pantalla y en el ticket va SIEMPRE por su monto ($2), también en Venta en Dólares; sus Bs, a tasa BCV.
 //  En los libros (el servidor) vale su monto en $ BCV pasado a divisas con TasaBin ($2 BCV = $1,80 div con 11,1 % de brecha).
@@ -1161,9 +1291,12 @@ async function registrarVenta(){
 //      Venta en Dólares ("div"): en pantalla $ divisas; los $ a la par y los Bs a tasa Divisas.
 //  El servidor recibe cada línea en la unidad de los libros (como Ventas) y cobra con las mismas reglas.
 function binOn(){ return !!(S.tasas && S.tasas.binOn); }
-function tBcv(){ return Number((S.tasas || {}).bcv) || 0; }
-function tDiv(){ const t = S.tasas || {}; return Number(t.div) > 0 ? Number(t.div) : tBcv(); }   // ON: tasa Divisas (H7)
-function tDivOff(){ const t = S.tasas || {}; return !binOn() && Number(t.div) > 0 ? Number(t.div) : 0; }   // OFF: Divisas de los $ en efectivo (H9)
+// Tanda 1: con una venta de OTRO DÍA (📅), toda la pantalla usa las tasas de ese día (precios, pago, vuelto, crédito,
+// delivery), como Ventas. Las tasas del equipo (S.tasas) no se tocan.
+function tasasVenta(){ const t = S.tasas || {}; return F.fechaAnt ? Object.assign({}, t, { bcv: F.fechaAnt.bcv, div: F.fechaAnt.div }) : t; }
+function tBcv(){ return Number(tasasVenta().bcv) || 0; }
+function tDiv(){ const t = tasasVenta(); return Number(t.div) > 0 ? Number(t.div) : tBcv(); }   // ON: tasa Divisas (H7)
+function tDivOff(){ const t = tasasVenta(); return !binOn() && Number(t.div) > 0 ? Number(t.div) : 0; }   // OFF: Divisas de los $ en efectivo (H9)
 function tasaUsd(){ return binOn() ? tDiv() : (tDivOff() || tBcv()); }
 function modoVenta(){ return !binOn() ? "off" : (F.dolares ? "div" : "bcv"); }
 function unidadU(){ return modoVenta() === "div" ? "div" : "BCV"; }   // unidad de la pantalla
@@ -1219,10 +1352,10 @@ async function abrirPago(){
   if (!F.items.length) { aviso({ icono: "🧾", titulo: "La venta está vacía", html: "Agrega al menos un producto." }); return; }
   const malas = F.items.filter(i => !(Number(i.cantidad) > 0));
   if (malas.length) { aviso({ icono: "🔢", titulo: "Falta una cantidad", html: "La línea <b>" + esc(malas[0].nombre) + "</b> no tiene cantidad. Escríbela o quita la línea con ✕." }); return; }
-  const t = S.tasas || {};
+  const t = tasasVenta();   // Tanda 1: con venta de otro día, las de ese día
   if (!(t.bcv > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa", html: "Este equipo no tiene tasa BCV. Actualiza los datos con internet, o ponla en ⚙️ → Cambiar tasa." }); return; }
   if (binOn() && !(Number(t.div) > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa Divisas", html: "Este negocio trabaja con TasaBin y el equipo no tiene la tasa Divisas. Actualiza los datos con internet, o ponla en ⚙️ → Cambiar tasa." }); return; }
-  if (t.fecha !== hoyTxt() && S.tasaOkHoy !== hoyTxt()) {
+  if (!F.fechaAnt && t.fecha !== hoyTxt() && S.tasaOkHoy !== hoyTxt()) {
     const r = await modal({ icono: "💱", titulo: "¿La tasa sigue igual?",
       html: '<div class="m-txt">' + (t.origen === "sistema" && S.online !== false ? "<b>El sistema todavía no ha actualizado la tasa BCV de hoy</b>: tiene la del <b>" + fechaCorta(t.fecha) + "</b>" : "Las tasas de este equipo son del <b>" + fechaCorta(t.fecha) + "</b>") + ": " + textoTasas() +
         ".<br><br>Si hoy son otras, cámbialas antes de cobrar (pide la clave)" + (t.origen === "sistema" && S.online !== false ? " y avísale al administrador" : "") + ".</div>",
@@ -1235,7 +1368,8 @@ async function abrirPago(){
   const T = totalConDlv(), m = modoVenta(), aparte = m === "div" && T.dlv > 0;   // Venta en Dólares con delivery: se cobra en dos pasos
   const tot = aparte ? T.prod : T.total;
   P = { modo: m, lineas: [], cred: { on: false, monto: "", editado: false }, vt: { on: false, lineas: [] }, seq: 0, verMet: false, dias: 0, total: tot, desbloq: false,
-        dlvMonto: T.dlv, dlv: { on: aparte, monto: T.dlv, tipo: F.dlv.tipo, modo: "", metodo: "" } };
+        dlvMonto: T.dlv, dlv: { on: aparte, monto: T.dlv, tipo: F.dlv.tipo, modo: "", metodo: "" },
+        cs: { on: false, pct: 0, inicial: "", orden: "" }, saf: { disp: 0, on: false, monto: "", ced: "", pide: 0 } };   // Tanda 1: Cashea y saldo a favor
   if (aparte) {
     $("pgTotal").innerHTML = '<div class="tp-filas"><div class="tp-fila"><span>🛒 Productos</span><span>$' + fmt(T.prod) + ' <small>div</small></span></div>' +
       '<div class="tp-fila"><span>' + (F.dlv.tipo === "envio" ? "📦 " : "🛵 ") + dlvTxt() + '</span><span>$' + fmt(T.dlv) + " <small>(o Bs " + fmt(r2(T.dlv * tBcv())) + ")</small></span></div></div>";
@@ -1248,7 +1382,8 @@ async function abrirPago(){
   $("pgHint").innerHTML = m === "div"
     ? "💵 <b>Venta en Dólares</b>: los $ van a la par · los Bs a tasa Divisas <b>Bs " + fmt(tDiv()) + "</b>."
     : "Venta en <b>$ BCV</b>: los Bs van a tasa BCV <b>Bs " + fmt(tBcv()) + "</b> · los $ a la tasa que elijas en cada línea" +
-      (m === "off" && !tDivOff() ? " (este negocio no tiene tasa Divisas: los $ valen a la BCV)" : "") + ".";
+      (m === "off" && !tDivOff() ? " (este negocio no tiene tasa Divisas: los $ valen a la BCV)" : "") + "." +
+    (F.fechaAnt ? "<br>📅 <b>Venta del " + fechaCorta(F.fechaAnt.fecha) + "</b>, con las tasas de ese día." : "");
   $("pgRef").value = ""; $("pgObs").value = "";
   $("pgForm").classList.remove("oculto"); $("pgOk").classList.add("oculto");
   $("pgPie").classList.remove("oculto"); $("pgPieOk").classList.add("oculto"); $("pgX").classList.remove("oculto"); $("pgTit").textContent = "💳 Pago del cliente";
@@ -1256,8 +1391,9 @@ async function abrirPago(){
   const pl = (S.datos.plazosCredito || []).filter(p => p.activo && p.dias > 0);
   $("selDias").innerHTML = pl.map(p => '<option value="' + p.dias + '">' + p.dias + " días</option>").join("") + '<option value="0">Sin plazo</option>';
   P.dias = pl.length ? pl[0].dias : 0; $("selDias").value = String(P.dias);
-  pgPintarMetodos(); pgPintarLineas(); pgPintarVuelto(); pgActualizar();
+  pgPintarExtras(); pgPintarMetodos(); pgPintarLineas(); pgPintarVuelto(); pgActualizar();
   $("mPago").classList.remove("oculto");
+  pgSafCargar();   // Tanda 1: ¿el cliente tiene saldo a favor? (con internet)
 }
 function cerrarPago(){ $("mPago").classList.add("oculto"); P = null; if (window.innerWidth > 820) setTimeout(() => { if (!document.querySelector(".mfondo:not(.oculto)")) $("busca").focus(); }, 30); }   // no le quita el cursor a otro modal
 // ── Cuánto cubre (en la pantalla) y cuánto vale (en los libros) cada línea: las mismas cuentas de Ventas ──
@@ -1300,6 +1436,7 @@ function pgCredValor(){ return P.cred.on ? r2(Number(P.cred.monto) || 0) : 0; }
 function pgEstado(){
   let cub = 0, vale = 0;
   P.lineas.forEach(l => { cub += pgCubre(l); vale += pgVale(l); });
+  const sp = pgSafPant(); if (sp > 0) { cub += sp; vale += pgSafDiv(); }   // Tanda 1: lo que paga el saldo a favor (en divisas, como el servidor)
   const cred = pgCredValor(), credVale = P.modo === "bcv" ? r2(cred * factorCxC()) : cred;
   const cubT = cub + cred, N = P.total;
   const pendX = N - cubT, pend = r2(pendX);   // > 0 falta · < 0 sobra
@@ -1308,7 +1445,7 @@ function pgEstado(){
   const quedaX = -pendX - vtCub, queda = r2(quedaX);
   const valorVenta = r2(valorLibro(F.items, F.desc) + (P.dlv.on ? 0 : dlvLibro(P.dlvMonto)));   // en dos pasos, el paso 1 es solo de los productos
   const dif = r2(vale + credVale - vtVale - valorVenta);
-  return { cub: r2(cub), cred, credVale, cubT: r2(cubT), pend, pendX, vtCub: r2(vtCub), vtVale: r2(vtVale), queda, quedaX, vale: r2(vale), valorVenta, dif, hay: P.lineas.length > 0 || P.cred.on };
+  return { cub: r2(cub), cred, credVale, cubT: r2(cubT), pend, pendX, vtCub: r2(vtCub), vtVale: r2(vtVale), queda, quedaX, vale: r2(vale), valorVenta, dif, hay: P.lineas.length > 0 || P.cred.on || sp > 0 };
 }
 // ── Métodos de pago como en Ventas (mismo agrupado y mismas etiquetas) ──
 const PGU_GRUPOS = {
@@ -1369,7 +1506,7 @@ function pgFilasMetodos(fn, usados, conCredito){
     cols.push(h + "</div>");
   });
   let html = '<div class="pgu-cols' + (cols.length < 2 ? " una" : "") + '">' + cols.join("") + "</div>";
-  if (conCredito && metodoCredito()) html += '<div class="pgu-mon-tit otros">Otros</div><div class="pgu-fila linea1"><span class="pgu-grp">📝 A crédito</span><div class="pgu-chips"><button type="button" class="pgu-chip cred' + (P.cred.on ? " on" : "") + '" onclick="pgCredito()">' + (P.cred.on ? "✓ Crédito" : "Crédito") + "</button></div></div>";
+  if (conCredito && metodoCredito() && !(P && P.cs.on)) html += '<div class="pgu-mon-tit otros">Otros</div><div class="pgu-fila linea1"><span class="pgu-grp">📝 A crédito</span><div class="pgu-chips"><button type="button" class="pgu-chip cred' + (P.cred.on ? " on" : "") + '" onclick="pgCredito()">' + (P.cred.on ? "✓ Crédito" : "Crédito") + "</button></div></div>";
   return html;
 }
 function pgPintarMetodos(){ $("pgMetodos").innerHTML = pgFilasMetodos("pgAgregar", P.lineas.map(l => l.metodo), true); }
@@ -1390,7 +1527,9 @@ function pgPintarLineas(){
       '<div class="pl-cuerpo"><span class="mon">' + (l.tipo === "BS" ? "Bs" : "$") + '</span><input type="number" inputmode="decimal" min="0" step="any" id="pgM_' + l.id + '" placeholder="' + (l.tipo === "BS" ? "Monto en Bs" : "Monto en $") + '" value="' + esc(l.monto) + '" oninput="pgMonto(' + l.id + ',this.value)">' +
       pgTasasHTML(l) + '</div><div class="pl-eq" id="pgE_' + l.id + '"></div></div>';
   });
-  if (P.cred.on) {
+  if (P.cred.on && P.cred.cashea) {   // Tanda 1: lo que financia Cashea (sale del inicial; no se escribe)
+    h += '<div class="pl cred cs"><div class="pl-cab"><span>🛍️ Cashea financia · ' + esc(F.cliente.nombre) + '</span></div><div class="pl-cuerpo"><b class="cs-fin">' + txtU(pgCredValor()) + '</b></div><div class="pl-eq" id="pgE_cred"></div></div>';
+  } else if (P.cred.on) {
     h += '<div class="pl cred"><div class="pl-cab"><span>📝 Crédito · ' + esc(F.cliente.nombre) + '</span><button type="button" class="pgu-x" onclick="pgCredito()" title="Quitar el crédito">✕</button></div>' +
       '<div class="pl-cuerpo"><span class="mon">$</span><input type="number" inputmode="decimal" min="0" step="any" id="pgCred" placeholder="Monto a crédito ($ ' + unidadU() + ')" value="' + esc(P.cred.monto) + '" oninput="P.cred.monto=this.value;P.cred.editado=true;pgActualizar()">' +
       '<button type="button" class="btn-m gray" onclick="P.cred.editado=false;pgActualizar();$(\'pgCred\').value=P.cred.monto;">↺ Lo que falta</button></div><div class="pl-eq" id="pgE_cred"></div></div>';
@@ -1408,7 +1547,7 @@ function pgActualizar(){
   if (!P) return;
   const m = P.modo;
   if (P.cred.on && !P.cred.editado) {
-    let cub = 0; P.lineas.forEach(l => cub += pgCubre(l));
+    let cub = pgSafPant(); P.lineas.forEach(l => cub += pgCubre(l));
     const rest = r2(P.total - cub);
     P.cred.monto = rest > 0 ? rest.toFixed(2) : "";
     const inp = $("pgCred"); if (inp && document.activeElement !== inp) inp.value = P.cred.monto;
@@ -1425,7 +1564,7 @@ function pgActualizar(){
     el.innerHTML = t;
   });
   const ec = $("pgE_cred");
-  if (ec) { const c = pgCredValor(); ec.innerHTML = c > 0 ? (m === "bcv" ? "queda a deber <b>" + txtU(c) + "</b>, fijo en BCV · hoy vale <b>$" + fmt(r2(c * factorCxC())) + " div</b>" : "queda a deber <b>" + txtU(c) + "</b>") : ""; }
+  if (ec) { const c = pgCredValor(), q = P.cred.cashea ? "a nombre de Cashea: " : "queda a deber "; ec.innerHTML = c > 0 ? (m === "bcv" ? q + "<b>" + txtU(c) + "</b>, fijo en BCV · hoy vale <b>$" + fmt(r2(c * factorCxC())) + " div</b>" : q + "<b>" + txtU(c) + "</b>") : ""; }
   P.vt.lineas.forEach((v, k) => { const el = $("pgVE_" + k); if (el) el.innerHTML = Number(v.monto) > 0 ? "devuelve <b>" + txtU(pgCubreVt(v)) + "</b>" + (m !== "div" ? " · vale " + txtL(pgValeVt(v)) : "") : ""; });
   const st = pgEstado();
   const bs = v => " · Bs " + fmt(r2(v * bsPorU()));
@@ -1449,7 +1588,7 @@ function pgActualizar(){
   $("pgMetodos").classList.toggle("oculto", plegar);
   $("pgMas").classList.toggle("oculto", !plegar);
   const vm = $("pgVtMetodos"); if (vm && P.vt.on) vm.classList.toggle("oculto", P.vt.lineas.length >= 2 || (P.vt.lineas.length > 0 && Math.abs(st.queda) <= TOL));
-  $("pgDias").classList.toggle("oculto", !((P.cred.on || P.dlv.modo === "cred") && $("selDias").options.length > 1));
+  $("pgDias").classList.toggle("oculto", !(((P.cred.on && !P.cred.cashea) || P.dlv.modo === "cred") && $("selDias").options.length > 1));
   pgDlvPintar();
   const todo = $("pgTodo");
   if (!P.dlv.on) todo.innerHTML = "";
@@ -1459,6 +1598,7 @@ function pgActualizar(){
       : '<div class="pg-todo falta">Falta: ' + [uno ? "" : "① los productos", dos ? "" : "② el " + dlvTxt(P.dlv.tipo).toLowerCase()].filter(Boolean).join(" y ") + "</div>";
   }
   $("pgLineasTit").classList.toggle("oculto", !(P.lineas.length || P.cred.on));
+  pgExtrasTxt();
 }
 function pgMotivoDif(){
   const lu = P.lineas.filter(l => l.tipo === "USD" && Number(l.monto) > 0);
@@ -1473,6 +1613,7 @@ function pgMotivoDif(){
 function pgAutocompletar(l){
   let otros = 0; P.lineas.forEach(x => { if (x.id !== l.id) otros += pgCubre(x); });
   if (P.cred.on && P.cred.editado) otros += pgCredValor();
+  otros += pgSafPant();   // Tanda 1
   const N = P.total, falta = Math.max(0, r2(N - otros));
   let v = 0;
   if (l.tipo === "BS") v = P.modo === "div" ? r2(falta * tDiv()) : r2(r2(N * tBcv()) - otros * tBcv());   // en Bs exactos: suman el total del ticket
@@ -1516,7 +1657,8 @@ async function pgClienteParaCredito(){
   const r = await modal({ icono: "👤", titulo: "El crédito necesita un cliente", html: '<div class="m-txt">La venta a crédito queda como cuenta por cobrar a nombre del cliente. Esta venta está a nombre de <b>Genérico</b>.<br><br>Sin internet solo se pueden usar los clientes que ya existen en el sistema.</div>',
     botones: [{ txt: "Cancelar", v: false }, { txt: "👤 Elegir cliente", v: true, cls: "green" }] });
   if (!r) return false;
-  const c = await abrirClientes();
+  const ant = F.cliente.cedula, c = await abrirClientes();
+  if (P && F.cliente.cedula !== ant) pgSafCargar();   // Tanda 1: el saldo a favor es del cliente nuevo
   return !!(c && F.cliente.cedula);
 }
 async function pgCredito(){
@@ -1580,8 +1722,160 @@ function pgVtAgregar(i){
 }
 function pgVtQuitar(k){ P.vt.lineas.splice(k, 1); pgPintarVuelto(); pgActualizar(); }
 
+// ══ CASHEA (Tanda 1, 3.1) — como Ventas ══
+//  El cliente paga el INICIAL con los métodos de siempre. Lo que financia Cashea va como el crédito del pago (pago CRED con
+//  etiqueta «Cashea», el ticket lo dice así) y el sistema lo pone a nombre del cliente especial Cashea (Cashea.gs).
+//  Solo en venta a $ BCV, con el cliente final y su cédula. No se combina con el saldo a favor. Sin internet también:
+//  la venta se sube cuando vuelva, como todas. Aparece si el negocio tiene Cashea encendido (Configuración N8).
+const CASHEA_PCTS = [40, 50, 60];   // % de inicial que ofrece la app (los mismos de Ventas)
+function pgCsPuede(){ return !!(S.datos && S.datos.usaCashea === true && metodoCredito()); }
+function pgCsIni(){ return P && P.cs.on ? r2(Number(P.cs.inicial) || 0) : 0; }
+function pgCsFin(){ return P && P.cs.on ? r2(Math.max(0, P.total - pgCsIni())) : 0; }
+// Lo financiado va como el crédito del pago (fijo: no se escribe). Sin un inicial que deje algo por financiar, no hay crédito.
+function pgCsSync(){
+  const ini = pgCsIni();
+  P.cred = (P.cs.on && ini > 0 && ini < P.total - 0.009) ? { on: true, monto: pgCsFin().toFixed(2), editado: true, cashea: true } : { on: false, monto: "", editado: false };
+}
+async function pgCashea(on){
+  if (!P) return;
+  if (on) {
+    if (P.modo === "div") { pgPintarExtras(); return; }
+    if (!F.cliente.cedula || F.cliente.nombre === "Genérico") {
+      const r = await modal({ icono: "🛍️", titulo: "Falta el cliente final", html: '<div class="m-txt">Una venta Cashea tiene que quedar a nombre del cliente que compra, con su cédula. Esta venta está a nombre de <b>Genérico</b>.<br><br>Búscalo o regístralo y sigues con el pago.</div>',
+        botones: [{ txt: "Cancelar", v: false }, { txt: "👤 Elegir cliente", v: true, cls: "green" }] });
+      if (!P) return;
+      if (!r) { pgPintarExtras(); return; }
+      const c = await abrirClientes();
+      if (!P) return;
+      if (!(c && F.cliente.cedula)) { pgPintarExtras(); return; }
+      pgSafCargar();   // el cliente cambió: su saldo a favor (se ve si quitan Cashea)
+    }
+    pgSafApagar();
+    P.cs = { on: true, pct: 0, inicial: "", orden: "" };
+  } else P.cs = { on: false, pct: 0, inicial: "", orden: "" };
+  pgCsSync(); pgPintarExtras(); pgPintarMetodos(); pgPintarLineas(); pgActualizar();
+  if (on) setTimeout(() => { const b = document.querySelector("#pgExtras .cs-pct"); if (b && window.innerWidth > 820) b.focus(); }, 30);
+}
+function pgCsPct(p){
+  if (!P || !P.cs.on) return;
+  P.cs.pct = p; P.cs.inicial = r2(P.total * p / 100).toFixed(2);
+  const i = $("pgCsIni"); if (i) i.value = P.cs.inicial;
+  pgCsCambio();
+}
+function pgCsMonto(v){ if (!P || !P.cs.on) return; P.cs.pct = 0; P.cs.inicial = v; pgCsCambio(); }
+// Cambió el inicial: cambia lo financiado y, si hay UN solo método, se ajusta a lo que falta (como Ventas)
+function pgCsCambio(){
+  pgCsSync(); pgPintarMetodos(); pgPintarLineas();
+  if (P.lineas.length === 1) pgAutocompletar(P.lineas[0]);
+  pgActualizar();
+}
+
+// ══ SALDO A FAVOR (Tanda 1, 3.1) — como Ventas, solo con internet ══
+//  Al abrir el pago se le pregunta al sistema si el cliente tiene saldo a favor (SaldoFavor.gs). Esa parte de la venta
+//  queda pagada sin que entre dinero a ninguna cuenta. El saldo vive en divisas; en pantalla va en la unidad de la venta
+//  (venta en Bs a BCV con TasaBin: $ BCV). El sistema lo vuelve a revisar al registrar (dos cajas no gastan el mismo saldo).
+function pgSafFactor(){ return (binOn() && P && P.modo === "bcv" && tBcv() > 0 && tDiv() > 0) ? tDiv() / tBcv() : 1; }
+function pgSafDispPant(){ return P ? r2(P.saf.disp * pgSafFactor()) : 0; }
+function pgSafPant(){ return P && P.saf.on ? r2(Number(P.saf.monto) || 0) : 0; }
+function pgSafDiv(){   // lo usado, en divisas del sistema (lo que se descuenta del saldo)
+  const pant = pgSafPant(); if (!(pant > 0)) return 0;
+  const d = Math.abs(pant - pgSafDispPant()) < 0.005 ? P.saf.disp : r2(pant / pgSafFactor());
+  return r2(Math.min(d, P.saf.disp));
+}
+function pgSafApagar(){ if (P) { P.saf.on = false; P.saf.monto = ""; } }
+async function pgSafCargar(){
+  if (!P) return;
+  const ced = String(F.cliente.cedula || "").trim(), pide = (Number(P.saf.pide) || 0) + 1;
+  P.saf = { disp: 0, on: false, monto: "", ced: "", pide: pide };
+  pgPintarExtras(); pgActualizar();
+  if (!ced || F.cliente.nombre === "Genérico" || F.cliente.nuevo || !hayInternet() || !sesionViva()) return;   // sin internet no se ofrece
+  let r = null;
+  try { r = await api("cj_saf", { cedula: ced }, 20000); } catch (e) { r = null; }
+  if (!P || P.saf.pide !== pide || String(F.cliente.cedula || "").trim() !== ced) return;   // ya se cerró el pago o cambió el cliente
+  const d = r && r.ok ? Number(r.disponible) || 0 : 0;
+  if (d <= 0.004) return;
+  P.saf.disp = d; P.saf.ced = ced;
+  pgPintarExtras();
+}
+function pgSaf(on){
+  if (!P) return;
+  if (on && P.cs.on) { pgPintarExtras(); return; }
+  if (on) { P.saf.on = true; P.saf.monto = r2(Math.min(pgSafDispPant(), P.total)).toFixed(2); }
+  else pgSafApagar();
+  pgPintarExtras(); pgSafCambio();
+}
+function pgSafMonto(v){ if (!P) return; P.saf.monto = v; pgSafCambio(); }
+function pgSafTodo(){ if (!P) return; P.saf.monto = r2(Math.min(pgSafDispPant(), P.total)).toFixed(2); const i = $("pgSafM"); if (i) i.value = P.saf.monto; pgSafCambio(); }
+function pgSafCambio(){ if (P.lineas.length === 1) pgAutocompletar(P.lineas[0]); pgActualizar(); }
+function pgSafProblema(){
+  if (!P || !P.saf.on) return "";
+  const m = pgSafPant();
+  if (!(m > 0)) return "Escribe cuánto del saldo a favor se usa, o desmarca «Usar saldo a favor».";
+  if (m > pgSafDispPant() + 0.009) return "El cliente tiene " + txtU(pgSafDispPant()) + " a favor: no se pueden usar " + txtU(m) + ".";
+  if (m > P.total + 0.009) return "La venta es de " + txtU(P.total) + ": el saldo a favor no puede pasar del total.";
+  if (String(F.cliente.cedula || "").trim() !== P.saf.ced) return "Cambiaste el cliente. Cierra el pago y vuelve a abrirlo para ver el saldo a favor del cliente nuevo.";
+  return "";
+}
+// Cashea y saldo a favor, arriba de los métodos de pago (se pintan al abrir y al marcar; los textos, en cada cambio)
+function pgPintarExtras(){
+  const box = $("pgExtras"); if (!box || !P) return;
+  let h = "";
+  if (pgCsPuede() && !P.dlv.on) {
+    const div = P.modo === "div";
+    h += '<div class="cs-box' + (P.cs.on ? " on" : "") + '"><label class="cs-check"><input type="checkbox" id="pgCsChk"' + (P.cs.on ? " checked" : "") + (div ? " disabled" : "") +
+      ' onchange="pgCashea(this.checked)"><span class="cs-marca">Cashea</span><span class="cs-txt">Venta con Cashea</span></label>';
+    if (div) h += '<div class="cs-nota">Cashea va a precio BCV: quita <b>💵 Venta en Dólares</b> en la factura para usarlo.</div>';
+    if (P.cs.on) {
+      h += '<div class="cs-preg"><span class="paso-n">1</span><span>¿Cuánto paga de inicial? <small>Lo dice la app de Cashea.</small></span></div>' +
+        '<div class="cs-pcts">' + CASHEA_PCTS.map(p => '<button type="button" class="cs-pct' + (P.cs.pct === p ? " on" : "") + '" data-p="' + p + '" onclick="pgCsPct(' + p + ')">' + p + " %</button>").join("") +
+        '<input type="number" inputmode="decimal" min="0" step="any" class="cs-inp" id="pgCsIni" placeholder="Otro monto ($ ' + unidadU() + ')" value="' + esc(P.cs.inicial) + '" oninput="pgCsMonto(this.value)"></div>' +
+        '<input type="text" class="cs-inp cs-orden" id="pgCsOrden" maxlength="40" placeholder="N° de orden Cashea (opcional)" value="' + esc(P.cs.orden) + '" oninput="P.cs.orden=this.value" autocomplete="off">' +
+        '<div class="cs-res" id="pgCsRes"></div>' +
+        '<div class="cs-preg"><span class="paso-n">2</span><span id="pgCsPaga">¿Con qué paga el cliente el inicial?</span></div>';
+    }
+    h += "</div>";
+  }
+  if (!P.cs.on && P.saf.disp > 0.004) {
+    h += '<div class="saf-box' + (P.saf.on ? " on" : "") + '"><label class="cs-check"><input type="checkbox" id="pgSafChk"' + (P.saf.on ? " checked" : "") + ' onchange="pgSaf(this.checked)"><span class="cs-txt">🎁 Usar saldo a favor</span></label>' +
+      '<span class="saf-disp">' + esc(F.cliente.nombre) + " tiene <b>" + txtU(pgSafDispPant()) + "</b> a favor" + (pgSafFactor() !== 1 ? " ($" + fmt(P.saf.disp) + " div)" : "") + "</span>";
+    if (P.saf.on) h += '<div class="saf-fila"><span class="mon">$</span><input type="number" inputmode="decimal" min="0" step="any" class="cs-inp" id="pgSafM" placeholder="Cuánto se usa ($ ' + unidadU() + ')" value="' + esc(P.saf.monto) + '" oninput="pgSafMonto(this.value)">' +
+      '<button type="button" class="btn-m gray" onclick="pgSafTodo()">Todo lo que se pueda</button></div><div class="cs-res" id="pgSafRes"></div>';
+    h += "</div>";
+  }
+  box.innerHTML = h;
+  pgExtrasTxt();
+}
+function pgExtrasTxt(){
+  if (!P) return;
+  const r = $("pgCsRes");
+  if (r) {
+    const ini = pgCsIni(), N = P.total;
+    r.innerHTML = !(ini > 0) ? '<span class="cs-falta">👆 Toca el porcentaje o escribe el inicial que indica la app de Cashea.</span>'
+      : ini >= N - 0.009 ? '<span class="cs-mal">⚠️ Con ese inicial no queda nada para que Cashea financie (total ' + txtU(N) + "). Revisa el monto.</span>"
+      : "Total " + txtU(N) + " · inicial " + txtU(ini) + " (" + (P.cs.pct > 0 ? P.cs.pct : fmt(ini / N * 100)) + " %) · <b>Cashea financia " + txtU(pgCsFin()) + "</b>";
+    const pg = $("pgCsPaga");
+    if (pg) pg.innerHTML = ini > 0 && ini < N - 0.009 ? "¿Con qué paga el cliente el inicial de <b>" + txtU(ini) + " · Bs " + fmt(r2(ini * bsPorU())) + "</b>?" : "¿Con qué paga el cliente el inicial?";
+    document.querySelectorAll("#pgExtras .cs-pct").forEach(b => b.classList.toggle("on", Number(b.dataset.p) === P.cs.pct));
+  }
+  const s = $("pgSafRes");
+  if (s) {
+    const p = pgSafProblema(), resta = r2(Math.max(0, P.total - pgSafPant()));
+    s.innerHTML = p ? '<span class="cs-mal">⚠️ ' + esc(p) + "</span>"
+      : "Total " + txtU(P.total) + " − saldo a favor " + txtU(pgSafPant()) + " = <b>" + txtU(resta) + "</b> por cobrar" + (resta <= 0.009 ? " (no hace falta otro método)" : "") +
+        ". Le quedan " + txtU(r2(Math.max(0, pgSafDispPant() - pgSafPant()))) + " a favor.";
+  }
+}
+
 async function pgConfirmar(){
   const m = P.modo;
+  if (P.cs.on) {   // Tanda 1: Cashea (las mismas revisiones de Ventas)
+    const ini = pgCsIni(), N = P.total;
+    if (!F.cliente.cedula || F.cliente.nombre === "Genérico") { aviso({ icono: "👤", titulo: "Falta el cliente final", html: "La venta Cashea tiene que quedar a nombre del cliente que compra, con su cédula. Desmarca Cashea y vuelve a marcarlo para elegirlo." }); return; }
+    if (!(ini > 0)) { aviso({ icono: "🛍️", titulo: "Falta el inicial", html: "Elige el porcentaje (" + CASHEA_PCTS.join(", ") + " %) o escribe el monto exacto del inicial que indica la app de Cashea." }); return; }
+    if (ini > N + 0.009) { aviso({ icono: "🛍️", titulo: "El inicial es mayor que el total", html: "Escribiste un inicial de <b>" + txtU(ini) + "</b>, pero la factura completa es de <b>" + txtU(N) + "</b>. Revisa el monto." }); return; }
+    if (ini >= N - 0.009) { aviso({ icono: "🛍️", titulo: "El inicial cubre toda la factura", html: "Con un inicial de " + txtU(ini) + " no queda nada para que Cashea financie (total " + txtU(N) + ").<br><br>Revisa el monto, o desmarca Cashea si el cliente paga todo." }); return; }
+  }
+  if (P.saf.on) { const sp = pgSafProblema(); if (sp) { aviso({ icono: "🎁", titulo: "Revisa el saldo a favor", html: esc(sp) }); return; } }
   if (P.dlv.on && !pgDlvListo()) {
     aviso({ icono: P.dlv.tipo === "envio" ? "📦" : "🛵", titulo: "Falta el " + dlvTxt(P.dlv.tipo).toLowerCase(), html: "En el paso <b>②</b> elige cómo paga el cliente el " + dlvTxt(P.dlv.tipo).toLowerCase() + ": en dólares, en bolívares" + (metodoCredito() ? " o a crédito" : "") + (P.dlv.modo && P.dlv.modo !== "cred" ? ", y por dónde lo paga" : "") + "." });
     return;
@@ -1601,7 +1895,7 @@ async function pgConfirmar(){
     const c = pgCredValor();
     if (!F.cliente.cedula) { aviso({ icono: "👤", titulo: "Falta el cliente", html: "El crédito necesita un cliente con cédula. Elige el cliente y vuelve a guardar." }); return; }
     if (!(c > 0)) { aviso({ icono: "📝", titulo: "Falta el monto del crédito", html: "Marcaste crédito pero el monto quedó vacío. Usa <b>↺ Lo que falta</b>, escríbelo, o quita el crédito con ✕." }); return; }
-    pagos.push({ metodo: metodoCredito(), monto: c, tipo: "CRED" });
+    pagos.push(P.cred.cashea ? { metodo: metodoCredito(), monto: c, tipo: "CRED", etiqueta: "Cashea" } : { metodo: metodoCredito(), monto: c, tipo: "CRED" });   // Tanda 1: el ticket dice «Cashea»
   }
   if (P.dlv.on) {   // paso ②: el delivery se suma a lo que ya se cobró por ese medio (o al crédito)
     const d = P.dlv;
@@ -1615,6 +1909,7 @@ async function pgConfirmar(){
       if (ya) ya.monto = r2(ya.monto + monto); else pagos.push({ metodo: d.metodo, monto: monto, tipo: tipo });
     }
   }
+  if (pgSafPant() > 0) pagos.push({ metodo: "Saldo a favor", monto: pgSafPant(), tipo: "SAF", montoDiv: pgSafDiv() });   // Tanda 1 (SaldoFavor.gs)
   if (!pagos.length) { aviso({ icono: "🧾", titulo: "No hay forma de pago", html: "Toca el método con que paga el cliente (o <b>A crédito</b> si queda a deber)." }); return; }
   const vuelto = [];
   if (P.vt.on) {
@@ -1662,15 +1957,15 @@ async function pgGuardar(pagos, vuelto){
   if (!puedeVender()) return;
   btnOcupado(btn, "Guardando…"); $("pgCerrar").disabled = true;
   if (!S.turno) { btnLibre(btn); $("pgCerrar").disabled = false; cerrarPago(); irA("vender"); return; }
-  const t = S.tasas, ahora = new Date(), m = P.modo, dl = r2(P.dlvMonto || 0);
+  const tb = tBcv(), ahora = new Date(), m = P.modo, dl = r2(P.dlvMonto || 0);   // Tanda 1: con venta de otro día, las tasas de ese día
   const totPant = r2(P.total + (P.dlv.on ? dl : 0));                                     // lo que dice la factura (con el delivery por su monto)
   const totBs = P.dlv.on ? r2(P.total * bsPorU() + dl * tBcv()) : r2(P.total * bsPorU());   // el delivery, siempre a BCV
   const v = {
-    id: uuid(), numero: "", creada: ahoraTxt(ahora), fecha: hoyTxt(ahora),
+    id: uuid(), numero: "", creada: ahoraTxt(ahora), fecha: F.fechaAnt ? F.fechaAnt.fecha : hoyTxt(ahora), fechaAnt: !!F.fechaAnt,   // Tanda 1: venta de otro día
     numeroTicket: 0, provisional: false, turno: S.turno.id,   // el número lo pone guardarVentaNueva (apartado o provisional)
     caja: S.datos.caja, equipo: S.datos.equipo,
     // tasas con que se cobró: div = Divisas (TasaBin encendido) o Divisas de los $ en efectivo (apagado)
-    tasas: { bcv: t.bcv, div: binOn() ? tDiv() : tDivOff(), binOn: binOn() },
+    tasas: { bcv: tb, div: binOn() ? tDiv() : tDivOff(), binOn: binOn() },
     modo: m, unidad: m === "div" ? "div" : "BCV",   // venta en $ BCV o Venta en Dólares
     // precio = base en los libros (lo que recibe el sistema) · pu = base en pantalla (el ticket)
     items: F.items.map(i => ({ tipo: i.tipo, codigo: i.codigo, nombre: i.nombre, codigoBarras: i.codigoBarras, cantidad: Number(i.cantidad), precio: i.libro, pu: i.base, iva: i.iva, manual: !!i.manual })),
@@ -1682,11 +1977,13 @@ async function pgGuardar(pagos, vuelto){
       clienteNuevo: !!(F.cliente.cedula && F.cliente.nuevo),
       claveCon: F.claveOk ? F.claveCon : (F.claveCon === "orden" ? "orden" : ""),   // "orden": el precio manual o el descuento venían en la orden   // con qué clave se autorizó lo que la pide: "sistema" (la de Ventas) o "sinInternet"   // creado sin internet: el sistema lo crea antes de registrar la venta
       descuentoTipo: F.desc.tipo, descuentoValor: Number(F.desc.valor) || 0, descuentoValorServ: descuentoServidor(F.items, F.desc),
-      diasCredito: (P.cred.on || P.dlv.modo === "cred") ? (Number(P.dias) || 0) : 0,
+      diasCredito: ((P.cred.on && !P.cred.cashea) || P.dlv.modo === "cred") ? (Number(P.dias) || 0) : 0,
+      cashea: P.cs.on ? { orden: String(P.cs.orden || "").trim().slice(0, 40), inicial: pgCsIni(), financiado: pgCsFin() } : null,   // Tanda 1 (Cashea.gs)
+      fechaAnterior: F.fechaAnt ? true : undefined,   // Tanda 1: venta de otro día (el sistema la revisa contra las tasas guardadas de ese día)
       delivery: dl, deliveryBCV: dl, deliveryConcepto: P.dlv.tipo === "envio" ? "envio" : "delivery",   // Etapa 2B: como Ventas (al fondo de delivery entran los $ BCV)
       objetivoVenta: m === "off" ? "" : (m === "div" ? "DIVISAS" : "BCV"), totalPantallaUSD: totPant
     }, vendedorDeLaVenta(), ordPago()),   // ordPago: la orden que se cobra (queda CONVERTIDA al subir), ordenes.js
-    total: totPant, totalBs: totBs, totalBcv: m === "div" ? (t.bcv > 0 ? r2(totBs / t.bcv) : 0) : totPant,
+    total: totPant, totalBs: totBs, totalBcv: m === "div" ? (tb > 0 ? r2(totBs / tb) : 0) : totPant,
     estado: "por_subir", intentos: 0, msg: "", avisos: [], numeroFactura: "", subidaEn: 0
   };
   try { await guardarVentaNueva(v); }
@@ -1703,7 +2000,8 @@ async function pgGuardar(pagos, vuelto){
   setTimeout(() => { const b = $("pgImprimir"); if (b) b.focus(); }, 40);
   $("pgOkNum").textContent = ((S.datos.impresion || {}).nombreDoc || "Nota de Entrega") + " N° " + nroTicket(v);
   $("pgOkTxt").innerHTML = "Total Bs " + fmt(v.totalBs) + " · $" + fmt(v.total) + " " + v.unidad + "<br>" + (S.online !== false ? "Se registra en el sistema en un momento." : "Se registra sola en el sistema cuando vuelva el internet.") +
-    (v.provisional ? "<br>🔢 Número <b>provisional</b>: el sistema le da su número al subirla." : "");
+    (v.provisional ? "<br>🔢 Número <b>provisional</b>: el sistema le da su número al subirla." : "") +
+    (v.fechaAnt ? "<br>📅 Venta del <b>" + fechaCorta(v.fecha) + "</b> (de otro día): no cuenta en el cierre de hoy." : "");
   limpiarVenta();
   pintarEstado(); pintarBanners();
 }
@@ -1738,7 +2036,7 @@ function htmlTicket(v){
   }).join("");
   const pagosOrd = (p.pagos || []).filter(q => q.tipo !== "CRED").concat((p.pagos || []).filter(q => q.tipo === "CRED"));
   const filasPago = pagosOrd.map(q => {
-    let f = '<tr style="' + (q.tipo === "CRED" ? "font-style:italic;" : "") + '"><td style="padding:1px 0;">' + esc(q.metodo) + '</td><td style="text-align:right;padding:1px 0;">' + (q.tipo === "BS" ? "Bs." : "$") + " " + fmt(q.monto) + "</td></tr>";
+    let f = '<tr style="' + (q.tipo === "CRED" ? "font-style:italic;" : "") + '"><td style="padding:1px 0;">' + esc(q.etiqueta || q.metodo) + '</td><td style="text-align:right;padding:1px 0;">' + (q.tipo === "BS" ? "Bs." : "$") + " " + fmt(q.monto) + "</td></tr>";
     if (q.tipo === "CRED" && Number(p.diasCredito) > 0) {
       const venc = vencimiento(v.fecha, p.diasCredito);
       f += '<tr><td colspan="2" style="padding:0 0 1px 6px;font-style:italic;">Días de crédito: ' + p.diasCredito + "</td></tr>";
@@ -1833,9 +2131,10 @@ function imprimirHTML(html){
 // ══ CIERRE DE TURNO ══
 function esEfectivo(p){ const m = metodoDe(p.metodo) || { metodo: p.metodo, tipo: p.tipo }; return pguTipoDe(m) === "efectivo"; }
 function resumenTurno(t){
-  const vs = S.ventas.filter(v => v.turno === t.id && v.estado !== "invalida");
+  const todas = S.ventas.filter(v => v.turno === t.id && v.estado !== "invalida");
+  const vs = todas.filter(v => !v.fechaAnt), otras = todas.filter(v => v.fechaAnt);   // Tanda 1: las ventas de otro día no cuentan en la gaveta de hoy
   const met = {};
-  let totalUsd = 0, totalBs = 0, credito = 0, desc = 0, sinSubir = 0;
+  let totalUsd = 0, totalBs = 0, credito = 0, desc = 0, sinSubir = 0, cashea = 0, saf = 0;
   const sumar = (p, m) => {
     const k = p.metodo + "|" + p.tipo;
     const x = met[k] = met[k] || { metodo: p.metodo, tipo: p.tipo, neto: 0, desc: pguDesc(metodoDe(p.metodo) || { metodo: p.metodo, tipo: p.tipo }), efectivo: esEfectivo(p) };
@@ -1848,13 +2147,22 @@ function resumenTurno(t){
     const sinDesc = totales(v.items.map(i => ({ cantidad: i.cantidad, base: i.pu != null ? i.pu : i.precio, iva: i.iva })), { tipo: "ninguno" }).total;
     desc += Math.max(0, sinDesc - ((Number(v.total) || 0) - (Number(v.pago.delivery) || 0))) * fx;   // sin el delivery
     if (v.estado !== "subida") sinSubir++;
-    (v.pago.pagos || []).forEach(p => { if (p.tipo === "CRED") credito += (Number(p.monto) || 0) * fx; else sumar(p, Number(p.monto) || 0); });
+    (v.pago.pagos || []).forEach(p => {
+      const x = (Number(p.monto) || 0) * fx;
+      if (p.tipo === "CRED") { credito += x; if (p.etiqueta === "Cashea") cashea += x; }   // Tanda 1: Cashea va dentro del crédito (aparte para mostrarlo)
+      else if (p.tipo === "SAF") saf += x;                                               // Tanda 1: saldo a favor (no entra dinero)
+      else sumar(p, Number(p.monto) || 0);
+    });
     (v.pago.vuelto || []).forEach(p => sumar(p, -(Number(p.monto) || 0)));
   });
   const metodos = Object.values(met).sort((a, b) => (a.tipo === b.tipo ? 0 : a.tipo === "BS" ? -1 : 1) || a.desc.localeCompare(b.desc));
   const efBs = metodos.filter(m => m.efectivo && m.tipo === "BS").reduce((s, m) => s + m.neto, 0);
   const efUsd = metodos.filter(m => m.efectivo && m.tipo === "USD").reduce((s, m) => s + m.neto, 0);
-  return { ventas: vs.length, totalUsd: r2(totalUsd), totalBs: r2(totalBs), credito: r2(credito), descuentos: r2(desc), sinSubir,
+  const bcvDe = v => v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0;
+  const otroDia = { n: otras.length, totalBs: r2(otras.reduce((s, v) => s + (Number(v.totalBs) || 0), 0)), totalUsd: r2(otras.reduce((s, v) => s + bcvDe(v), 0)),
+    lista: otras.map(v => ({ nro: v.numeroFactura ? "#" + v.numeroFactura : (v.numeroTicket ? "#" + v.numeroTicket : "PROV " + v.numero), fecha: v.fecha, totalBs: r2(Number(v.totalBs) || 0) })) };
+  sinSubir += otras.filter(v => v.estado !== "subida").length;
+  return { ventas: vs.length, totalUsd: r2(totalUsd), totalBs: r2(totalBs), credito: r2(credito), cashea: r2(cashea), saf: r2(saf), otroDia: otroDia, descuentos: r2(desc), sinSubir,
            metodos, efBsVentas: r2(efBs), efUsdVentas: r2(efUsd),
            efBsEsperado: r2((Number(t.fondoBs) || 0) + efBs), efUsdEsperado: r2((Number(t.fondoUsd) || 0) + efUsd) };
 }
@@ -1929,7 +2237,12 @@ function pintarCierre(){
       '<div class="m-btns">' + (bs ? volver : atras) + '<button type="button" class="btn green" onclick="cierrePaso(' + (CIE.paso + 1) + ')">Siguiente →</button></div>';
   } else if (CIE.paso === 3) {
     const filasMet = R.metodos.map(m => "<tr><td>" + esc(m.desc) + '</td><td class="r">' + (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto) + "</td></tr>").join("") +
-      (R.credito ? '<tr><td>📝 A crédito (no entra a caja)</td><td class="r">$' + fmt(R.credito) + "</td></tr>" : "");
+      (r2(R.credito - (R.cashea || 0)) > 0.004 ? '<tr><td>📝 A crédito (no entra a caja)</td><td class="r">$' + fmt(r2(R.credito - (R.cashea || 0))) + "</td></tr>" : "") +
+      (R.cashea ? '<tr><td>🛍️ Cashea paga después (no entra a caja)</td><td class="r">$' + fmt(R.cashea) + "</td></tr>" : "") +
+      (R.saf ? '<tr><td>🎁 Saldo a favor (no entra a caja)</td><td class="r">$' + fmt(R.saf) + "</td></tr>" : "");
+    const od = R.otroDia || { n: 0, lista: [] };   // Tanda 1: ventas de otro día hechas en este turno
+    const filasOd = od.n ? '<div class="cie-tit">📅 Ventas de otro día (no cuentan en la gaveta)</div><table class="cie-tabla">' + od.lista.map(o => "<tr><td>" + esc(o.nro) + " · del " + fechaCorta(o.fecha) + '</td><td class="r">Bs ' + fmt(o.totalBs) + "</td></tr>").join("") +
+      '</table><div class="cie-ayuda" style="margin-top:4px;">Se registran con su fecha y las tasas de ese día. Su dinero no se pide en la gaveta de hoy.</div>' : "";
     const sg = cierreSisGrupos(x.sis);
     const sgn = v => (v > 0 ? "+" : v < 0 ? "−" : "") + fmt(Math.abs(v));
     const filasSis = sg.map(g => "<tr><td>" + (g.bs + g.usd >= 0 ? "+ " : "− ") + esc(g.etq) + ' <span class="cie-sis">(del sistema)</span></td><td class="r">' + (g.bs ? sgn(g.bs) : "—") + '</td><td class="r">' + (g.usd ? sgn(g.usd) : "—") + "</td></tr>").join("");
@@ -1949,7 +2262,7 @@ function pintarCierre(){
         (m.detalle ? '<div class="cie-sis">' + esc(m.detalle) + "</div>" : "") + "</div>").join("") + "</div>" : "") +
       '<div class="res" style="margin-top:12px;"><div><span>Ventas</span><b>' + R.ventas + '</b></div><div><span>Total</span><b>Bs ' + fmt(R.totalBs) + '</b><span style="text-transform:none;">$' + fmt(R.totalUsd) + " BCV</span></div>" +
       (R.descuentos ? '<div><span>Descuentos</span><b>$' + fmt(R.descuentos) + "</b></div>" : "") + "</div>" +
-      '<div class="cie-tit">Por método (cobrado menos vuelto)</div><table class="cie-tabla">' + (filasMet || '<tr><td colspan="2" style="color:var(--text-dim);">Sin ventas en este turno.</td></tr>') + "</table>" +
+      '<div class="cie-tit">Por método (cobrado menos vuelto)</div><table class="cie-tabla">' + (filasMet || '<tr><td colspan="2" style="color:var(--text-dim);">Sin ventas en este turno.</td></tr>') + "</table>" + filasOd +
       '<div class="m-btns">' + atras + '<button type="button" class="btn green" onclick="cierrePaso(4)">Siguiente →</button></div>';
   } else {
     const cuadra = Math.abs(x.dBs) < 0.005 && Math.abs(x.dUsd) < 0.005;
@@ -1999,7 +2312,10 @@ function htmlCierre(c){
     '<hr class="sep"><table>' + fila("Cajero:", esc(c.cajeroNombre)) + fila("Apertura:", esc(c.apertura)) + fila("Cierre:", esc(c.cierre)) + fila("Ventas:", c.ventas) +
     fila("Total:", "Bs " + fmt(c.totalBs)) + fila("Total $ BCV:", "$" + fmt(c.totalUsd)) + (c.descuentos ? fila("Descuentos:", "$" + fmt(c.descuentos)) : "") + "</table>" +
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Por método (menos vuelto)</div><table>' +
-    (c.metodos || []).map(m => fila(esc(String(m.desc || m.metodo).replace(/^[^\wÁÉÍÓÚÑáéíóúñ]+\s*/, "")), (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto))).join("") + (c.credito ? fila("A crédito:", "$" + fmt(c.credito)) : "") + "</table>" +
+    (c.metodos || []).map(m => fila(esc(String(m.desc || m.metodo).replace(/^[^\wÁÉÍÓÚÑáéíóúñ]+\s*/, "")), (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto))).join("") + (r2(c.credito - (c.cashea || 0)) > 0.004 ? fila("A crédito:", "$" + fmt(r2(c.credito - (c.cashea || 0)))) : "") +
+    (c.cashea ? fila("Cashea:", "$" + fmt(c.cashea)) : "") + (c.saf ? fila("Saldo a favor:", "$" + fmt(c.saf)) : "") + "</table>" +
+    (c.otroDia && c.otroDia.n ? '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Ventas de otro día (no van en la gaveta)</div><table>' +
+      c.otroDia.lista.map(o => fila(esc(o.nro) + " del " + fechaCorta(o.fecha), "Bs " + fmt(o.totalBs))).join("") + "</table>" : "") +
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Efectivo Bs</div><table>' +
     fila("Fondo:", fmt(c.fondoBs)) + fila("Ventas:", fmt(c.efBsVentas)) + sisBs.map(g => fila(esc(g.etq) + ":", sgn(g.bs))).join("") + sinSis +
     fila("Debe haber:", fmt(c.efBsEsperado)) + fila("Contado:", fmt(c.efBsContado)) + fila("Resultado:", dif(c.efBsDif)) + "</table>" +
@@ -2133,6 +2449,7 @@ async function reintentar(id, btn){
 }
 
 // ══ VENTAS DEL EQUIPO ══
+function diaDe(v){ return String(v.creada || v.fecha || "").slice(0, 10); }   // el día en que se hizo la venta en el equipo
 function filtrarVentas(f){ S.filtro = f; document.querySelectorAll("#filtros button").forEach(b => b.classList.toggle("on", b.dataset.f === f)); pintarVentas(); }
 function estadoHTML(v){
   if (v.estado === "subida") return (v.avisos && v.avisos.length) ? '<span class="est av">⚠️ En el sistema #' + esc(v.numeroFactura) + " · con avisos</span>" : '<span class="est sub">✅ En el sistema #' + esc(v.numeroFactura) + "</span>";
@@ -2141,7 +2458,7 @@ function estadoHTML(v){
 }
 function pintarVentas(){
   const hoy = hoyTxt();
-  const deHoy = S.ventas.filter(v => v.fecha === hoy);
+  const deHoy = S.ventas.filter(v => diaDe(v) === hoy);   // Tanda 1: lo hecho hoy en este equipo (también las ventas de otro día)
   const bcvDe = v => v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0;   // en $ BCV (una Venta en Dólares, pasada con sus tasas)
   const sumBs = deHoy.reduce((s, v) => s + (Number(v.totalBs) || 0), 0), sumUsd = deHoy.reduce((s, v) => s + bcvDe(v), 0);
   const c = cuentas();
@@ -2177,7 +2494,7 @@ function pintarVentas(){
   $("turnosLista").innerHTML = th ? '<div class="card" style="margin-bottom:10px;"><div class="card-tit">🔒 Turnos</div><table class="cie-tabla">' + th + "</table></div>" : "";
   $("btnSubir").classList.toggle("oculto", !c.por && !c.mal);
   let lst = S.ventas.slice().sort((a, b) => String(b.creada).localeCompare(String(a.creada)));
-  if (S.filtro === "hoy") lst = lst.filter(v => v.fecha === hoy);
+  if (S.filtro === "hoy") lst = lst.filter(v => diaDe(v) === hoy);
   else if (S.filtro === "por") lst = lst.filter(v => v.estado === "por_subir");
   else if (S.filtro === "mal") lst = lst.filter(v => v.estado === "pendiente" || v.estado === "invalida");
   else if (S.filtro === "av") lst = lst.filter(v => v.estado === "subida" && v.avisos && v.avisos.length);
@@ -2195,7 +2512,7 @@ function pintarVentas(){
     if (v.estado === "por_subir" && v.msg) msg = '<div class="vt-msg av">Último intento: ' + esc(v.msg) + "</div>";
     const nroL = v.numeroFactura ? "#" + v.numeroFactura : (v.numeroTicket ? "#" + v.numeroTicket : "PROV " + v.numero);
     if (v.numeroFactura && String(v.numeroTicket || "") !== String(v.numeroFactura)) msg = '<div class="vt-msg av">⚠️ El ticket salió ' + (v.numeroTicket ? "con el #" + esc(v.numeroTicket) : "provisional") + " y quedó registrada con el <b>#" + esc(v.numeroFactura) + "</b>. Reimprímelo si el cliente lo necesita.</div>" + msg;
-    return '<div class="vt-item" id="vt_' + v.id + '"><div class="vt-cab" onclick="this.parentNode.classList.toggle(\'abierto\')"><div style="min-width:0;"><div class="n">' + esc(nroL) + " · " + fechaCorta(v.fecha) + " " + horaDe(v.creada) + (v.pago.cajeroNombre ? ' <span style="color:var(--text-dim);font-weight:600;">· ' + esc(v.pago.cajeroNombre) + "</span>" : "") + "</div>" +
+    return '<div class="vt-item" id="vt_' + v.id + '"><div class="vt-cab" onclick="this.parentNode.classList.toggle(\'abierto\')"><div style="min-width:0;"><div class="n">' + esc(nroL) + " · " + fechaCorta(v.fecha) + " " + horaDe(v.creada) + (v.fechaAnt ? ' <span class="otro-dia-tag">📅 de otro día</span>' : "") + (v.pago.cajeroNombre ? ' <span style="color:var(--text-dim);font-weight:600;">· ' + esc(v.pago.cajeroNombre) + "</span>" : "") + "</div>" +
       '<div class="s">' + esc(p.clienteNombre || "Genérico") + (p.clienteCedula ? " · " + esc(p.clienteCedula) : "") + "</div>" + estadoHTML(v) + "</div>" +
       '<div class="m">Bs ' + fmt(v.totalBs) + '<div style="font-size:11px;color:var(--text-dim);font-weight:600;">$' + fmt(v.total) + (v.unidad === "div" ? " div" : "") + "</div></div></div>" +
       '<div class="vt-det">' + msg + "<table>" + items + "</table><table>" + pagos + "</table>" +

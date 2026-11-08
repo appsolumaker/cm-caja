@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
 <meta name="cm-caja-web" content="ControlMaster · Caja">
-<meta name="cm-ver" content="3.0">
+<meta name="cm-ver" content="3.1">
 <title>Caja · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="estilos.css?v=3.0">
+<link rel="stylesheet" href="estilos.css?v=3.1">
 </head>
 <body class="light entrando">
 
@@ -90,7 +90,7 @@
         </div>
         <div class="badge-inp">
           <label>Fecha:</label>
-          <input type="text" id="fechaVenta" readonly tabindex="-1" style="width:92px;cursor:default;">
+          <input type="text" id="fechaVenta" readonly onclick="abrirFechaVenta()" onkeydown="if(event.key==='Enter'){event.preventDefault();abrirFechaVenta();}" title="📅 ¿Venta de otro día? Tócala para poner la fecha y las tasas de ese día" style="width:92px;cursor:pointer;">
         </div>
         <label class="badge-inp oculto" id="badgeDolares" style="cursor:pointer;gap:7px;">
           <input type="checkbox" id="chkDolares" onchange="cambiarMoneda()" style="width:16px;height:16px;accent-color:var(--green);cursor:pointer;margin:0;">
@@ -114,6 +114,7 @@
         </div>
       </div>
 
+      <div class="banner av oculto" id="bannerOtroDia" style="margin:0 0 8px;"></div>
       <div class="factura-scroll">
         <table class="tabla-fac">
           <thead>
@@ -260,6 +261,7 @@
           <div class="bs" id="pgTotalBs"></div>
         </div>
         <div class="pgu-hint" id="pgHint"></div>
+        <div id="pgExtras"></div>
         <div class="paso-tit oculto" id="pgPaso1"><span><span class="paso-n">1</span>¿Cómo paga los PRODUCTOS?</span><b id="pgPaso1M"></b></div>
         <div id="pgMetodos"></div>
         <div class="oculto" id="pgMas"><button type="button" class="pgu-mas" onclick="P.verMet=true;pgActualizar()">＋ Otro método o crédito</button></div>
@@ -304,11 +306,11 @@
 <div class="bloqueo oculto" id="bloqueo"><div class="bq-box" id="bloqCuerpo"></div></div>
 <div class="toast" id="toast"></div>
 
-<script src="app.js?v=3.0"></script>
-<script src="api.js?v=3.0"></script>
-<script src="sesion.js?v=3.0"></script>
-<script src="numeros.js?v=3.0"></script>
-<script src="ordenes.js?v=3.0"></script>
-<script src="cajero.js?v=3.0"></script>
+<script src="app.js?v=3.1"></script>
+<script src="api.js?v=3.1"></script>
+<script src="sesion.js?v=3.1"></script>
+<script src="numeros.js?v=3.1"></script>
+<script src="ordenes.js?v=3.1"></script>
+<script src="cajero.js?v=3.1"></script>
 </body>
 </html>
