@@ -715,3 +715,38 @@ body:not(.v-vender) #btnOrdenes{display:none;}
 .pw-op.sin-ico .pw-t{align-items:center;}
 .res .res-fondo{border-color:var(--green);background:var(--green-dim);}
 .res .res-fondo > b{font-size:20px;}
+/* 3.7: tarjetas de «Ventas de este equipo» */
+.res{grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:14px;}
+.res > .rc{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:14px;background:var(--bg2);border:1px solid var(--border);border-top:4px solid var(--rc,var(--border));box-shadow:0 2px 10px rgba(0,0,0,.06);position:relative;overflow:hidden;}
+.res > .rc::after{content:"";position:absolute;right:-30px;top:-30px;width:90px;height:90px;border-radius:50%;background:var(--rc-dim,transparent);pointer-events:none;}
+.rc-ico{flex-shrink:0;width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;background:var(--rc-dim,var(--bg3));}
+.rc-tx{display:flex;flex-direction:column;min-width:0;gap:2px;}
+.res .rc .rc-lbl{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--text-dim);}
+.res > .rc b{display:block;font-size:21px;font-weight:900;line-height:1.15;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.res > .rc b.rc-b2{font-size:18px;color:var(--rc,var(--text));}
+.res .rc .rc-sub{font-size:12px;font-weight:600;text-transform:none;color:var(--text-dim);}
+.rc-verde{--rc:var(--green);--rc-dim:var(--green-dim);}
+.rc-azul{--rc:var(--blue);--rc-dim:var(--blue-dim);}
+.rc-ambar{--rc:var(--amber);--rc-dim:var(--amber-dim);}
+.rc-rojo{--rc:var(--red);--rc-dim:var(--red-dim);}
+.rc-morado{--rc:var(--purple);--rc-dim:rgba(142,68,173,.13);}
+.rc-gris{--rc:var(--border);--rc-dim:var(--bg3);}
+.res > .rc.rc-fondo{background:linear-gradient(135deg,var(--green-dim),var(--bg2) 70%);border-color:var(--border-g);}
+.res > .rc-mets{grid-column:1/-1;padding:14px 16px;border-radius:14px;background:var(--bg2);border:1px solid var(--border);box-shadow:0 2px 10px rgba(0,0,0,.06);}
+.rc-mets-tit{font-size:13px;font-weight:900;margin-bottom:10px;}
+.rc-mets-tit small{font-weight:600;color:var(--text-dim);}
+.rc-mets-l{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
+.rc-met{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;background:var(--bg3);border-left:4px solid var(--border);font-size:13.5px;font-weight:700;}
+.rc-met b{font-size:15px;font-weight:900;white-space:nowrap;}
+.rc-met.bs{border-left-color:var(--blue);}
+.rc-met.usd{border-left-color:var(--green);}
+.res .rc-met span{font-size:13.5px;font-weight:700;text-transform:none;color:var(--text);}
+.res{grid-template-columns:repeat(3,minmax(0,1fr));}
+@media (max-width:900px){ .res{grid-template-columns:repeat(2,minmax(0,1fr));} }
+@media (max-width:520px){ .res{grid-template-columns:1fr;} }
+.res > .rc b{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;}
+.res > .rc::after{width:70px;height:70px;right:-24px;top:-24px;}
+.rc-tx{position:relative;z-index:1;}
+#vVentas .card{background:var(--bg2);border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.06);}
+#vVentas .card-tit{font-size:13px;color:var(--text);letter-spacing:.02em;margin-bottom:10px;}
+#vVentas .cie-tabla td{padding:8px 4px;}

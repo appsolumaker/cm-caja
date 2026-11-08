@@ -45,9 +45,9 @@ function gvSinMetodo(mon){
 // Devuelve el cajero Administrador si acertó, o null si cerró la ventana.
 async function gvPinAdmin(titulo, texto){
   const adm = cajeroAdmin();
-  if (!adm || !adm.pin) { await aviso({ icono: "⭐", titulo: "Hace falta el PIN del Administrador", html: "Esto lo autoriza el cajero <b>Administrador</b> con su PIN, y todavía no tiene. " + textoSinAdmin() }); return null; }
+  if (!adm || !adm.pin) { await aviso({ icono: "⭐", titulo: "Hace falta la clave del Administrador", html: "Esto lo autoriza el cajero <b>Administrador</b> con su clave, y todavía no tiene. " + textoSinAdmin() }); return null; }
   const r = await modal({ icono: "⭐", titulo: titulo, centrado: true,
-    html: '<div class="m-txt" style="text-align:center;margin-bottom:6px;">' + texto + "<br>Lo autoriza <b>" + esc(adm.nombre) + "</b> con su PIN.</div>" + htmlTeclado("pa", adm),
+    html: '<div class="m-txt" style="text-align:center;margin-bottom:6px;">' + texto + "<br>Lo autoriza <b>" + esc(adm.nombre) + "</b> con su clave.</div>" + htmlTeclado("pa", adm),
     botones: [{ txt: "Cancelar", v: null }],
     alAbrir: (fondo, cerrar) => pkPreparar("pa", adm, a => cerrar(a)) });
   if (PK.pre === "pa") { PK.c = null; PK.pin = ""; }
@@ -123,7 +123,7 @@ async function gvGasto(o){
     '<div class="m-err" id="gvErr"></div>';
   let datos = null;
   const r = await modal({ icono: "💸", titulo: "Sacar efectivo de la gaveta", html: html, foco: "gvMonto",
-    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: PIN del Administrador →", v: true, cls: "green" }],
+    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: clave del Administrador →", v: true, cls: "green" }],
     alAbrir: fondo => {
       gvMoneda(GV.mon);
       if (o.monto) $("gvMonto").value = String(r2(o.monto));
@@ -175,7 +175,7 @@ async function gvAjuste(tipo, mon, monto){
     '<label class="lbl" for="gvNota">¿Qué pasó? (opcional)</label><input class="inp" id="gvNota" maxlength="120" placeholder="' + (falta ? "Ej. le di Bs 50 de más de vuelto a un cliente" : "Ej. un cliente pagó y no se registró") + '">';
   let met = l[0].metodo, nota = "";
   const r = await modal({ icono: falta ? "💱" : "💰", titulo: (falta ? "Faltante de caja: " : "Sobrante de caja: ") + sim + fmt(monto), html: html, foco: "gvNota",
-    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: PIN del Administrador →", v: true, cls: "green" }],
+    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: clave del Administrador →", v: true, cls: "green" }],
     antes: v => { if (v) { met = $("gvMet") ? $("gvMet").value : met; nota = $("gvNota").value.replace(/\s+/g, " ").trim(); } return true; } });
   if (!r) return;
   const adm = await gvPinAdmin(falta ? "Autorizar el faltante" : "Autorizar el sobrante", (falta ? "Faltante" : "Sobrante") + " de caja: <b>" + sim + fmt(monto) + "</b>" + (nota ? "<br>" + esc(nota) : ""));

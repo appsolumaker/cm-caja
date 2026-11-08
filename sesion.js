@@ -154,7 +154,7 @@ function pantallaActivar(){
           (cajas.length > 1 ? '<div class="act-caja" id="acCajaBox">Este equipo cobra como <b id="acCajaTxt">Caja ' + sug + '</b>. <button type="button" class="lnk" onclick="acOtraCaja()">¿Cobran en varios equipos a la vez?</button></div>' : "") +
           '<label class="lbl" for="acNom">Nombre del equipo</label><input class="inp" id="acNom" maxlength="40" placeholder="Ej. PC de la caja 1, Celular de María">' +
           '<label class="lbl" for="acMae">Clave maestra</label><input class="inp" id="acMae" type="password" autocomplete="off" placeholder="La del administrador">' +
-          '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Después de activarlo, cada cajero entra tocando su nombre y poniendo su PIN. Si después hay que quitarle el permiso al equipo: Configuración → Administración → Caja nueva.</div>",
+          '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Después de activarlo, cada cajero entra tocando su nombre y poniendo su clave. Si después hay que quitarle el permiso al equipo: Configuración → Administración → Caja nueva.</div>",
     btns: '<button type="button" class="btn green block" id="btnActivar" onclick="activarEquipo(this)">✅ Activar este equipo</button>' +
           '<div style="margin-top:8px;"><button type="button" class="btn sm" onclick="pedirEntrarOtraVez()">Entrar con otro usuario</button></div>' });
   $("acMae").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); activarEquipo($("btnActivar")); } });

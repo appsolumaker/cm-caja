@@ -50,10 +50,10 @@ function pkErr(t){ const e = $(PK.pre + "Err"); if (e) e.innerHTML = t || ""; }
 async function pkTecla(k){
   if (!PK.c || PK.ocupado) return;
   const c = PK.c, f = _pinFallas[c.id] || { n: 0, hasta: 0 };
-  if (Date.now() < f.hasta) { pkErr("⏳ Fueron " + PIN_INTENTOS + " PIN equivocados. Espera " + Math.ceil((f.hasta - Date.now()) / 1000) + " segundos y vuelve a intentar."); return; }
+  if (Date.now() < f.hasta) { pkErr("⏳ Fueron " + PIN_INTENTOS + " claves equivocadas. Espera " + Math.ceil((f.hasta - Date.now()) / 1000) + " segundos y vuelve a intentar."); return; }
   const largo = largoPin(c), max = largo || 6;
   if (k === "x") { PK.pin = PK.pin.slice(0, -1); pkErr(""); pkDots(); return; }
-  if (k === "ok") { if (PK.pin.length < 4) { pkErr("El PIN tiene por lo menos 4 números."); return; } }
+  if (k === "ok") { if (PK.pin.length < 4) { pkErr("La clave tiene por lo menos 4 números."); return; } }
   else { if (PK.pin.length >= max) return; PK.pin += k; pkErr(""); pkDots(); }
   if (PK.pin.length < (largo || 4)) return;
   PK.ocupado = true;
@@ -74,8 +74,8 @@ async function pkTecla(k){
   PK.pin = ""; pkDots();
   const box = $(PK.pre + "Dots"); if (box) { box.classList.remove("mal"); void box.offsetWidth; box.classList.add("mal"); }
   const q = PIN_INTENTOS - f.n;
-  pkErr(f.hasta > Date.now() ? "⏳ Fueron " + PIN_INTENTOS + " PIN equivocados: espera un minuto y vuelve a intentar."
-    : "❌ Ese no es el PIN de <b>" + esc(c.nombre) + "</b>. " + (q === 1 ? "Te queda 1 intento" : "Te quedan " + q + " intentos") + " antes de esperar un minuto.");
+  pkErr(f.hasta > Date.now() ? "⏳ Fueron " + PIN_INTENTOS + " claves equivocadas: espera un minuto y vuelve a intentar."
+    : "❌ Esa no es la clave de <b>" + esc(c.nombre) + "</b>. " + (q === 1 ? "Te queda 1 intento" : "Te quedan " + q + " intentos") + " antes de esperar un minuto.");
 }
 
 // ══ SIN TURNO: ¿quién está en la caja? → PIN → fondo → turno abierto ══
@@ -84,8 +84,8 @@ function pintarTurno(){
   const l = cajerosTurno(), idCaja = Number(S.datos.cajero && S.datos.cajero.id) || 0;
   if (!l.some(c => c.pin)) {
     PK.c = null;
-    box.innerHTML = '<div class="m-txt" style="line-height:1.55;">' + (l.length ? "Ningún cajero tiene <b>PIN</b> todavía." : "No hay cajeros activos.") +
-      '<br><br>En el sistema: <b>Configuración → Cajas y vendedores</b>' + (l.length ? ", toca <b>🔢 PIN</b> en cada cajero (también en el <b>Administrador</b>)" : ", crea los cajeros y ponles su <b>🔢 PIN</b>") +
+    box.innerHTML = '<div class="m-txt" style="line-height:1.55;">' + (l.length ? "Ningún cajero tiene <b>clave</b> todavía." : "No hay cajeros activos.") +
+      '<br><br>En el sistema: <b>Configuración → Cajas y vendedores</b>' + (l.length ? ", ponle su <b>clave</b> a cada cajero (también al <b>Administrador</b>)" : ", crea los cajeros y ponles su <b>clave</b>") +
       '. Después, aquí con internet, toca <b>🔄 Actualizar datos</b>.</div><div style="margin-top:14px;"><button type="button" class="btn green" onclick="actualizarDatos(this)">🔄 Actualizar datos</button></div>';
     return;
   }
@@ -122,7 +122,7 @@ function pintarTurno(){
         '<button type="button" class="cie-mot' + (a.tipo === "faltante" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'faltante\')">💱 Registrar faltante de caja de ' + p + "<small>Un billete que no aparece, un error en el cierre anterior… Se registra como gasto «Faltante de caja».</small></button></div></div>";
     };
     box.innerHTML = '<div class="pk-hola">⚠️ No coincide</div>' +
-      '<div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la gaveta. Para abrir, se registra lo que pasó (lo autoriza el <b>Administrador</b> con su PIN) y así las cuentas del negocio quedan como la gaveta.</div>' + tabla +
+      '<div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la gaveta. Para abrir, se registra lo que pasó (lo autoriza el <b>Administrador</b> con su clave) y así las cuentas del negocio quedan como la gaveta.</div>' + tabla +
       grandes.map(z => bloque(z[0], z[1])).join("") +
       '<label class="lbl" for="tFondoNota" style="text-align:left;">¿Qué pasó? (opcional)</label>' +
       '<input class="inp" id="tFondoNota" maxlength="120" placeholder="Ej. el dueño sacó Bs 200 y no lo anotó" value="' + esc(FD.nota || "") + '" oninput="FD.nota=this.value">' +
@@ -152,7 +152,7 @@ function pintarTurno(){
     if (!c || !c.pin) { _turnoSel = null; pintarTurno(); return; }
     const previo = (PK.pre === "tp" && PK.c && PK.c.id === c.id) ? PK.pin : "";
     box.innerHTML = '<div class="pk-hola">Hola, ' + esc(c.nombre) + " 👋</div>" +
-      '<div class="pk-sub">Escribe tu PIN.</div>' + htmlTeclado("tp", c) +
+      '<div class="pk-sub">Escribe tu clave.</div>' + htmlTeclado("tp", c) +
       '<div class="pk-links"><button type="button" class="btn" onclick="elegirCajero(null)">← No soy ' + esc(c.nombre) + "</button></div>";
     pkPreparar("tp", c, c2 => { _turnoOk = c2.id; _turnoSel = null; FD.noCoincide = null; FD.contado = null; fondoPrevCargar(); pintarTurno(); setTimeout(() => { const i = $("tFondoBs"); if (i && window.innerWidth > 820) i.focus(); }, 30); }, previo);
     return;
@@ -161,7 +161,7 @@ function pintarTurno(){
   PK.c = null;
   box.innerHTML = '<div class="pk-sub" style="margin-top:0;">¿Quién está en la caja? Toca tu nombre.</div><div class="cj-grid">' +
     l.map(c => '<button type="button" class="cj-btn' + (c.admin ? " adm" : "") + '"' + (c.pin ? "" : " disabled") + ' onclick="elegirCajero(' + c.id + ')">' + esc(c.nombre) +
-      "<small>" + (!c.pin ? "Sin PIN" : c.admin ? "⭐ Administrador" : c.id === idCaja ? "Cajero de esta caja" : "&nbsp;") + "</small></button>").join("") + "</div>";
+      "<small>" + (!c.pin ? "Sin clave" : c.admin ? "⭐ Administrador" : c.id === idCaja ? "Cajero de esta caja" : "&nbsp;") + "</small></button>").join("") + "</div>";
 }
 function elegirCajero(id){
   _turnoSel = id || null; _turnoOk = null; PK.c = null; FD.noCoincide = null; FD.contado = null;
@@ -285,7 +285,7 @@ function desbloquear(){
 }
 function bloqModo(m){ BQ.modo = m; BQ.motivo = ""; pintarBloqueo(); }
 function textoSinAdmin(){
-  return "Para eso, el administrador le pone su PIN al cajero <b>Administrador</b> en el sistema (<b>Configuración → Cajas y vendedores → 🔢 PIN</b>) y aquí, con internet, se toca <b>🔄 Actualizar datos</b>.";
+  return "Para eso, el administrador le pone su clave al cajero <b>Administrador</b> en el sistema (<b>Configuración → Cajas y vendedores</b>) y aquí, con internet, se toca <b>🔄 Actualizar datos</b>.";
 }
 function pintarBloqueo(){
   const box = $("bloqCuerpo"), t = S.turno;
@@ -295,7 +295,7 @@ function pintarBloqueo(){
   const btnAct = '<button type="button" class="btn" onclick="actualizarDatos(this)">🔄 Actualizar datos</button>';
   if (BQ.modo === "admin" && admOk) {
     box.innerHTML = '<div class="bq-ico">⭐</div><div class="pk-hola">' + esc(adm.nombre) + "</div>" +
-      '<div class="pk-sub">Escribe tu PIN para cerrar el turno de <b>' + esc(t.cajeroNombre) + "</b>.</div>" + htmlTeclado("bq", adm) +
+      '<div class="pk-sub">Escribe tu clave para cerrar el turno de <b>' + esc(t.cajeroNombre) + "</b>.</div>" + htmlTeclado("bq", adm) +
       '<div class="pk-links"><button type="button" class="btn" onclick="bloqModo(\'turno\')">← Volver</button></div>';
     pkPreparar("bq", adm, a => {
       desbloquear();
@@ -309,10 +309,10 @@ function pintarBloqueo(){
     const esAdm = !!(c && c.admin), sinPin = !c || !c.pin;
     box.innerHTML = '<div class="bq-ico">👥</div><div class="pk-hola">' + (sinPin ? "Caja bloqueada" : "Va a entrar otro cajero") + "</div>" +
       '<div class="pk-sub bq-txt">' +
-      (sinPin ? "El turno abierto es de <b>" + esc(t.cajeroNombre) + "</b>, pero ese cajero ya no tiene PIN en este equipo, así que hay que cerrar su turno.<br><br>"
+      (sinPin ? "El turno abierto es de <b>" + esc(t.cajeroNombre) + "</b>, pero ese cajero ya no tiene clave en este equipo, así que hay que cerrar su turno.<br><br>"
               : "El turno de <b>" + esc(t.cajeroNombre) + "</b> sigue abierto. Para que entre otro cajero, primero se <b>cierra ese turno</b> contando el efectivo de la gaveta.<br><br>" +
-                "• Si <b>" + esc(t.cajeroNombre) + "</b> está aquí: que escriba su PIN y cierre su turno en <b>☰ Menú → Cerrar turno</b>.<br>") +
-      (esAdm ? "" : "• Si " + (sinPin ? "no está" : "ya se fue") + ": lo cierra el <b>Administrador</b> con su PIN.") +
+                "• Si <b>" + esc(t.cajeroNombre) + "</b> está aquí: que escriba su clave y cierre su turno en <b>☰ Menú → Cerrar turno</b>.<br>") +
+      (esAdm ? "" : "• Si " + (sinPin ? "no está" : "ya se fue") + ": lo cierra el <b>Administrador</b> con su clave.") +
       (!esAdm && !admOk ? "<br><br>" + textoSinAdmin() : "") + "</div>" +
       '<div class="pk-links">' + (!esAdm && admOk ? '<button type="button" class="btn green" onclick="bloqModo(\'admin\')">⭐ Lo cierra el Administrador</button>' : "") +
       (!esAdm && !admOk ? btnAct : "") +
@@ -321,7 +321,7 @@ function pintarBloqueo(){
   }
   const previo = (PK.pre === "bq" && PK.c && PK.c.id === c.id) ? PK.pin : "";
   box.innerHTML = '<div class="bq-ico">🔒</div><div class="pk-hola">Hola, ' + esc(c.nombre) + " 👋</div>" +
-    '<div class="pk-sub">' + (BQ.motivo ? esc(BQ.motivo) + "<br>" : "") + "Escribe tu PIN para seguir vendiendo.</div>" + htmlTeclado("bq", c) +
+    '<div class="pk-sub">' + (BQ.motivo ? esc(BQ.motivo) + "<br>" : "") + "Escribe tu clave para seguir vendiendo.</div>" + htmlTeclado("bq", c) +
     '<div class="pk-links"><button type="button" class="lnk" onclick="bloqModo(\'otro\')">👥 Va a entrar otro cajero</button></div>';
   pkPreparar("bq", c, () => { desbloquear(); toast("👋 Hola, " + c.nombre); }, previo);
 }

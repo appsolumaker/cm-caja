@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.6 · 8-11-2026";
+const APP_VER = "3.7 · 8-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -1277,7 +1277,7 @@ function puedeVender(){
     try { cerrarPago(); } catch (e) {}
     aviso({ icono: "🔒", titulo: "No se puede vender ahora", html: S.cierreAdmin && S.turno
       ? "El <b>Administrador</b> entró solo para cerrar el turno de <b>" + esc(S.turno.cajeroNombre) + "</b>. Para vender, cierra ese turno y abre uno a tu nombre."
-      : "La caja está bloqueada: el cajero del turno tiene que escribir su PIN." });
+      : "La caja está bloqueada: el cajero del turno tiene que escribir su clave." });
     return false;
   }
   return true;
@@ -2562,7 +2562,7 @@ function cierrePaso(n){
   if (n >= 3 && !CIE.hora) CIE.hora = horaDe(ahoraTxt());
   if (n >= 4 && cieDescuadre(cierreCalc())) {   // 1c: descuadrada no se cierra: se registra lo que pasó o se vuelve a contar
     CIE.paso = 3; pintarCierre();
-    aviso({ icono: "⚠️", titulo: "La caja no cuadra", html: "No se puede cerrar el turno hasta que cuadre. Abajo de <b>Resultado</b> elige qué pasó y regístralo (lo autoriza el <b>Administrador</b> con su PIN), o vuelve a contar." });
+    aviso({ icono: "⚠️", titulo: "La caja no cuadra", html: "No se puede cerrar el turno hasta que cuadre. Abajo de <b>Resultado</b> elige qué pasó y regístralo (lo autoriza el <b>Administrador</b> con su clave), o vuelve a contar." });
     return;
   }
   if (n >= 5) { const p = cieQuedaProblema(); if (p) { CIE.paso = 4; pintarCierre(); aviso({ icono: "💵", titulo: "Revisa lo que queda en la gaveta", html: p }); return; } }
@@ -2670,7 +2670,7 @@ function cieBloqueDescuadre(x){
   };
   const sinSis = x.sis && !x.sis.ok && !CIE.cargando;
   return '<div class="cie-desc"><div class="cie-preg">⚠️ La caja no cuadra. No se puede cerrar el turno hasta que cuadre.</div>' +
-    '<div class="cie-ayuda">Registra lo que pasó (lo autoriza el <b>Administrador</b> con su PIN) para que las cuentas del negocio queden como la gaveta, o vuelve a contar.</div>' +
+    '<div class="cie-ayuda">Registra lo que pasó (lo autoriza el <b>Administrador</b> con su clave) para que las cuentas del negocio queden como la gaveta, o vuelve a contar.</div>' +
     (sinSis ? '<div class="cie-arreglo">📡 Sin internet no pude revisar si desde el sistema se movió efectivo de esta caja. Si alguien registró un pago o un gasto desde el sistema eligiendo la <b>Caja ' + esc(caja) + "</b>, espera el internet y toca <b>🔄 Revisar otra vez</b> antes de registrar un faltante.</div>" : "") +
     bloque("BS", x.dBs) + bloque("USD", x.dUsd) +
     '<div class="cie-arreglo">¿Lo pagó o lo cobró alguien desde el <b>sistema</b> (Egresos, Proveedores, Compras, Clientes) con el efectivo de esta caja? Que elija <b>Caja ' + esc(caja) + "</b> en <b>¿De qué caja salió?</b> y toca <b>🔄 Revisar otra vez</b>: el cierre lo suma solo.</div>" +
@@ -2887,14 +2887,17 @@ function pintarVentas(){
   });
   const tu = S.turno;   // 1b: con cuánto abrió el turno y quién
   const fi = tu ? (tu.fondoContado || { bs: tu.fondoBs, usd: tu.fondoUsd }) : null;   // 3.6: lo que había en la gaveta al abrir
-  let h = (tu ? '<div><span>Turno abierto</span><b>' + esc(tu.cajeroNombre) + '</b><span style="text-transform:none;">desde las ' + horaDe(tu.apertura) + "</span></div>" +
-      '<div class="res-fondo"><span>💵 Fondo inicial de la caja</span><b>Bs ' + fmt(fi.bs) + "</b><b>$" + fmt(fi.usd) + "</b></div>" : "") +
-    '<div><span>Ventas de hoy</span><b>' + deHoy.length + "</b></div>" +
-    '<div><span>Total hoy</span><b>Bs ' + fmt(sumBs) + '</b><span style="text-transform:none;">$' + fmt(sumUsd) + " BCV</span></div>" +
-    '<div><span>Por subir</span><b style="color:var(--blue);">' + c.por + "</b></div>" +
-    '<div><span>Con problema</span><b style="color:' + (c.mal ? "var(--red)" : "inherit") + ';">' + c.mal + "</b></div>";
+  // 3.7: tarjetas con ícono y color
+  const tj = (cls, ico, lbl, val, sub) => '<div class="rc ' + cls + '"><div class="rc-ico">' + ico + '</div><div class="rc-tx"><span class="rc-lbl">' + lbl + "</span>" + val + (sub ? '<span class="rc-sub">' + sub + "</span>" : "") + "</div></div>";
+  let h = (tu ? tj("rc-verde", "👤", "Turno abierto", "<b>" + esc(tu.cajeroNombre) + "</b>", "desde las " + horaDe(tu.apertura)) +
+      tj("rc-verde rc-fondo", "💵", "Fondo inicial de la caja", '<b>Bs ' + fmt(fi.bs) + '</b><b class="rc-b2">$' + fmt(fi.usd) + "</b>") : "") +
+    tj("rc-morado", "🧾", "Ventas de hoy", "<b>" + deHoy.length + "</b>", deHoy.length === 1 ? "venta" : "ventas") +
+    tj("rc-ambar", "💰", "Total de hoy", "<b>Bs " + fmt(sumBs) + "</b>", "$" + fmt(sumUsd) + " BCV") +
+    tj(c.por ? "rc-azul" : "rc-gris", c.por ? "⏳" : "☁️", "Por subir", "<b>" + c.por + "</b>", c.por ? "se suben solas con internet" : "todo está en el sistema") +
+    tj(c.mal ? "rc-rojo" : "rc-gris", c.mal ? "⚠️" : "✅", "Con problema", "<b>" + c.mal + "</b>", c.mal ? "revísalas abajo" : "ninguna");
   const mets = Object.keys(porMet);
-  if (mets.length) h += '<div style="grid-column:1/-1;"><span>Hoy por método (menos el vuelto)</span>' + mets.map(k => { const [m, t] = k.split("|"); return '<div class="met"><span style="text-transform:none;font-weight:600;color:var(--text);font-size:13px;">' + esc(m) + "</span><b>" + (t === "BS" ? "Bs " : "$") + fmt(porMet[k]) + "</b></div>"; }).join("") + "</div>";
+  if (mets.length) h += '<div class="rc-mets"><div class="rc-mets-tit">💳 Hoy por método <small>(lo cobrado menos el vuelto)</small></div><div class="rc-mets-l">' +
+    mets.map(k => { const [m, t] = k.split("|"); return '<div class="rc-met ' + (t === "BS" ? "bs" : t === "USD" ? "usd" : "otro") + '"><span>' + esc(m) + "</span><b>" + (t === "BS" ? "Bs " : "$") + fmt(porMet[k]) + "</b></div>"; }).join("") + "</div></div>";
   $("resumen").innerHTML = h;
   // Por cajero (hoy)
   const porCj = {};
