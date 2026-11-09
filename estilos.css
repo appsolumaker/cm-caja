@@ -381,7 +381,12 @@ body.entrando #banners{display:none;}
 .cj-btn.sel{border-color:var(--border-g);background:var(--green-dim);color:var(--green);}
 .cj-btn:disabled{opacity:.45;cursor:not-allowed;}
 .cj-btn.adm small{color:#e3b341;}
-/* Etapa 4A · teclado grande del PIN y caja bloqueada (cajero.js) */
+/* Acceso único (4.0) · la contraseña del cajero y caja bloqueada (cajero.js) */
+.ck-fila{display:flex;gap:8px;max-width:360px;margin:14px auto 0;}
+.ck-fila .ck-inp{flex:1;min-width:0;font-size:17px;}
+.ck-fila .ck-ok{flex:0 0 auto;padding:0 18px;}
+.ck-fila.mal{animation:pkMal 0.35s;}
+.ck-quien{display:block;max-width:360px;margin:12px auto 0;width:100%;}
 .pk-hola{font-size:20px;font-weight:900;color:var(--text);text-align:center;margin:4px 0 2px;}
 .pk-sub{font-size:13px;color:var(--text-dim);text-align:center;line-height:1.5;margin:6px 0 4px;}
 .pk-sub.bq-txt{text-align:left;}

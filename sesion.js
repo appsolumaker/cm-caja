@@ -224,7 +224,7 @@ function acPaso2(){
     form: '<input type="hidden" id="acCaja" value="' + n + '">' +
           '<label class="lbl" for="acNom">Nombre del equipo</label><input class="inp" id="acNom" maxlength="40" placeholder="Ej. PC de la caja ' + n + ', Celular de María">' +
           '<label class="lbl" for="acMae">Clave maestra</label><input class="inp" id="acMae" type="password" autocomplete="off" placeholder="La del administrador">' +
-          '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Después de activarlo, cada cajero entra tocando su nombre y poniendo su clave. Si después hay que quitarle el permiso al equipo: Configuración → Administración → Caja nueva.</div>",
+          '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Después de activarlo, cada cajero entra tocando su nombre y poniendo su contraseña del sistema (en <b>Configuración → Usuarios</b> se le da el permiso de la <b>Caja ' + n + '</b>). Si después hay que quitarle el permiso al equipo: Configuración → Administración → Caja nueva.</div>",
     btns: '<button type="button" class="btn green block" id="btnActivar" onclick="activarEquipo(this)">✅ Activar este equipo</button>' +
           '<div style="margin-top:8px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
           (varias ? '<button type="button" class="btn sm" id="btnAcVolver" onclick="acPaso1()">← Cambiar de caja</button>' : "") +
@@ -291,7 +291,7 @@ async function cerrarSesion(btn){
   }
   if (ventaAMedias()) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de cerrar la sesión." }); return; }
   if (!await confirmar({ icono: "🚪", titulo: "Entrar con otro usuario", ok: "Sí, salir", colorOk: "naranja",
-    html: "Se sale de esta sesión y la caja pide usuario y clave. El usuario que entre queda como el de este equipo: la próxima vez la caja entra directo con él." + (S.turno ? "<br><br>El turno de <b>" + esc(S.turno.cajeroNombre) + "</b> sigue abierto." : "") })) return;
+    html: "Se sale de esta sesión y la caja pide usuario y contraseña. El usuario que entre queda como el de este equipo: la próxima vez la caja entra directo con él." + (S.turno ? "<br><br>El turno de <b>" + esc(S.turno.cajeroNombre) + "</b> sigue abierto." : "") })) return;
   btnOcupado(btn, "Cerrando…");
   try { await api("cj_salir", {}, 15000); } catch (e) {}
   btnLibre(btn);

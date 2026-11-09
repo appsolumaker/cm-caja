@@ -16,7 +16,7 @@
 //  Etapa 1D (2.4): entrada directa. Un equipo activado no pide usuario y clave: entra solo a la caja (sesión solo de
 //  esa caja, del último usuario que entró en el equipo) y los cajeros solo eligen su nombre y ponen su PIN.
 //  Etapa 4A (2.7): siempre hay un cajero (cajero.js): teclado grande con su PIN, la caja se bloquea al abrirla,
-//  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra el Administrador).
+//  a los 10 minutos sin tocarla y con 🔒; para que entre otro, se cierra el turno (o lo cierra un administrador).
 //  Tanda 1 (3.1): como Ventas — 🛍️ Cashea en el pago, 🎁 pagar con saldo a favor (con internet) y 📅 venta de otro
 //  día (con su fecha y las tasas de ese día; su efectivo no cuenta en el cierre de hoy).
 //  Tanda 1b (3.2): fondo encadenado (al cerrar se anota lo que queda en la gaveta; al abrir se cuenta sin verlo y se
@@ -26,13 +26,13 @@
 //  Administrador (gaveta.js: gasto pagado con la gaveta, faltante o sobrante de caja) y los centavos solos (redondeo);
 //  💸 Sacar efectivo durante el turno; el paso 4 dice claro lo que queda y lo que sale; Escape cierra el pago.
 //  3.4: al ABRIR también tiene que cuadrar: si lo contado no es lo que dejó el turno anterior, se registra lo que pasó
-//  (gasto, faltante o sobrante, con el PIN del Administrador; los centavos solos) y el turno arranca con lo que dejó.
+//  (gasto, faltante o sobrante, con la contraseña de un administrador; los centavos solos) y el turno arranca con lo que dejó.
 //  3.5: el PAGO EN PASOS — ① ¿incluye crédito? (no · sí, todo o una parte · Cashea) ② ¿cómo paga? (Bs · $ · mixto, y por
 //  dónde) ③ ¿cuánto? (en efectivo: ¿con cuánto te pagó? y el vuelto) [el delivery] ④ revisar y registrar. Mismas cuentas.
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.9 · 8-11-2026";
+const APP_VER = "4.0 · 8-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -661,7 +661,7 @@ async function agregar(p){
   $("busca").value = "";
   if (habia) buscar(); else marcarEnFactura();   // 2.9: si la lista no cambia, solo el número del «+» (no se vuelven a cargar las fotos)
   pintarFactura();
-  const n = String(p.nombre || ""); toast("✅ " + (n.length > 34 ? n.slice(0, 33) + "…" : n) + "  ×" + fmtCant(cuantasEnFactura(p.codigo)));
+  const n = String(p.nombre || ""); if (!(typeof ESC !== "undefined" && ESC.on)) toast("✅ " + (n.length > 34 ? n.slice(0, 33) + "…" : n) + "  ×" + fmtCant(cuantasEnFactura(p.codigo)));   // 3.9: con la cámara abierta lo dice la barra del escáner
   if (window.innerWidth > 820 && !(typeof ESC !== "undefined" && ESC.on)) $("busca").focus();
 }
 
@@ -1280,8 +1280,8 @@ function puedeVender(){
   if (S.cierreAdmin || (typeof BQ !== "undefined" && BQ.on)) {
     try { cerrarPago(); } catch (e) {}
     aviso({ icono: "🔒", titulo: "No se puede vender ahora", html: S.cierreAdmin && S.turno
-      ? "El <b>Administrador</b> entró solo para cerrar el turno de <b>" + esc(S.turno.cajeroNombre) + "</b>. Para vender, cierra ese turno y abre uno a tu nombre."
-      : "La caja está bloqueada: el cajero del turno tiene que escribir su clave." });
+      ? "Un <b>administrador</b> (" + esc((S.cierreAdmin && S.cierreAdmin.nombre) || "") + ") entró solo para cerrar el turno de <b>" + esc(S.turno.cajeroNombre) + "</b>. Para vender, cierra ese turno y abre uno a tu nombre."
+      : "La caja está bloqueada: el cajero del turno tiene que escribir su contraseña." });
     return false;
   }
   return true;
@@ -2567,7 +2567,7 @@ function cierrePaso(n){
   if (n >= 3 && !CIE.hora) CIE.hora = horaDe(ahoraTxt());
   if (n >= 4 && cieDescuadre(cierreCalc())) {   // 1c: descuadrada no se cierra: se registra lo que pasó o se vuelve a contar
     CIE.paso = 3; pintarCierre();
-    aviso({ icono: "⚠️", titulo: "La caja no cuadra", html: "No se puede cerrar el turno hasta que cuadre. Abajo de <b>Resultado</b> elige qué pasó y regístralo (lo autoriza el <b>Administrador</b> con su clave), o vuelve a contar." });
+    aviso({ icono: "⚠️", titulo: "La caja no cuadra", html: "No se puede cerrar el turno hasta que cuadre. Abajo de <b>Resultado</b> elige qué pasó y regístralo (lo autoriza un <b>administrador</b> con su contraseña), o vuelve a contar." });
     return;
   }
   if (n >= 5) { const p = cieQuedaProblema(); if (p) { CIE.paso = 4; pintarCierre(); aviso({ icono: "💵", titulo: "Revisa lo que queda en la gaveta", html: p }); return; } }
@@ -2675,7 +2675,7 @@ function cieBloqueDescuadre(x){
   };
   const sinSis = x.sis && !x.sis.ok && !CIE.cargando;
   return '<div class="cie-desc"><div class="cie-preg">⚠️ La caja no cuadra. No se puede cerrar el turno hasta que cuadre.</div>' +
-    '<div class="cie-ayuda">Registra lo que pasó (lo autoriza el <b>Administrador</b> con su clave) para que las cuentas del negocio queden como la gaveta, o vuelve a contar.</div>' +
+    '<div class="cie-ayuda">Registra lo que pasó (lo autoriza un <b>administrador</b> con su contraseña) para que las cuentas del negocio queden como la gaveta, o vuelve a contar.</div>' +
     (sinSis ? '<div class="cie-arreglo">📡 Sin internet no pude revisar si desde el sistema se movió efectivo de esta caja. Si alguien registró un pago o un gasto desde el sistema eligiendo la <b>Caja ' + esc(caja) + "</b>, espera el internet y toca <b>🔄 Revisar otra vez</b> antes de registrar un faltante.</div>" : "") +
     bloque("BS", x.dBs) + bloque("USD", x.dUsd) +
     '<div class="cie-arreglo">¿Lo pagó o lo cobró alguien desde el <b>sistema</b> (Egresos, Proveedores, Compras, Clientes) con el efectivo de esta caja? Que elija <b>Caja ' + esc(caja) + "</b> en <b>¿De qué caja salió?</b> y toca <b>🔄 Revisar otra vez</b>: el cierre lo suma solo.</div>" +
@@ -2976,7 +2976,7 @@ function pintarAjustes(){
     "<span>Números de factura</span><b>" + numerosTexto() + "</b>";
   const u = (S.ses && S.ses.usuario) || {};
   $("infoSesion").innerHTML = "<span>Usuario</span><b>" + esc(u.nombre || u.usuario || "—") + (u.usuario ? " · " + esc(u.usuario) : "") + "</b>" +
-    "<span>Entrada</span><b>" + (sesionDirecta() ? "directa: este equipo entra solo a la caja (solo esta caja; para el sistema se pide usuario y clave)" : "con usuario y clave") + "</b>" +
+    "<span>Entrada</span><b>" + (sesionDirecta() ? "directa: este equipo entra solo a la caja (solo esta caja; para el sistema se pide usuario y contraseña)" : "con usuario y contraseña") + "</b>" +
     "<span>Desde</span><b>" + (S.ses && S.ses.desde ? fechaCorta(hoyTxt(new Date(S.ses.desde))) + " " + pad(new Date(S.ses.desde).getHours()) + ":" + pad(new Date(S.ses.desde).getMinutes()) : "—") + "</b>";
   $("infoTasas").innerHTML = "<span>BCV</span><b>Bs " + fmt(t.bcv) + "</b><span>" + (t.binOn ? "Divisas (TasaBin)" : "Divisas ($ en efectivo)") + "</span><b>" + (t.div > 0 ? "Bs " + fmt(t.div) + (t.binOn && t.bcv > 0 ? " · brecha " + fmt((t.div / t.bcv - 1) * 100) + " %" : "") : "—") + "</b>" +
     "<span>TasaBin</span><b>" + (t.binOn ? "encendido (precios en divisas · se puede vender en Bs o en Dólares)" : "apagado") + "</b><span>De</span><b>" + fechaCorta(t.fecha) + (t.origen === "manual" ? " (puesta a mano)" : " (del sistema)") + "</b>";

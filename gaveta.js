@@ -1,7 +1,7 @@
 "use strict";
 // ══════════════════════════════════════════════════════════════
 //  GAVETA · Tanda 1c (caja 3.3, 8-11-2026): todo el efectivo que entra o sale de la gaveta queda registrado
-//   · El turno NO se cierra si el efectivo no cuadra. Lo que falta o sobra se registra con el PIN del Administrador:
+//   · El turno NO se cierra si el efectivo no cuadra. Lo que falta o sobra lo autoriza un administrador con su contraseña:
 //       falta → 💸 fue un gasto pagado con la gaveta (Egresos, con su tipo)  ·  💱 faltante de caja (Egresos)
 //       sobra → 🧾 falta registrar una venta (se cobra como siempre)          ·  💰 sobrante de caja (Ingresos extra)
 //   · Los centavos (hasta Bs 1 o $0,50) se registran solos al cerrar, como «Redondeo de caja».
@@ -41,16 +41,17 @@ function gvSinMetodo(mon){
     html: "En el sistema no hay un método de pago de <b>efectivo en " + (mon === "BS" ? "Bs" : "dólares") + "</b> ligado a una cuenta. El administrador lo arregla en <b>Configuración → métodos de pago</b> y aquí, con internet, se toca <b>🔄 Actualizar datos</b>." });
 }
 
-// ── El PIN del Administrador (lo autoriza todo lo de la gaveta) ──
-// Devuelve el cajero Administrador si acertó, o null si cerró la ventana.
+// ── Lo autoriza un administrador con su contraseña (todo lo de la gaveta) ──
+// Devuelve el administrador si acertó, o null si cerró la ventana.
 async function gvPinAdmin(titulo, texto){
-  const adm = cajeroAdmin();
-  if (!adm || !adm.pin) { await aviso({ icono: "⭐", titulo: "Hace falta la clave del Administrador", html: "Esto lo autoriza el cajero <b>Administrador</b> con su clave, y todavía no tiene. " + textoSinAdmin() }); return null; }
+  const admins = cajerosAdmin(), adm = admins[0];
+  if (!adm) { await aviso({ icono: "⭐", titulo: "Hace falta un administrador", html: "Esto lo autoriza un <b>administrador</b> con su contraseña, y esta caja todavía no tiene. " + textoSinAdmin() }); return null; }
+  const prev = { c: PK.c, pre: PK.pre, alAcertar: PK.alAcertar, lista: PK.lista };   // si estaba pidiendo otra contraseña en pantalla
   const r = await modal({ icono: "⭐", titulo: titulo, centrado: true,
-    html: '<div class="m-txt" style="text-align:center;margin-bottom:6px;">' + texto + "<br>Lo autoriza <b>" + esc(adm.nombre) + "</b> con su clave.</div>" + htmlTeclado("pa", adm),
+    html: '<div class="m-txt" style="text-align:center;margin-bottom:6px;">' + texto + "<br>" + (admins.length > 1 ? "Lo autoriza un <b>administrador</b> con su contraseña." : "Lo autoriza <b>" + esc(adm.nombre) + "</b> con su contraseña.") + "</div>" + htmlTeclado("pa", adm, admins),
     botones: [{ txt: "Cancelar", v: null }],
-    alAbrir: (fondo, cerrar) => pkPreparar("pa", adm, a => cerrar(a)) });
-  if (PK.pre === "pa") { PK.c = null; PK.pin = ""; }
+    alAbrir: (fondo, cerrar) => pkPreparar("pa", adm, a => cerrar(a), "", admins) });
+  if (PK.pre === "pa") { PK.c = prev.c; PK.pre = prev.pre; PK.alAcertar = prev.alAcertar; PK.lista = prev.lista; PK.ocupado = false; }
   return r || null;
 }
 
@@ -123,7 +124,7 @@ async function gvGasto(o){
     '<div class="m-err" id="gvErr"></div>';
   let datos = null;
   const r = await modal({ icono: "💸", titulo: "Sacar efectivo de la gaveta", html: html, foco: "gvMonto",
-    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: clave del Administrador →", v: true, cls: "green" }],
+    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: lo autoriza un administrador →", v: true, cls: "green" }],
     alAbrir: fondo => {
       gvMoneda(GV.mon);
       if (o.monto) $("gvMonto").value = String(r2(o.monto));
@@ -175,7 +176,7 @@ async function gvAjuste(tipo, mon, monto){
     '<label class="lbl" for="gvNota">¿Qué pasó? (opcional)</label><input class="inp" id="gvNota" maxlength="120" placeholder="' + (falta ? "Ej. le di Bs 50 de más de vuelto a un cliente" : "Ej. un cliente pagó y no se registró") + '">';
   let met = l[0].metodo, nota = "";
   const r = await modal({ icono: falta ? "💱" : "💰", titulo: (falta ? "Faltante de caja: " : "Sobrante de caja: ") + sim + fmt(monto), html: html, foco: "gvNota",
-    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: clave del Administrador →", v: true, cls: "green" }],
+    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: lo autoriza un administrador →", v: true, cls: "green" }],
     antes: v => { if (v) { met = $("gvMet") ? $("gvMet").value : met; nota = $("gvNota").value.replace(/\s+/g, " ").trim(); } return true; } });
   if (!r) return;
   const adm = await gvPinAdmin(falta ? "Autorizar el faltante" : "Autorizar el sobrante", (falta ? "Faltante" : "Sobrante") + " de caja: <b>" + sim + fmt(monto) + "</b>" + (nota ? "<br>" + esc(nota) : ""));
