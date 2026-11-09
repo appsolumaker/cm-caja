@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.1 · 9-11-2026";
+const APP_VER = "4.2 · 9-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -2536,6 +2536,14 @@ function irCierre(){
   mostrarVista("cierre"); pintarCierre();
   cierreTraerSistema();
 }
+// 4.2 · Lo que ya está registrado en el sistema con el efectivo durante este turno, sin decir de qué caja
+async function cieSinCaja(){
+  const t = S.turno;
+  if (!t) return;
+  const r = await sinCajaElegir({ desde: t.aperturaMs || msDeTexto(t.apertura), modo: "turno", turnoId: t.id,
+    ayuda: "Esto se registró en el sistema con el efectivo durante este turno, sin decir de qué caja. Marca lo que salió (o entró) de <b>esta gaveta</b>: el cierre lo suma." });
+  if (r) await cierreTraerSistema();
+}
 async function cierreTraerSistema(){
   CIE.cargando = true; pintarCierre();
   let r = null;
@@ -2683,7 +2691,9 @@ function cieBloqueDescuadre(x){
     '<div class="cie-ayuda">Registra lo que pasó (lo autoriza un <b>administrador</b> con su contraseña) para que las cuentas del negocio queden como la gaveta, o vuelve a contar.</div>' +
     (sinSis ? '<div class="cie-arreglo">📡 Sin internet no pude revisar si desde el sistema se movió efectivo de esta caja. Si alguien registró un pago o un gasto desde el sistema eligiendo la <b>Caja ' + esc(caja) + "</b>, espera el internet y toca <b>🔄 Revisar otra vez</b> antes de registrar un faltante.</div>" : "") +
     bloque("BS", x.dBs) + bloque("USD", x.dUsd) +
-    '<div class="cie-arreglo">¿Lo pagó o lo cobró alguien desde el <b>sistema</b> (Egresos, Proveedores, Compras, Clientes) con el efectivo de esta caja? Que elija <b>Caja ' + esc(caja) + "</b> en <b>¿De qué caja salió?</b> y toca <b>🔄 Revisar otra vez</b>: el cierre lo suma solo.</div>" +
+    '<div class="cie-arreglo">¿Se pagó o se cobró algo desde el <b>sistema</b> (Egresos, Proveedores, Compras, Clientes, Finanzas) con el efectivo de esta caja?' +
+    '<div class="cie-mots" style="margin-top:8px;"><button type="button" class="cie-mot" onclick="cieSinCaja()">📋 Ya está registrado en el sistema<small>Si no dijeron de qué caja salió, elígelo aquí (lo autoriza un administrador) y el cierre lo suma.</small></button></div>' +
+    '<div class="cie-ayuda" style="margin:8px 0 0;">Si todavía no está registrado: que lo registren eligiendo <b>Caja ' + esc(caja) + "</b> en <b>¿De qué caja salió?</b> y toca <b>🔄 Revisar otra vez</b>.</div></div>" +
     '<div class="m-btns" style="justify-content:flex-start;margin-top:4px;"><button type="button" class="btn sm" onclick="cierrePaso(1)">🔢 Contar otra vez</button>' +
     '<button type="button" class="btn sm" onclick="cierreTraerSistema()"' + (CIE.cargando ? " disabled" : "") + ">🔄 Revisar otra vez</button></div></div>";
 }
@@ -2709,7 +2719,7 @@ async function cerrarTurno(btn){
     caja: S.datos.caja, equipo: S.datos.equipo, estado: "por_subir", msg: "" });
   c.metodos = R.metodos.map(m => ({ metodo: m.metodo, tipo: m.tipo, desc: m.desc, neto: m.neto, efectivo: m.efectivo }));
   S.cierres.push(c);
-  const uf = { caja: S.datos.caja, bs: q.bs, usd: q.usd, cajero: c.cajeroNombre, cierre: c.cierre, turno: t.id };
+  const uf = { caja: S.datos.caja, bs: q.bs, usd: q.usd, cajero: c.cajeroNombre, cierre: c.cierre, cierreMs: c.cierreMs, turno: t.id };   // 4.2: con la hora real (ms)
   try { await kvSet("cierres", S.cierres); await kvSet("turno", null); await kvSet("ultFondo", uf); S.ultFondo = uf; CIE.tid = ""; }
   catch (e) { btnLibre(btn); S.cierres.pop(); aviso({ icono: "❌", titulo: "No se cerró el turno", html: "El equipo no pudo guardar el cierre (" + esc(e.message) + "). Vuelve a intentar." }); return; }
   S.turno = null; S.cierreAdmin = null;

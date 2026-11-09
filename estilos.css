@@ -833,3 +833,9 @@ body:not(.v-vender) #btnOrdenes{display:none;}
   .topbar{gap:5px;padding-left:8px;padding-right:8px;}
   .btn-cierre .mv-lbl{display:none;}
 }
+
+/* 4.2 · Ya está registrado en el sistema (lista para marcar) */
+.sc-it{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;margin-bottom:6px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);cursor:pointer;text-align:left;font-size:14px;line-height:1.35;}
+.sc-it:hover{border-color:var(--amber);}
+.sc-it input{width:18px;height:18px;margin-top:2px;flex:none;accent-color:var(--amber);}
+.sc-it small{display:block;font-size:12px;color:var(--text-dim);margin-top:2px;}

@@ -187,6 +187,45 @@ async function gvAjuste(tipo, mon, monto){
   if (S.vista === "cierre") pintarCierre();
 }
 
+// ══ 4.2 · YA ESTÁ REGISTRADO EN EL SISTEMA (sin decir de qué caja) ══
+// Muestra los movimientos de las cuentas de efectivo registrados en el sistema desde «desde» sin caja; el cajero marca los
+// de esta gaveta y un administrador lo autoriza. o = { desde (ms), modo: "turno" | "antes", turnoId, ayuda }
+// Devuelve { n, bs, usd } si quedó anotado en el sistema, o null.
+async function sinCajaElegir(o){
+  if (!hayInternet()) { await aviso({ icono: "📡", titulo: "Hace falta internet", html: "Para ver lo que está registrado en el sistema hace falta internet. Conéctate y vuelve a intentar." }); return null; }
+  let lista = null, elegidos = [];
+  const r = await modal({ icono: "📋", titulo: "Ya está registrado en el sistema", ancho: true,
+    html: '<div class="m-txt" style="margin-bottom:8px;">' + (o.ayuda || "") + '</div><div id="scLista"><div class="cie-ayuda" style="text-align:center;padding:14px;"><span class="sp"></span> Buscando en el sistema…</div></div><div class="m-err" id="scErr"></div>',
+    botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: lo autoriza un administrador →", v: true, cls: "green" }],
+    alAbrir: async () => {
+      try { lista = await api("cj_turno", { op: "sincaja", desde: o.desde }, 30000); } catch (e) { lista = { ok: false, msg: e.message }; }
+      const box = $("scLista");
+      if (!box) return;
+      if (!lista || !lista.ok) { box.innerHTML = '<div class="m-err">No se pudo buscar en el sistema: ' + esc((lista && lista.msg) || "no respondió") + ". Vuelve a intentar.</div>"; return; }
+      if (!(lista.movs || []).length) { box.innerHTML = '<div class="cie-arreglo">No hay nada registrado con el efectivo sin decir de qué caja. Si alguien lo pagó desde el sistema y todavía no lo registró, que lo registre eligiendo <b>Caja ' + esc(S.datos.caja) + "</b> en <b>¿De qué caja salió?</b>.</div>"; return; }
+      box.innerHTML = lista.movs.map((m, i) => '<label class="sc-it"><input type="checkbox" data-i="' + i + '"><span><b>' + (m.monto < 0 ? "Salieron " : "Entraron ") + gvPlata(m.moneda, m.monto) + "</b> · " + esc(m.etiqueta) +
+        "<small>" + esc(m.hora) + " · " + esc(m.detalle) + "</small></span></label>").join("");
+    },
+    antes: v => {
+      if (!v) return true;
+      const err = t => { const e = $("scErr"); if (e) e.innerHTML = t; return false; };
+      if (!lista) return err("Todavía estoy buscando en el sistema. Espera un momento.");
+      if (!lista.ok || !(lista.movs || []).length) return err("No hay nada para elegir.");
+      elegidos = [...document.querySelectorAll("#scLista input[type=checkbox]:checked")].map(x => lista.movs[Number(x.dataset.i)]).filter(Boolean);
+      if (!elegidos.length) return err("Marca lo que salió (o entró) de esta gaveta.");
+      return true;
+    } });
+  if (!r || !elegidos.length) return null;
+  const adm = await gvPinAdmin("Autorizar", elegidos.map(m => (m.monto < 0 ? "Salieron " : "Entraron ") + "<b>" + gvPlata(m.moneda, m.monto) + "</b> · " + esc(m.detalle)).join("<br>"));
+  if (!adm) return null;
+  let a = null;
+  try { a = await api("cj_turno", { op: "asignar", desde: o.desde, claves: elegidos.map(m => m.clave), modo: o.modo, turnoId: o.turnoId || "", autorizo: adm.nombre }, 30000); }
+  catch (e) { a = { ok: false, msg: e.message }; }
+  if (!a || !a.ok) { await aviso({ icono: "❌", titulo: "No se anotó", html: esc((a && a.msg) || "El sistema no respondió.") + " Vuelve a intentar." }); return null; }
+  toast("✅ Anotado: " + a.n + (a.n === 1 ? " movimiento" : " movimientos"));
+  return a;
+}
+
 // ══ REDONDEO: al cerrar, los centavos que no cuadran (hasta Bs 1 o $0,50) se registran solos ══
 async function gvRedondeo(x){
   const hechos = [];

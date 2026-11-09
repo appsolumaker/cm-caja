@@ -115,13 +115,37 @@ function pintarTurno(){
       '. Después, aquí con internet, toca <b>🔄 Actualizar datos</b>.</div><div style="margin-top:14px;"><button type="button" class="btn green" onclick="actualizarDatos(this)">🔄 Actualizar datos</button></div>';
     return;
   }
+  // 3c) 4.2 · contó más efectivo del que tiene el sistema (lo libre para esta caja): no abre hasta decir de dónde salió
+  if (_turnoOk && FD.sc) {
+    const sc = FD.sc, inf = sc.info || {}, mons = ["BS", "USD"].filter(m => Number(sc.faltan[m]) > 0);
+    const linea = m => {
+      const sal = (inf.saldo || {})[m] || 0, otr = (inf.enOtras || {})[m] || 0, lib = (inf.libre || {})[m] || 0, k = m === "BS" ? "bs" : "usd";
+      return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔺 Hay <b>' + gvPlata(m, sc.faltan[m]) + "</b> que el sistema no tiene. ¿De dónde salieron?</div>" +
+        '<div class="cie-ayuda" style="margin:0 0 6px;">En el sistema, el efectivo en ' + (m === "BS" ? "Bs" : "$") + " es <b>" + gvPlata(m, sal) + "</b>" +
+        (otr > 0 ? " y <b>" + gvPlata(m, otr) + "</b> están en otras cajas" : "") + ": para esta caja quedan <b>" + gvPlata(m, Math.max(0, lib)) + "</b> y contaste <b>" + gvPlata(m, sc.contado[k]) + "</b>.</div>" +
+        fdOrigenHTML("sc", m, sc.faltan[m]) + "</div>";
+    };
+    const otras = (inf.detalle || []).map(x => "Caja " + x.caja + (x.abierta ? " (abierta" + (x.cajero ? ", " + esc(x.cajero) : "") + ")" : " (cerrada, lo que dejó)") + ": " +
+      [x.bs ? gvPlata("BS", x.bs) : "", x.usd ? gvPlata("USD", x.usd) : ""].filter(Boolean).join(" · ")).filter(x => !/: $/.test(x));
+    box.innerHTML = '<div class="pk-hola">⚠️ Hay más efectivo del que tiene el sistema</div>' +
+      '<div class="pk-sub">Todo el efectivo de la gaveta tiene que estar en las cuentas de efectivo del sistema. Di de dónde salió lo de más (lo autoriza un <b>administrador</b> con su contraseña) y el turno abre. O vuelve a contar.</div>' +
+      mons.map(linea).join("") +
+      (otras.length ? '<div class="cie-ayuda" style="text-align:left;">💵 En las otras cajas: ' + otras.join(" · ") + "</div>" : "") +
+      '<div class="m-err" id="tFondoErr" style="text-align:left;"></div>' +
+      '<div class="m-btns"><button type="button" class="btn" onclick="fondoVolverAContar()">← Volver a contar</button><button type="button" class="btn green" id="btnAbrirSc" onclick="abrirConOrigen(this)">⭐ Registrar y abrir</button></div>';
+    return;
+  }
   // 3b) 1b/1c: lo contado no coincide con lo que dejó el turno anterior → se registra lo que pasó (lo autoriza un administrador)
   if (_turnoOk && FD.noCoincide) {
     const c = cajeroPorId(_turnoOk), pv = FD.prev, n = FD.noCoincide;
     if (!c || !pv) { FD.noCoincide = null; pintarTurno(); return; }
     const dif = (a, b) => { const d = r2(a - b); return Math.abs(d) < 0.005 ? "igual" : (d > 0 ? "sobra " : "falta ") + fmt(Math.abs(d)); };
+    const ent = pv.entre && pv.entre.n ? pv.entre : null, qd = ent && pv.queda ? pv.queda : { bs: pv.bs, usd: pv.usd };
+    const sg = v => (v < 0 ? "− " : "+ ") + fmt(Math.abs(v));
     const tabla = '<table class="cie-tabla" style="text-align:left;margin:6px 0 10px;"><tr><td></td><td class="r">Bs</td><td class="r">$</td></tr>' +
-      '<tr><td>Dejó ' + esc(pv.cajero || "el turno anterior") + (pv.cierre ? " (" + esc(fechaCorta(pv.cierre)) + " " + esc(horaDe(pv.cierre)) + ")" : "") + '</td><td class="r">' + fmt(pv.bs) + '</td><td class="r">' + fmt(pv.usd) + "</td></tr>" +
+      '<tr><td>Dejó ' + esc(pv.cajero || "el turno anterior") + (pv.cierre ? " (" + esc(fechaCorta(pv.cierre)) + " " + esc(horaDe(pv.cierre)) + ")" : "") + '</td><td class="r">' + fmt(qd.bs) + '</td><td class="r">' + fmt(qd.usd) + "</td></tr>" +
+      (ent ? '<tr><td>Ya registrado en el sistema</td><td class="r">' + sg(ent.bs) + '</td><td class="r">' + sg(ent.usd) + "</td></tr>" +
+             '<tr><td><b>Debe haber</b></td><td class="r">' + fmt(pv.bs) + '</td><td class="r">' + fmt(pv.usd) + "</td></tr>" : "") +
       '<tr><td>Contaste</td><td class="r">' + fmt(n.bs) + '</td><td class="r">' + fmt(n.usd) + "</td></tr>" +
       '<tr class="cie-res"><td><b>Diferencia</b></td><td class="r">' + dif(n.bs, pv.bs) + '</td><td class="r">' + dif(n.usd, pv.usd) + "</td></tr></table>";
     const grandes = fdGrandes();
@@ -138,10 +162,10 @@ function pintarTurno(){
     const tipos = ((S.datos && S.datos.tiposEgreso) || []).filter(Boolean), lt = tipos.length ? tipos : ["Otros"];
     const bloque = (mon, d) => {
       const p = gvPlata(mon, d), a = FD.aj[mon] || {};
-      if (d > 0) return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔺 Sobran <b>' + p + "</b>.</div>" +
-        '<div class="cie-mots"><button type="button" class="cie-mot on">💰 Registrar sobrante de caja de ' + p + "<small>Se registra como ingreso extra «Sobrante de caja».</small></button></div></div>";
+      if (d > 0) return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔺 Sobran <b>' + p + "</b>. ¿De dónde salieron?</div>" + fdOrigenHTML("aj", mon, d) + "</div>";
       return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔻 Faltan <b>' + p + "</b>. ¿Qué pasó?</div>" +
-        '<div class="cie-mots"><button type="button" class="cie-mot' + (a.tipo === "gasto" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'gasto\')">💸 Se pagó un gasto con el efectivo de la gaveta<small>Agua, hielo, un flete… Se registra en Egresos con su tipo.</small></button>' +
+        '<div class="cie-mots"><button type="button" class="cie-mot" onclick="fdSinCaja()">📋 Salió para algo que ya está registrado en el sistema<small>Un gasto, un pago a un proveedor, un depósito al banco… registrado sin decir de qué caja. Elígelo y «Debe haber» baja.</small></button>' +
+        '<button type="button" class="cie-mot' + (a.tipo === "gasto" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'gasto\')">💸 Se pagó un gasto con el efectivo de la gaveta<small>Agua, hielo, un flete… que NO está registrado. Se registra en Egresos con su tipo.</small></button>' +
         (a.tipo === "gasto" ? '<div class="cie-arreglo"><label class="lbl" for="fdCat' + mon + '" style="margin-top:0;">Tipo de gasto</label><select class="inp" id="fdCat' + mon + '" onchange="FD.aj.' + mon + '.cat=this.value"><option value="">— Elige —</option>' +
           lt.map(t => '<option value="' + esc(t) + '"' + (a.cat === t ? " selected" : "") + ">" + esc(t) + "</option>").join("") + "</select>" +
           '<label class="lbl" for="fdDesc' + mon + '">¿Qué se pagó?</label><input class="inp" id="fdDesc' + mon + '" maxlength="120" placeholder="Ej. 2 botellones de agua" value="' + esc(a.desc || "") + '" oninput="FD.aj.' + mon + '.desc=this.value"></div>' : "") +
@@ -198,20 +222,96 @@ function elegirCajero(id){
 //  monto y la caja lo compara: si no coincide (más de Bs 1 o $0,50), no abre hasta que se registre lo que pasó (1c).
 //  Lo que dejó: el último cierre de esta caja en el sistema (cualquier equipo, con internet) o el de este equipo, el
 //  más nuevo de los dos. Sin ninguno (equipo nuevo, o cierres de antes de 3.2), abre libre como antes.
-const FD = { prev: null, noCoincide: null, contado: null, pide: 0, aj: {}, nota: "" };   // aj (1c): { BS|USD: { tipo, cat, desc } }
+const FD = { prev: null, noCoincide: null, contado: null, pide: 0, aj: {}, nota: "", cuentas: [], sc: null, sis: [], ult: null };   // aj (1c): { BS|USD: { tipo, cat, desc, cuentaId, montoOrigen, oid } } · sc (4.2): más efectivo del que tiene el sistema · sis: lo que salió para algo ya registrado
 // 1c: las monedas que no coinciden por más de Bs 1 o $0,50 → [[moneda, diferencia], …] (+ sobra · − falta)
 function fdGrandes(){
   const pv = FD.prev, n = FD.noCoincide; if (!pv || !n) return [];
   return [["BS", r2(n.bs - pv.bs)], ["USD", r2(n.usd - pv.usd)]].filter(z => Math.abs(z[1]) > (z[0] === "BS" ? CIE_TOL.bs : CIE_TOL.usd) + 0.0001);
 }
 function fdElegir(mon, tipo){ FD.aj[mon] = Object.assign(FD.aj[mon] || {}, { tipo: tipo }); pintarTurno(); }
+// ── 4.2 · De dónde salió el efectivo de más: 🔄 de otra cuenta del negocio · 💼 lo puso el dueño · 💰 sobrante de caja ──
+// ns: "aj" (sobra frente a lo que dejó el turno anterior) · "sc" (hay más de lo que tiene el sistema). Se registra en el
+// sistema ANTES de abrir el turno, con su código CJF-… (si se manda dos veces, no se registra dos veces).
+function fdAj(ns, mon){ const box = ns === "sc" ? (FD.sc.aj = FD.sc.aj || {}) : FD.aj; return box[mon] = box[mon] || {}; }
+function fdOrigenHTML(ns, mon, monto){
+  const a = fdAj(ns, mon), p = gvPlata(mon, monto), id = ns + mon, ctas = FD.cuentas || [];
+  const sel = ctas.find(c => c.id === a.cuentaId), otraMon = sel && sel.moneda !== mon, sm = m => m === "BS" ? "Bs" : "$";
+  const card = (tipo, ico, tit, sub) => '<button type="button" class="cie-mot' + (a.tipo === tipo ? " on" : "") + '" onclick="fdOrigen(\'' + ns + "','" + mon + "','" + tipo + '\')">' + ico + " " + tit + "<small>" + sub + "</small></button>";
+  return '<div class="cie-mots">' +
+    card("traslado", "🔄", "Vino de otra cuenta del negocio", "Se sacó del banco, de Zelle, de Binance… o se cambió. Se registra como traslado: no es ingreso.") +
+    (a.tipo === "traslado" ? '<div class="cie-arreglo">' + (ctas.length
+      ? '<label class="lbl" for="fdCta' + id + '" style="margin-top:0;">¿De qué cuenta salieron los ' + p + "?</label>" +
+        '<select class="inp" id="fdCta' + id + '" onchange="fdOrigenCta(\'' + ns + "','" + mon + '\', this.value)"><option value="">— Elige —</option>' +
+        ctas.map(c => '<option value="' + esc(c.id) + '"' + (a.cuentaId === c.id ? " selected" : "") + ">" + esc(c.nombre) + " (" + sm(c.moneda) + ")</option>").join("") + "</select>" +
+        (otraMon ? '<label class="lbl" for="fdOtro' + id + '">¿Cuántos ' + sm(sel.moneda) + " salieron de " + esc(sel.nombre) + "?</label>" +
+          '<input class="inp" id="fdOtro' + id + '" type="number" inputmode="decimal" min="0" step="any" placeholder="' + sm(sel.moneda) + ' que salieron" value="' + esc(a.montoOrigen || "") + '" oninput="fdAj(\'' + ns + "','" + mon + '\').montoOrigen=this.value">' +
+          '<div class="cie-ayuda" style="margin:4px 0 0;">Se registra como ' + (mon === "USD" ? "compra" : "venta") + " de divisas.</div>" : "")
+      : "En el sistema no hay otras cuentas para elegir. Elige otra opción.") + "</div>" : "") +
+    card("aporte", "💼", "Lo puso el dueño", "Se registra como aporte de capital del dueño: no es ingreso ni venta.") +
+    card("sobrante", "💰", "Sobrante de caja", "No se sabe de dónde salió. Se registra como ingreso extra «Sobrante de caja».") + "</div>";
+}
+function fdOrigen(ns, mon, tipo){ fdAj(ns, mon).tipo = tipo; pintarTurno(); }
+function fdOrigenCta(ns, mon, id){ const a = fdAj(ns, mon); a.cuentaId = id; a.montoOrigen = ""; pintarTurno(); }
+// Lo elegido, listo para el sistema: { o, txt } o { err }
+function fdOrigenListo(ns, mon, monto){
+  const a = fdAj(ns, mon), p = gvPlata(mon, monto);
+  if (!a.tipo) return { err: "Elige de dónde salieron los <b>" + p + "</b> de más." };
+  const o = { id: a.oid || (a.oid = "CJF-" + uuid()), tipo: a.tipo, moneda: mon, monto: r2(Math.abs(monto)) };
+  if (a.tipo === "traslado") {
+    const c = (FD.cuentas || []).find(x => x.id === a.cuentaId);
+    if (!c) return { err: "Elige de qué cuenta salieron los <b>" + p + "</b>." };
+    o.cuentaId = c.id;
+    if (c.moneda !== mon) {
+      const v = r2(Number(a.montoOrigen) || 0);
+      if (!(v > 0)) return { err: "Escribe cuántos " + (c.moneda === "BS" ? "Bs" : "$") + " salieron de " + esc(c.nombre) + "." };
+      o.montoOrigen = v;
+    }
+    return { o: o, txt: "Vino de " + esc(c.nombre) + ": <b>" + p + "</b>" + (o.montoOrigen ? " (salieron " + gvPlata(c.moneda, o.montoOrigen) + ")" : ""), nota: "vino de " + c.nombre };
+  }
+  return { o: o, txt: (a.tipo === "aporte" ? "Lo puso el dueño" : "Sobrante de caja") + ": <b>" + p + "</b>", nota: a.tipo === "aporte" ? "lo puso el dueño" : "sobrante de caja" };
+}
+// 4.2: el último cierre se elige por la HORA REAL del cierre (ms), no por el texto (la hoja podía tenerlo como fecha)
+function msDeTexto(txt){
+  const m = String(txt || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0)).getTime() : 0;
+}
+async function fondoPrevCargar(){
+  const caja = Number(S.datos && S.datos.caja) || 0, loc = S.ultFondo && Number(S.ultFondo.caja) === caja ? S.ultFondo : null, pide = ++FD.pide;
+  FD.prev = loc ? { bs: Number(loc.bs) || 0, usd: Number(loc.usd) || 0, cajero: loc.cajero || "", cierre: loc.cierre || "", cierreMs: Number(loc.cierreMs) || msDeTexto(loc.cierre) } : null;
+  if (!hayInternet()) return;
+  let r = null;
+  try { r = await api("cj_turno", { op: "fondo", v: 2 }, 15000); } catch (e) { r = null; }
+  if (pide !== FD.pide || !r || !r.ok) return;
+  if (Array.isArray(r.cuentas)) FD.cuentas = r.cuentas;
+  if (!r.hay) return;
+  const ms = Number(r.cierreMs) || msDeTexto(r.cierre);
+  if (!FD.prev || ms >= (FD.prev.cierreMs || 0))   // el del sistema manda: trae lo que salió entre turnos para algo ya registrado
+    FD.prev = { bs: Number(r.bs) || 0, usd: Number(r.usd) || 0, cajero: r.cajero || "", cierre: r.cierre || "", cierreMs: ms, queda: r.queda || null, entre: r.entre || null };
+  if (_turnoOk && !FD.noCoincide && !FD.sc && $("tFondoBs")) pintarTurno();   // cambia el texto de la pregunta (lo escrito se queda)
+}
+function fondoVolverAContar(){ FD.contado = FD.noCoincide || (FD.ult && FD.ult.contado) || FD.contado; FD.noCoincide = null; FD.aj = {}; FD.nota = ""; FD.sc = null; FD.ult = null; pintarTurno(); setTimeout(() => { const i = $("tFondoBs"); if (i) { i.focus(); i.select(); } }, 30); }
+// Falta al abrir: salió para algo que ya está registrado en el sistema (sin caja). El sistema lo descuenta de lo que dejó.
+async function fdSinCaja(){
+  const pv = FD.prev;
+  if (!pv) return;
+  const desde = pv.cierreMs || msDeTexto(pv.cierre) || Date.now() - 864e5;
+  const r = await sinCajaElegir({ desde: desde, modo: "antes",
+    ayuda: "Esto se registró en el sistema con el efectivo desde que se cerró el turno anterior" + (pv.cierre ? " (" + esc(fechaCorta(pv.cierre)) + " " + esc(horaDe(pv.cierre)) + ")" : "") +
+           ", sin decir de qué caja. Marca lo que salió (o entró) de <b>esta gaveta</b> antes de abrir." });
+  if (!r) return;
+  const contado = FD.noCoincide;
+  await fondoPrevCargar();   // el sistema ya descuenta lo elegido de lo que dejó
+  FD.noCoincide = null; FD.aj = {};
+  FD.ult = { modo: undefined, contado: contado };
+  await abrirTurno($("btnAbrirIgual"));   // vuelve a comparar: si ya coincide, abre; si no, dice lo que falta
+}
 async function abrirConAjuste(btn){
   if (btn && btn.disabled) return;
   const err = t => { const e = $("tFondoErr"); if (e) e.innerHTML = t; };
   const grandes = fdGrandes(), lin = [];
   for (const [mon, d] of grandes) {
     const a = FD.aj[mon] = FD.aj[mon] || {}, p = gvPlata(mon, d);
-    if (d > 0) { a.tipo = "sobrante"; lin.push("Sobrante de caja: <b>" + p + "</b>"); continue; }
+    if (d > 0) { const x = fdOrigenListo("aj", mon, d); if (x.err) { err(x.err); return; } lin.push(x.txt); continue; }
     if (!a.tipo) { err("Elige qué pasó con los <b>" + p + "</b> que faltan."); return; }
     if (a.tipo === "gasto") {
       if (!a.cat) { err("Elige el tipo de gasto de los <b>" + p + "</b>."); return; }
@@ -224,17 +324,24 @@ async function abrirConAjuste(btn){
   if (!adm) return;
   await abrirTurno(btn, { autorizo: adm.nombre });
 }
-async function fondoPrevCargar(){
-  const caja = Number(S.datos && S.datos.caja) || 0, loc = S.ultFondo && Number(S.ultFondo.caja) === caja ? S.ultFondo : null, pide = ++FD.pide;
-  FD.prev = loc ? { bs: Number(loc.bs) || 0, usd: Number(loc.usd) || 0, cajero: loc.cajero || "", cierre: loc.cierre || "" } : null;
-  if (!hayInternet()) return;
-  let r = null;
-  try { r = await api("cj_turno", { op: "fondo" }, 15000); } catch (e) { r = null; }
-  if (pide !== FD.pide || !r || !r.ok || !r.hay) return;
-  if (!FD.prev || String(r.cierre || "") > String(FD.prev.cierre || "")) FD.prev = { bs: Number(r.bs) || 0, usd: Number(r.usd) || 0, cajero: r.cajero || "", cierre: r.cierre || "" };
-  if (_turnoOk && !FD.noCoincide && $("tFondoBs")) pintarTurno();   // cambia el texto de la pregunta (lo escrito se queda)
+// 4.2 · «Hay más efectivo del que tiene el sistema»: lo elegido para cada moneda, lo autoriza un administrador y vuelve a abrir
+async function abrirConOrigen(btn){
+  if (btn && btn.disabled || !FD.sc) return;
+  const err = t => { const e = $("tFondoErr"); if (e) e.innerHTML = t; };
+  const lin = [], listo = [];
+  for (const m of ["BS", "USD"]) {
+    const f = Number(FD.sc.faltan[m]) || 0;
+    if (!(f > 0)) continue;
+    const x = fdOrigenListo("sc", m, f);
+    if (x.err) { err(x.err); return; }
+    lin.push(x.txt); listo.push(x);
+  }
+  err("");
+  const adm = await gvPinAdmin("Autorizar y abrir el turno", lin.join("<br>"));
+  if (!adm) return;
+  FD.sc.listo = listo; FD.sc.autorizo = adm.nombre;
+  await abrirTurno(btn, FD.ult ? FD.ult.modo : undefined);
 }
-function fondoVolverAContar(){ FD.contado = FD.noCoincide; FD.noCoincide = null; FD.aj = {}; FD.nota = ""; pintarTurno(); setTimeout(() => { const i = $("tFondoBs"); if (i) { i.focus(); i.select(); } }, 30); }
 // modo: nada = el botón 🔓 Abrir turno · true = abrir igual con explicación (sin efectivo con cuenta) ·
 // { autorizo } (1c) = ya se eligió qué pasó con la diferencia y un administrador puso su contraseña
 async function abrirTurno(btn, modo){
@@ -242,11 +349,12 @@ async function abrirTurno(btn, modo){
   const c = cajeroPorId(_turnoOk);
   if (!c) { _turnoOk = null; pintarTurno(); return; }
   const igual = modo === true, aj = modo && typeof modo === "object" ? modo : null;
-  const fb = (igual || aj) && FD.noCoincide ? FD.noCoincide.bs : r2(Number($("tFondoBs").value) || 0), fu = (igual || aj) && FD.noCoincide ? FD.noCoincide.usd : r2(Number($("tFondoUsd").value) || 0);
+  const leido = $("tFondoBs") ? { bs: r2(Number($("tFondoBs").value) || 0), usd: r2(Number($("tFondoUsd").value) || 0) } : (FD.ult && FD.ult.contado) || { bs: 0, usd: 0 };   // 4.2: al volver de otra pantalla, lo que contó
+  const fb = (igual || aj) && FD.noCoincide ? FD.noCoincide.bs : leido.bs, fu = (igual || aj) && FD.noCoincide ? FD.noCoincide.usd : leido.usd;
   const pv = FD.prev;
   let expl = "";
   if (pv && !igual && !aj && (Math.abs(fb - pv.bs) > CIE_TOL.bs + 0.0001 || Math.abs(fu - pv.usd) > CIE_TOL.usd + 0.0001)) {   // 1b: no coincide con lo que dejó el turno anterior
-    FD.noCoincide = { bs: fb, usd: fu }; FD.aj = {}; FD.nota = ""; pintarTurno(); return;
+    FD.noCoincide = { bs: fb, usd: fu }; FD.aj = {}; FD.nota = ""; FD.sc = null; pintarTurno(); return;
   }
   if (igual) {
     expl = String(($("tFondoExpl") || {}).value || "").trim();
@@ -254,21 +362,34 @@ async function abrirTurno(btn, modo){
   }
   // 1c: el turno arranca con lo que dejó el anterior y la diferencia se registra en el turno (gaveta.js): así «Debe haber»
   // y las cuentas del negocio quedan como lo contado. Los centavos (hasta Bs 1 o $0,50) van solos como redondeo.
-  const movs = [], fondo = { BS: fb, USD: fu }, notas = [];
+  // 4.2: lo que SOBRA ya no es «sobrante» solo: se dice de dónde salió y se registra antes de abrir (el fondo es lo contado).
+  const movs = [], fondo = { BS: fb, USD: fu }, notas = [], origen = [];
   if (pv && !igual) {
     const nota = String(FD.nota || "").replace(/\s+/g, " ").trim();
     [["BS", fb, pv.bs], ["USD", fu, pv.usd]].forEach(([mon, contado, dejo]) => {
       const d = r2(contado - dejo), l = gvMetodos(mon);
       if (Math.abs(d) < 0.005 || !l.length) return;
       const chico = Math.abs(d) <= (mon === "BS" ? CIE_TOL.bs : CIE_TOL.usd) + 0.0001;
-      const a = chico ? { tipo: "redondeo" } : (d > 0 ? { tipo: "sobrante" } : (FD.aj[mon] || {}));
+      if (!chico && d > 0) {
+        const x = fdOrigenListo("aj", mon, d);
+        if (x.o) { origen.push(x.o); notas.push("sobraban " + gvPlata(mon, d) + " (" + x.nota + ", autorizó " + (aj ? aj.autorizo : "") + ")"); }
+        return;
+      }
+      const a = chico ? { tipo: "redondeo" } : (FD.aj[mon] || {});
       if (!a.tipo) return;
       fondo[mon] = dejo;
       movs.push({ tipo: a.tipo, moneda: mon, metodo: l[0].metodo, monto: Math.abs(d), signo: d > 0 ? 1 : -1, cat: a.tipo === "gasto" ? a.cat : "",
                   desc: a.tipo === "gasto" ? String(a.desc || "").trim() : (chico ? "al abrir el turno" : (nota || "al abrir el turno")), autorizo: chico ? "" : (aj ? aj.autorizo : "") });
-      if (!chico) notas.push((d > 0 ? "sobraban " : "faltaban ") + gvPlata(mon, d) + " (" + (a.tipo === "gasto" ? "gasto " + a.cat + ": " + String(a.desc || "").trim() : a.tipo === "faltante" ? "faltante de caja" : "sobrante de caja") + ", autorizó " + (aj ? aj.autorizo : "") + ")");
+      if (!chico) notas.push("faltaban " + gvPlata(mon, d) + " (" + (a.tipo === "gasto" ? "gasto " + a.cat + ": " + String(a.desc || "").trim() : "faltante de caja") + ", autorizó " + (aj ? aj.autorizo : "") + ")");
     });
+    if (pv.entre && pv.entre.n) notas.push("salió para algo ya registrado en el sistema: " + [pv.entre.bs ? gvPlata("BS", pv.entre.bs) : "", pv.entre.usd ? gvPlata("USD", pv.entre.usd) : ""].filter(Boolean).join(" y "));
     if (notas.length) expl = notas.join(" y ") + (nota ? ". " + nota : "");
+  }
+  let autorizo = aj ? aj.autorizo : "";
+  if (FD.sc && FD.sc.listo) {   // 4.2: había más de lo que tiene el sistema
+    FD.sc.listo.forEach(x => origen.push(x.o));
+    autorizo = autorizo || FD.sc.autorizo;
+    expl = (expl ? expl + ". " : "") + "Había más efectivo del que tenía el sistema: " + FD.sc.listo.map(x => x.nota + " " + gvPlata(x.o.moneda, x.o.monto)).join(" y ") + " (autorizó " + FD.sc.autorizo + ")";
   }
   btnOcupado(btn, "Abriendo…");
   const ahora = new Date();
@@ -276,10 +397,11 @@ async function abrirTurno(btn, modo){
               cajeroId: c.id, cajeroNombre: c.nombre, apertura: ahoraTxt(ahora), aperturaMs: ahora.getTime(),   // 3.0: la hora exacta, para el efectivo movido desde el sistema
               fondoBs: r2(fondo.BS), fondoUsd: r2(fondo.USD), fondoContado: { bs: fb, usd: fu },
               fondoPrev: pv ? { bs: pv.bs, usd: pv.usd, cajero: pv.cajero, cierre: pv.cierre } : null, fondoExpl: expl };   // 1b
+  FD.ult = { modo: modo, contado: { bs: fb, usd: fu } };
   // 4.1 · Un turno por caja: se abre SOLO con internet. El sistema revisa que esta caja no esté abierta en otro equipo
-  // y deja el turno anotado de una vez. Después de abierto, la caja vende con o sin internet.
+  // y deja el turno anotado de una vez. 4.2: y que lo contado no pase del efectivo que tiene el sistema.
   let rA = null;
-  if (hayInternet()) { try { rA = await api("cj_turno", { op: "abrir", turno: turnoParaSistema(t) }, 30000); } catch (e) { rA = null; } }
+  if (hayInternet()) { try { rA = await api("cj_turno", { op: "abrir", v: 2, turno: Object.assign(turnoParaSistema(t), { fondoContado: t.fondoContado }), origen: origen, autorizo: autorizo }, 60000); } catch (e) { rA = null; } }
   if (!rA) {
     btnLibre(btn);
     aviso({ icono: "📡", titulo: "Hace falta internet para abrir el turno", html: "Para abrir el turno, la caja tiene que revisar en el sistema que la <b>Caja " + esc(S.datos.caja) + "</b> no esté abierta en otro equipo.<br><br>Conéctate a internet y vuelve a tocar <b>Abrir turno</b>. Después de abierto, la caja vende con o sin internet." });
@@ -288,9 +410,15 @@ async function abrirTurno(btn, modo){
   if (rA.ok === false && /no reconocida/i.test(String(rA.msg || ""))) { /* el sistema todavía no tiene esta versión: abre como antes */ }
   else if (rA.ok === false) { btnLibre(btn); aviso({ icono: "❌", titulo: "No se abrió el turno", html: esc(rA.msg || "El sistema no respondió.") }); return; }
   else if (rA.libre === false) { btnLibre(btn); aviso({ icono: "🔒", titulo: "La Caja " + esc(S.datos.caja) + " ya está abierta", html: esc(rA.msg) }); return; }
+  else if (rA.sinCubrir) {   // 4.2: contó más efectivo del que tiene el sistema → decir de dónde salió
+    btnLibre(btn);
+    FD.sc = { faltan: rA.sinCubrir, info: rA.info || {}, contado: { bs: fb, usd: fu }, aj: (FD.sc && FD.sc.aj) || {} };
+    pintarTurno();
+    return;
+  }
   try { await kvSet("turno", t); }
   catch (e) { btnLibre(btn); aviso({ icono: "❌", titulo: "No se abrió el turno", html: "El equipo no pudo guardar el turno (" + esc(e.message) + "). Vuelve a intentar." }); return; }
-  S.turno = t; _turnoOk = null; _turnoSel = null; FD.noCoincide = null; FD.contado = null; FD.aj = {}; FD.nota = "";
+  S.turno = t; _turnoOk = null; _turnoSel = null; FD.noCoincide = null; FD.contado = null; FD.aj = {}; FD.nota = ""; FD.sc = null; FD.ult = null;
   for (const m of movs) await gvRegistrar(m);   // 1c (gaveta.js): la diferencia queda registrada en este turno
   btnLibre(btn);
   desbloquear();
