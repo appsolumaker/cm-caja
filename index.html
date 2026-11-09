@@ -10,7 +10,7 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="estilos.css?v=3.8">
+<link rel="stylesheet" href="estilos.css?v=3.9">
 </head>
 <body class="light entrando">
 
@@ -38,6 +38,8 @@
   <div class="menu-vta-info" id="menuInfo"></div>
   <button type="button" class="menu-vta-item" data-v="vender" onclick="menuVtaAccion('vender')"><span class="mv-ico">🛒</span><span><span class="mv-tit">Vender</span><span class="mv-sub">La factura que estás armando</span></span></button>
   <button type="button" class="menu-vta-item" data-v="ventas" onclick="menuVtaAccion('ventas')"><span class="mv-ico">🧾</span><span><span class="mv-tit">Ventas de este equipo</span><span class="mv-sub">Lo vendido hoy, lo que falta por subir y reimprimir tickets</span></span></button>
+  <button type="button" class="menu-vta-item" onclick="menuVtaAccion('facturas')"><span class="mv-ico">🔎</span><span><span class="mv-tit">Facturas anteriores</span><span class="mv-sub">Buscar una venta del sistema y reimprimirla (con internet)</span></span></button>
+  <button type="button" class="menu-vta-item" onclick="menuVtaAccion('servicio')"><span class="mv-ico">🛠️</span><span><span class="mv-tit">Nuevo servicio</span><span class="mv-sub">Un trabajo que no está en la lista (con internet y la clave maestra)</span></span></button>
   <button type="button" class="menu-vta-item" onclick="menuVtaAccion('actualizar')"><span class="mv-ico">🔄</span><span><span class="mv-tit">Actualizar datos</span><span class="mv-sub">Productos, precios, clientes y tasas del sistema (con internet)</span></span></button>
   <button type="button" class="menu-vta-item" data-v="ajustes" onclick="menuVtaAccion('ajustes')"><span class="mv-ico">⚙️</span><span><span class="mv-tit">Ajustes del equipo</span><span class="mv-sub">Ticket, tasas, sesión y datos de este equipo</span></span></button>
   <button type="button" class="menu-vta-item" id="menuBloq" onclick="menuVtaAccion('bloquear')"><span class="mv-ico">🔐</span><span><span class="mv-tit">Bloquear la caja</span><span class="mv-sub">Si te vas a parar: se abre con tu clave</span></span></button>
@@ -76,6 +78,7 @@
       <div class="buscador">
         <input type="text" id="busca" placeholder="🔍 ID, nombre, marca o cód. barras..." autocomplete="off" oninput="buscar()" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarEnter();}">
         <button type="button" class="btn-clear-busq" onclick="limpiarBusqueda()" title="Borrar" tabindex="-1">✕</button>
+        <button type="button" class="btn-esc" id="btnEsc" onclick="abrirEscaner()" title="Escanear con la cámara">📷</button>
       </div>
       <select id="selCat" class="sel-cat" onchange="buscar()"><option value="">🏷️ Todas las categorías</option></select>
       <div class="mv-cats" id="mvCats"></div>
@@ -196,6 +199,7 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
       <button type="button" class="btn green" id="btnSubir" onclick="subirAhora(this)">⬆️ Subir ahora</button>
       <button type="button" class="btn" onclick="descargarRespaldo()">💾 Descargar respaldo</button>
+      <button type="button" class="btn" onclick="abrirFacturasAnt()">🔎 Facturas anteriores del sistema</button>
     </div>
     <div class="res" id="resumen"></div>
     <div id="porCajero"></div>
@@ -319,12 +323,13 @@
 <div class="bloqueo oculto" id="bloqueo"><div class="bq-box" id="bloqCuerpo"></div></div>
 <div class="toast" id="toast"></div>
 
-<script src="app.js?v=3.8"></script>
-<script src="api.js?v=3.8"></script>
-<script src="sesion.js?v=3.8"></script>
-<script src="numeros.js?v=3.8"></script>
-<script src="ordenes.js?v=3.8"></script>
-<script src="cajero.js?v=3.8"></script>
-<script src="gaveta.js?v=3.8"></script>
+<script src="app.js?v=3.9"></script>
+<script src="api.js?v=3.9"></script>
+<script src="sesion.js?v=3.9"></script>
+<script src="numeros.js?v=3.9"></script>
+<script src="ordenes.js?v=3.9"></script>
+<script src="cajero.js?v=3.9"></script>
+<script src="gaveta.js?v=3.9"></script>
+<script src="tanda2.js?v=3.9"></script>
 </body>
 </html>

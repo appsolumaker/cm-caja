@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "3.8 · 8-11-2026";
+const APP_VER = "3.9 · 8-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -415,6 +415,8 @@ function menuVtaAccion(a){
   if (a === "cierre") { irCierre(); return; }
   if (a === "bloquear") { bloquear(); return; }
   if (a === "sacar") { gvGasto(); return; }   // 3.3 (gaveta.js)
+  if (a === "facturas") { abrirFacturasAnt(); return; }   // 3.9 (tanda2.js)
+  if (a === "servicio") { nuevoServicio(); return; }       // 3.9 (tanda2.js)
   irA(a);
 }
 function cuentas(){
@@ -561,8 +563,9 @@ function buscar(){
   const max = listaMax(), q = $("busca").value, todos = resultados(q), lst = todos.slice(0, max), on = binOn();
   $("vtaContador").textContent = todos.length > max ? "Mostrando " + max + " de " + todos.length + ": escribe para buscar" : "";
   const fotos = S.vtaVista !== "servicios" && hayFotos();   // 2.8: como Ventas, con «Mostrar fotos de productos en Ventas» (Configuración)
-  if (!lst.length) { box.innerHTML = '<div class="vacio">' + (norm(q) ? "No hay " + (S.vtaVista === "servicios" ? "servicios" : "productos") + " con «" + esc(q) + "»." : "No hay productos en los datos de este equipo.") + "</div>"; box._lst = []; return; }
-  box.innerHTML = lst.map((p, k) => {
+  const nsBtn = S.vtaVista === "servicios" ? '<button type="button" class="ns-btn" onclick="nuevoServicio($(\'busca\').value.trim())">🛠️ ＋ Nuevo servicio' + (norm(q) ? " «" + esc(q.trim()) + "»" : "") + "</button>" : "";   // 3.9 (tanda2.js)
+  if (!lst.length) { box.innerHTML = nsBtn + '<div class="vacio">' + (norm(q) ? "No hay " + (S.vtaVista === "servicios" ? "servicios" : "productos") + " con «" + esc(q) + "»." : "No hay productos en los datos de este equipo.") + "</div>"; box._lst = []; return; }
+  box.innerHTML = nsBtn + lst.map((p, k) => {
     const pr = precioDe(p, F.tipoPrecio), conIva = r2(r2(baseBCV(pr.base)) * (1 + pr.iva / 100)), div = on ? r2(pr.base * (1 + pr.iva / 100)) : 0;
     let info = "";
     if (p.tipo === "servicio") info = '<div style="margin-top:4px;"><span class="serv-tag">Servicio</span></div>';
@@ -640,10 +643,11 @@ function clicProducto(el, k){
 async function agregar(p){
   if (p.tipo !== "servicio") {
     const e = existenciaLocal(p);
-    if (e < 1) {
-      const ok = await confirmar({ icono: "📦", titulo: "Sin existencia en este equipo", colorOk: "naranja", ok: "Vender igual",
-        html: "Según los datos de este equipo, de <b>" + esc(p.nombre) + "</b> quedan <b>" + fmtCant(Math.max(0, e)) + "</b>." +
-          "<br><br>Si lo tienes en la mano, véndelo: al subirse se registra igual y el sistema avisa que hay que revisar la existencia." });
+    if (e < 1 && !F.avisoEx[String(p.codigo)]) {   // 3.9: se pregunta una sola vez por producto en cada venta
+      const dep = enDeposito(p);
+      const ok = await confirmar({ icono: "📦", titulo: "No hay existencia de este producto", colorOk: "naranja", ok: "Sí, venderlo igual", cancel: "No agregarlo",
+        html: "<b>" + esc(p.nombre) + "</b><br>Según el sistema " + (e > 0 ? "queda <b>" + fmtCant(e) + "</b>" : "no queda <b>ninguno</b>") + (dep > 0 ? " en la tienda (hay " + fmtCant(dep) + " en el depósito)" : "") + "." +
+          "<br><br><b>¿Lo tienes en la mano?</b> Véndelo: la venta se registra igual y en el sistema queda el aviso para revisar la existencia de ese producto." });
       if (!ok) return;
       F.avisoEx[String(p.codigo)] = true;
     }
@@ -658,7 +662,7 @@ async function agregar(p){
   if (habia) buscar(); else marcarEnFactura();   // 2.9: si la lista no cambia, solo el número del «+» (no se vuelven a cargar las fotos)
   pintarFactura();
   const n = String(p.nombre || ""); toast("✅ " + (n.length > 34 ? n.slice(0, 33) + "…" : n) + "  ×" + fmtCant(cuantasEnFactura(p.codigo)));
-  if (window.innerWidth > 820) $("busca").focus();
+  if (window.innerWidth > 820 && !(typeof ESC !== "undefined" && ESC.on)) $("busca").focus();
 }
 
 // ══ LA VENTA (factura) ══
@@ -2376,7 +2380,7 @@ function htmlTicket(v){
   if ((modo === "cajero" || modo === "ambos") && p.cajeroNombre) per.push("Cajero: " + esc(p.cajeroNombre));
   if ((modo === "vendedor" || modo === "ambos") && p.vendedorNombre) per.push("Vendedor: " + esc(p.vendedorNombre));
   const logo = (cfg.imprimirLogo !== false && String(cfg.logo || "").indexOf("data:image") === 0)
-    ? '<div style="text-align:center;padding-top:6px;"><img src="' + cfg.logo + '" alt="" style="max-width:' + (cfg.formato === "ticket58" ? "34mm" : "46mm") + ";max-height:" + (cfg.formato === "ticket58" ? "16mm" : "20mm") + ';object-fit:contain;filter:grayscale(100%);"></div>' : "";
+    ? '<div style="text-align:center;padding-top:6px;"><img data-cm-logo="1" src="' + cfg.logo + '" alt="" style="max-width:' + (cfg.formato === "ticket58" ? "34mm" : "46mm") + ";max-height:" + (cfg.formato === "ticket58" ? "16mm" : "20mm") + ';object-fit:contain;filter:grayscale(100%);"></div>' : "";
   const equiv = cfg.mostrarEquiv && enBS ? '<tr><td>' + (enDiv ? "Total $:" : "Total $ BCV:") + '</td><td style="text-align:right;">$' + fmt(totT) + "</td></tr>" : "";
   const desc = x.desc > 0 ? '<tr><td>Descuento:</td><td style="text-align:right;">- ' + sym + " " + conv(x.desc) + "</td></tr>" : "";
   const formaPago = cfg.mostrarFormaPago !== false ? '<hr class="sep"><div style="font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Forma de pago</div><table style="margin-bottom:5px;">' + filasPago + "</table>" : "";
@@ -2755,7 +2759,7 @@ async function sincronizar(manual){
   if (S.permisoMal && !manual) return { subidas: 0 };
   // De la más vieja a la más nueva (y a igual hora, por número de ticket)
   const cola = S.ventas.filter(v => v.estado === "por_subir").sort((a, b) => String(a.creada).localeCompare(String(b.creada)) || (Number(a.numeroTicket) || 0) - (Number(b.numeroTicket) || 0));
-  if (!cola.length) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); if (manual) await actualizarDatos(null, true); return { subidas: 0 }; }
+  if (!cola.length) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); await copiasAlDia(); if (manual) await actualizarDatos(null, true); return { subidas: 0 }; }
   S.sincronizando = true; pintarEstado();
   let subidas = 0, cortado = "";
   try {
@@ -2793,7 +2797,7 @@ async function sincronizar(manual){
     pintarEstado(); pintarBanners();
     if (S.vista === "ventas") pintarVentas();
   }
-  if (!cortado) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); }   // 3.0: cajero.js
+  if (!cortado) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); await copiasAlDia(); }   // 3.0: cajero.js · 3.9: copias para reimprimir (tanda2.js)
   if (subidas && S.online) { await actualizarDatos(null, true); contarOrdenes(); }   // existencias al día (y las órdenes que se convirtieron)
   return { subidas, cortado };
 }

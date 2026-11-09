@@ -139,6 +139,9 @@ async function entrar(btn){
 }
 
 // ── Activar este equipo (una vez, con la clave maestra) ──
+// 3.9: en dos pasos. 1) ¿Qué caja es este equipo? (tarjetas grandes; cada una dice si está libre o qué equipo
+// la usa) · 2) nombre del equipo y clave maestra. Con permiso de una sola caja, el paso 1 no sale.
+const AC = { cajas: [], caja: 0, uso: null, reemplaza: null };
 function pantallaActivar(){
   const cajas = [1, 2, 3, 4, 5].filter(puedeCaja);
   const u = (S.ses && S.ses.usuario) || {};
@@ -147,25 +150,88 @@ function pantallaActivar(){
       btns: '<button type="button" class="btn green" onclick="pedirEntrarOtraVez()">🔐 Entrar con otro usuario</button>' });
     return;
   }
-  const sug = cajas.indexOf(Number(S.paseCaja)) >= 0 ? Number(S.paseCaja) : cajas[0];
+  AC.cajas = cajas; AC.uso = null; AC.reemplaza = null;
+  AC.caja = cajas.indexOf(Number(S.paseCaja)) >= 0 ? Number(S.paseCaja) : 0;
+  if (cajas.length === 1) { AC.caja = cajas[0]; acPaso2(); return; }
+  acPaso1();
+  acCargarUso();
+}
+// Qué equipos usan cada caja (con internet). Si no llega, las tarjetas salen sin esa información.
+async function acCargarUso(){
+  let r = null;
+  try { r = await api("cj_cajas_uso", {}, 20000); } catch (e) { r = null; }
+  AC.uso = {};
+  if (r && r.ok && Array.isArray(r.cajas)) r.cajas.forEach(c => { AC.uso[Number(c.caja)] = (c.equipos || []).filter(e => e && e.nombre); });
+  else AC.uso = false;   // el sistema no lo dijo (versión anterior o sin conexión)
+  if ($("acTarjetas")) acPaso1();
+}
+function acUsoDe(n){ return AC.uso && AC.uso[n] ? AC.uso[n] : []; }
+function acCuando(iso){
+  const t = new Date(String(iso || "")).getTime();
+  if (!(t > 0)) return "";
+  const d = new Date(t), hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const dias = Math.round((hoy.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 864e5);
+  return dias <= 0 ? "hoy" : dias === 1 ? "ayer" : "hace " + dias + " días";
+}
+function acSugerida(){
+  if (AC.caja) return AC.caja;
+  if (!AC.uso) return 0;
+  const libre = AC.cajas.find(n => !acUsoDe(n).length);
+  return libre || 0;
+}
+function acPaso1(){
+  const sug = acSugerida();
+  const tarjeta = n => {
+    const eqs = acUsoDe(n);
+    let sub;
+    if (AC.uso === null) sub = '<span class="sp" style="width:10px;height:10px;"></span> Revisando…';
+    else if (AC.uso === false) sub = "";
+    else if (!eqs.length) sub = "✅ Libre";
+    else sub = "Ya la usa «" + esc(eqs[0].nombre) + "»" + (acCuando(eqs[0].ultimoUso) ? " · último uso " + acCuando(eqs[0].ultimoUso) : "") + (eqs.length > 1 ? " y " + (eqs.length - 1) + " más" : "");
+    return '<button type="button" class="pw-op ac-caja' + (n === sug ? " on" : "") + (eqs.length ? " ocupada" : "") + '" onclick="acElegir(' + n + ')">' +
+      '<span class="pw-ico">🧾</span><span class="pw-t"><b>Caja ' + n + (n === sug ? ' <span class="ac-sug">Sugerida</span>' : "") + "</b>" + (sub ? "<small>" + sub + "</small>" : "") + "</span></button>";
+  };
   pantalla({ ico: "🔌",
-    html: "<p>Este equipo todavía no está activado para la caja. Se hace <b>una sola vez</b>: después vende aunque se vaya el internet.</p>",
-    form: '<input type="hidden" id="acCaja" value="' + sug + '">' +
-          (cajas.length > 1 ? '<div class="act-caja" id="acCajaBox">Este equipo cobra como <b id="acCajaTxt">Caja ' + sug + '</b>. <button type="button" class="lnk" onclick="acOtraCaja()">¿Cobran en varios equipos a la vez?</button></div>' : "") +
-          '<label class="lbl" for="acNom">Nombre del equipo</label><input class="inp" id="acNom" maxlength="40" placeholder="Ej. PC de la caja 1, Celular de María">' +
+    html: "<p>Este equipo todavía no está activado para la caja. Se hace <b>una sola vez</b>: después vende aunque se vaya el internet.</p>" +
+          '<div class="pw-preg ac-preg"><span class="ac-paso">Paso 1 de 2</span>¿Qué caja es este equipo?</div>',
+    form: '<div class="pw-ops ac-ops" id="acTarjetas">' + AC.cajas.map(tarjeta).join("") + "</div>" +
+          '<div class="act-nota ac-nota">' + (AC.uso && AC.cajas.some(n => acUsoDe(n).length)
+            ? "¿Este equipo <b>reemplaza a otro</b> (se dañó o ya no se usa)? Toca la caja del otro.<br>¿Es un equipo <b>más</b>, que cobra al mismo tiempo? Toca una caja <b>libre</b>: así cada uno cuadra su gaveta."
+            : "¿Cobran en <b>un solo equipo</b>? Toca <b>Caja " + AC.cajas[0] + "</b>.<br>¿Cobran en <b>varios a la vez</b> (dos computadoras, un teléfono…)? Cada equipo es una caja distinta: así cada uno cuadra su gaveta.") + "</div>",
+    btns: '<div style="margin-top:4px;"><button type="button" class="btn sm" onclick="pedirEntrarOtraVez()">Entrar con otro usuario</button></div>' });
+}
+async function acElegir(n){
+  const eqs = acUsoDe(n);
+  AC.reemplaza = null;
+  if (eqs.length) {
+    const nom = esc(eqs[0].nombre), uso = acCuando(eqs[0].ultimoUso);
+    const r = await modal({ icono: "🧾", titulo: "La Caja " + n + " ya tiene un equipo", centrado: true,
+      html: '<div class="m-txt">La <b>Caja ' + n + "</b> ya la usa <b>«" + nom + "»</b>" + (uso ? " (último uso " + uso + ")" : "") + (eqs.length > 1 ? " y " + (eqs.length - 1) + " equipo(s) más" : "") + ".<br><br>" +
+        "• Si <b>este equipo la reemplaza</b> (el otro se dañó o ya no se usa), sigue. Después da de baja el viejo en <b>Configuración → Administración → Caja nueva</b>.<br>" +
+        "• Si <b>cobran los dos a la vez</b>, elige otra caja: dos equipos en la misma caja revuelven el cuadre de la gaveta.</div>",
+      botones: [{ txt: "Elegir otra caja", v: false }, { txt: "Sí, este la reemplaza", v: true, cls: "naranja" }] });
+    if (!r) return;
+    AC.reemplaza = eqs[0].nombre;
+  }
+  AC.caja = n;
+  acPaso2();
+}
+function acPaso2(){
+  const n = AC.caja, u = (S.ses && S.ses.usuario) || {}, varias = AC.cajas.length > 1;
+  pantalla({ ico: "🔌",
+    html: (varias ? "" : "<p>Este equipo todavía no está activado para la caja. Se hace <b>una sola vez</b>: después vende aunque se vaya el internet.</p>") +
+          '<div class="pw-preg ac-preg">' + (varias ? '<span class="ac-paso">Paso 2 de 2</span>' : "") + "Este equipo será la <b>Caja " + n + "</b></div>",
+    form: '<input type="hidden" id="acCaja" value="' + n + '">' +
+          '<label class="lbl" for="acNom">Nombre del equipo</label><input class="inp" id="acNom" maxlength="40" placeholder="Ej. PC de la caja ' + n + ', Celular de María">' +
           '<label class="lbl" for="acMae">Clave maestra</label><input class="inp" id="acMae" type="password" autocomplete="off" placeholder="La del administrador">' +
           '<div class="act-nota">Lo activa <b>' + esc(u.nombre || u.usuario) + "</b>. Después de activarlo, cada cajero entra tocando su nombre y poniendo su clave. Si después hay que quitarle el permiso al equipo: Configuración → Administración → Caja nueva.</div>",
     btns: '<button type="button" class="btn green block" id="btnActivar" onclick="activarEquipo(this)">✅ Activar este equipo</button>' +
-          '<div style="margin-top:8px;"><button type="button" class="btn sm" onclick="pedirEntrarOtraVez()">Entrar con otro usuario</button></div>' });
+          '<div style="margin-top:8px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
+          (varias ? '<button type="button" class="btn sm" id="btnAcVolver" onclick="acPaso1()">← Cambiar de caja</button>' : "") +
+          '<button type="button" class="btn sm" onclick="pedirEntrarOtraVez()">Entrar con otro usuario</button></div>' });
+  $("acNom").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("acMae").focus(); } });
   $("acMae").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); activarEquipo($("btnActivar")); } });
   setTimeout(() => { const i = $("acNom"); if (i) i.focus(); }, 60);
-}
-// Solo si el negocio cobra en varios equipos al mismo tiempo: cada uno es una caja (1 a 5), con sus turnos y su cuadre
-function acOtraCaja(){
-  const cajas = [1, 2, 3, 4, 5].filter(puedeCaja), act = Number($("acCaja").value) || cajas[0];
-  $("acCajaBox").innerHTML = '<label class="lbl" for="acCajaSel" style="margin-top:0;">¿Qué caja es este equipo?</label><select class="inp" id="acCajaSel" onchange="$(\'acCaja\').value=this.value">' +
-    cajas.map(n => '<option value="' + n + '"' + (n === act ? " selected" : "") + ">Caja " + n + "</option>").join("") + "</select>" +
-    '<div class="act-nota" style="margin-top:6px;">Si en el negocio cobran en <b>un solo equipo</b>, déjalo en <b>Caja 1</b>. Si cobran en varios a la vez (dos computadoras, un teléfono…), cada uno es una caja distinta: así cada uno cuadra su gaveta.</div>';
 }
 async function activarEquipo(btn){
   if (btn && btn.disabled) return;
@@ -185,6 +251,8 @@ async function activarEquipo(btn){
   S.permisoMal = ""; S.datosMal = "";
   btnLibre(btn);
   toast("✅ Equipo activado: " + r.equipo);
+  if (AC.reemplaza) { const viejo = AC.reemplaza; AC.reemplaza = null;
+    aviso({ icono: "🧾", titulo: "Da de baja el equipo viejo", html: "Este equipo ya es la <b>Caja " + esc(r.caja) + "</b>. Para que <b>«" + esc(viejo) + "»</b> no siga cobrando como Caja " + esc(r.caja) + ", dalo de baja en el sistema: <b>Configuración → Administración → Caja nueva</b>." }); }
   S.pedirPin = true;   // 2.9: después de activar, lo primero es el cajero (o el PIN del turno abierto)
   continuarArranque();
 }

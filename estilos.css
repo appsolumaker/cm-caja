@@ -750,3 +750,81 @@ body:not(.v-vender) #btnOrdenes{display:none;}
 #vVentas .card{background:var(--bg2);border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.06);}
 #vVentas .card-tit{font-size:13px;color:var(--text);letter-spacing:.02em;margin-bottom:10px;}
 #vVentas .cie-tabla td{padding:8px 4px;}
+
+/* ══ 3.9 · Activar el equipo en dos pasos ══ */
+.ac-preg{margin:14px 0 12px;}
+.ac-paso{display:block;font-size:12px;font-weight:800;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;}
+.ac-ops{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));text-align:left;}
+.ac-caja{min-height:78px;}
+.ac-caja.ocupada:not(.on){border-style:dashed;}
+.ac-caja.ocupada small{color:var(--amber, #b7791f);}
+.ac-sug{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:800;background:var(--green);color:#07090d;vertical-align:2px;}
+.ac-nota{text-align:center;margin-top:14px;}
+
+/* ══ 3.9 · 📷 Escáner con la cámara ══ */
+.btn-esc{display:none;flex-shrink:0;width:44px;height:38px;border-radius:8px;border:1px solid var(--border-g);background:var(--green-dim);font-size:19px;cursor:pointer;align-items:center;justify-content:center;padding:0;}
+@media (hover:none) and (pointer:coarse){
+  .buscador{display:flex;gap:6px;align-items:center;}
+  .buscador input{flex:1;min-width:0;}
+  .buscador .btn-clear-busq{right:56px;}
+  .btn-esc{display:flex;}
+}
+.esc-fondo{position:fixed;inset:0;width:100%;height:100%;height:100dvh;z-index:9000;background:#07090d;color:#f0f4f8;display:none;flex-direction:column;overflow:hidden;}
+.esc-fondo.on{display:flex;}
+.esc-top{height:52px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0;font-size:15px;}
+.esc-top .sep{flex:1;}
+.esc-x{width:38px;height:38px;border-radius:9px;border:1px solid rgba(255,255,255,.15);background:#131920;color:#f0f4f8;font-size:16px;cursor:pointer;}
+.esc-stage{flex:1 1 auto;min-height:0;min-width:0;position:relative;background:#000;overflow:hidden;}
+#escVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
+.esc-frame{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;}
+.esc-box{width:82%;max-width:360px;aspect-ratio:1.7/1;position:relative;box-shadow:0 0 0 3000px rgba(0,0,0,.42);border-radius:14px;}
+.esc-box::before,.esc-box::after,.esc-box i::before,.esc-box i::after{content:"";position:absolute;width:28px;height:28px;border:3px solid #00e87a;}
+.esc-box::before{top:-2px;left:-2px;border-right:0;border-bottom:0;border-radius:14px 0 0 0;}
+.esc-box::after{top:-2px;right:-2px;border-left:0;border-bottom:0;border-radius:0 14px 0 0;}
+.esc-box i::before{bottom:-2px;left:-2px;border-right:0;border-top:0;border-radius:0 0 0 14px;}
+.esc-box i::after{bottom:-2px;right:-2px;border-left:0;border-top:0;border-radius:0 0 14px 0;}
+.esc-laser{position:absolute;top:50%;left:14%;right:14%;height:2px;background:#00e87a;box-shadow:0 0 8px #00e87a;animation:escLaser 2s ease-in-out infinite;}
+@keyframes escLaser{0%,100%{transform:translateY(-46px);}50%{transform:translateY(46px);}}
+.esc-hint{position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:13px;color:#cfeede;text-shadow:0 1px 4px #000;padding:0 16px;}
+.esc-torch{position:absolute;top:12px;right:12px;width:46px;height:46px;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.5);color:#fff;font-size:20px;cursor:pointer;display:none;align-items:center;justify-content:center;}
+.esc-torch.on{background:#00e87a;color:#07090d;}
+.esc-ov{position:absolute;inset:0;z-index:2;background:#07090d;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px;gap:12px;}
+.esc-ov h3{font-size:17px;}
+.esc-ov p{font-size:14px;color:#9aa8b6;line-height:1.5;max-width:320px;}
+.esc-fb{flex-shrink:0;min-height:58px;display:flex;align-items:center;justify-content:center;padding:10px 16px;font-size:15px;font-weight:800;text-align:center;background:#0d1117;border-top:1px solid rgba(255,255,255,.07);word-break:break-word;}
+.esc-fb.ok{background:rgba(0,232,122,.16);color:#00e87a;}
+.esc-fb.err{background:rgba(255,107,107,.16);color:#ff8a8a;}
+.esc-bot{flex-shrink:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:#0d1117;}
+.esc-bot .btn{padding:14px;font-size:16px;}
+
+/* ══ 3.9 · 🔎 Facturas anteriores ══ */
+.fa-buscar{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
+.fa-fechas{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.fa-fechas label{display:flex;flex-direction:column;gap:3px;font-size:12px;font-weight:700;color:var(--text-dim);}
+.fa-lista{display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow-y:auto;}
+.fa-fila{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);color:var(--text);cursor:pointer;font-size:14px;}
+.fa-fila:hover{border-color:var(--green);}
+.fa-fila small{display:block;font-size:11.5px;color:var(--text-dim);font-weight:600;}
+.fa-n b{font-size:15px;}
+.fa-cli{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.fa-tot{font-weight:800;white-space:nowrap;}
+.fa-tot small{display:inline;}
+.fa-imp{font-size:18px;}
+.fa-dim{color:var(--text-dim);}
+.fa-anul{display:inline-block;margin-left:6px;font-size:10px;font-weight:800;color:#fff;background:#e74c3c;padding:1px 7px;border-radius:10px;vertical-align:2px;}
+.fa-vacio{text-align:center;padding:22px 10px;color:var(--text-dim);font-size:13px;}
+.fa-pag{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;font-size:13px;color:var(--text-dim);}
+.fa-pag:empty{display:none;}
+.fa-nota{margin-top:8px;font-size:12px;color:var(--text-dim);}
+.fa-aviso-anul{margin-top:8px;padding:8px 10px;border-radius:7px;background:rgba(231,76,60,.15);color:#e74c3c;font-weight:800;}
+@media (max-width:560px){ .fa-fila{grid-template-columns:1fr auto;} .fa-cli{grid-column:1/-1;grid-row:2;} .fa-imp{display:none;} }
+
+/* ══ 3.9 · 🛠️ Nuevo servicio ══ */
+.ns-btn{width:100%;margin:0 0 8px;padding:11px;border-radius:9px;border:1px dashed var(--border-g);background:var(--green-dim);color:var(--green);font-weight:800;font-size:14px;cursor:pointer;}
+.ns-fila{display:grid;grid-template-columns:1fr 110px;gap:10px;}
+.ns-calc{font-size:12.5px;color:var(--text-dim);min-height:16px;margin-top:4px;}
+/* 3.9: en teléfonos angostos la barra de arriba cabía con 40 px de más (la pantalla quedaba un poco alejada) */
+@media (max-width:480px){
+  .topbar{gap:5px;padding-left:8px;padding-right:8px;}
+  .btn-cierre .mv-lbl{display:none;}
+}
