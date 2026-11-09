@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.0 · 8-11-2026";
+const APP_VER = "4.1 · 9-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -141,7 +141,7 @@ function marcarOnline(v){ if (S.online !== v) { S.online = v; pintarEstado(); } 
 // Errores que no son de una venta: el equipo (dado de baja), la caja apagada y tasaBin.
 // La sesión vencida (SESION) y el usuario sin permiso (USUARIO) los atiende sesion.js.
 function revisarErrorSistema(r){
-  if (r && r.codigo === "EQUIPO") { S.permisoMal = r.msg || "Este equipo no tiene permiso."; pintarBanners(); return true; }
+  if (r && r.codigo === "EQUIPO") { S.permisoMal = r.msg || "Este equipo no tiene permiso."; if (r.reemplazado) S.reemplazado = true; pintarBanners(); return true; }   // 4.1: otro equipo lo reemplazó
   if (r && (r.codigo === "TASABIN_ON" || r.codigo === "APAGADA")) { S.datosMal = r.msg; pintarBanners(); return true; }
   return false;
 }
@@ -273,7 +273,7 @@ async function descargarDatos(){
   d.descargadoEn = Date.now();
   _exiFirma = "";   // las existencias vienen en los datos: la próxima consulta trae todo de nuevo
   const antes = F.items.length ? { total: totales(F.items, F.desc).total, u: unidadU() } : null;
-  S.datos = d; S.permisoMal = ""; S.datosMal = "";
+  S.datos = d; S.permisoMal = ""; S.datosMal = ""; S.reemplazado = false;
   await kvSet("datos", d);
   if ((S.clientesNuevos || []).length) {   // los clientes creados sin internet que el sistema ya tiene salen de la lista de este equipo
     const ya = new Set((d.clientes || []).map(c => cedNorm(c.cedula)));
@@ -443,7 +443,7 @@ function pintarEstado(){
 function pintarBanners(){
   pintarNumFactura();
   let h = "";
-  if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a></div>';
+  if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + (S.reemplazado ? " Las ventas guardadas se suben solas; cierra el turno." : ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a>') + "</div>";
   if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + ' <a href="#" onclick="actualizarDatos(null,false);return false;" style="color:inherit;font-weight:800;">Reintentar</a></div>';
   if (S.sesionMal) h += '<div class="banner av">🔐 ' + esc(S.sesionMal) + ' <a href="#" onclick="pedirEntrarOtraVez();return false;" style="color:inherit;font-weight:800;">Entrar</a></div>';
   if (S.datos && tasaVieja() && S.tasaOkHoy !== hoyTxt()) h += '<div class="banner av">💱 ' + (S.tasas.origen === "sistema" && S.online !== false
@@ -1277,6 +1277,11 @@ async function crearCliente(btn){
 // ✅ Registrar Venta, como en Ventas: si la factura está en Genérico, primero "¿A quién le vendes?"
 // S2: solo se vende con la caja abierta por el cajero del turno (el Administrador que vino a cerrar el turno de otro no vende)
 function puedeVender(){
+  if (S.reemplazado) {   // 4.1 · un solo equipo por caja: otro equipo ya es esta caja
+    try { cerrarPago(); } catch (e) {}
+    aviso({ icono: "🧾", titulo: "Este equipo ya no es la caja", html: esc(S.permisoMal || "Otro equipo reemplazó a este.") + "<br><br>Las ventas que tenga guardadas se suben solas con internet. Cierra el turno en <b>☰ Menú → Cerrar turno</b>." });
+    return false;
+  }
   if (S.cierreAdmin || (typeof BQ !== "undefined" && BQ.on)) {
     try { cerrarPago(); } catch (e) {}
     aviso({ icono: "🔒", titulo: "No se puede vender ahora", html: S.cierreAdmin && S.turno
@@ -2756,7 +2761,7 @@ function datosParaSubir(v){
 }
 async function sincronizar(manual){
   if (!S.eq || !S.datos || S.sincronizando) return { subidas: 0 };
-  if (S.permisoMal && !manual) return { subidas: 0 };
+  if (S.permisoMal && !manual && !S.reemplazado) return { subidas: 0 };   // 4.1: el equipo reemplazado sí sube lo que vendió
   // De la más vieja a la más nueva (y a igual hora, por número de ticket)
   const cola = S.ventas.filter(v => v.estado === "por_subir").sort((a, b) => String(a.creada).localeCompare(String(b.creada)) || (Number(a.numeroTicket) || 0) - (Number(b.numeroTicket) || 0));
   if (!cola.length) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); await copiasAlDia(); if (manual) await actualizarDatos(null, true); return { subidas: 0 }; }

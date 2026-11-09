@@ -33,7 +33,7 @@ function entrarDirecto(){
     try {
       const r = await api("cj_renovar", {}, 30000);
       if (r && r.ok && r.token) { await guardarSesion(r); pintarBanners(); return true; }
-      if (r && r.codigo === "EQUIPO") { S.permisoMal = r.msg || "Este equipo no tiene permiso."; pintarBanners(); }
+      if (r && r.codigo === "EQUIPO") { S.permisoMal = r.msg || "Este equipo no tiene permiso."; if (r.reemplazado) S.reemplazado = true; pintarBanners(); }
       else if (r && r.msg) S.avisoPase = r.msg;
     } catch (e) {}
     return false;
@@ -207,8 +207,8 @@ async function acElegir(n){
     const nom = esc(eqs[0].nombre), uso = acCuando(eqs[0].ultimoUso);
     const r = await modal({ icono: "🧾", titulo: "La Caja " + n + " ya tiene un equipo", centrado: true,
       html: '<div class="m-txt">La <b>Caja ' + n + "</b> ya la usa <b>«" + nom + "»</b>" + (uso ? " (último uso " + uso + ")" : "") + (eqs.length > 1 ? " y " + (eqs.length - 1) + " equipo(s) más" : "") + ".<br><br>" +
-        "• Si <b>este equipo la reemplaza</b> (el otro se dañó o ya no se usa), sigue. Después da de baja el viejo en <b>Configuración → Administración → Caja nueva</b>.<br>" +
-        "• Si <b>cobran los dos a la vez</b>, elige otra caja: dos equipos en la misma caja revuelven el cuadre de la gaveta.</div>",
+        "• Si <b>este equipo la reemplaza</b> (el otro se dañó o ya no se usa), sigue: <b>«" + nom + "»</b> queda dado de baja solo y ya no podrá abrir la Caja " + n + ". Si tenía ventas sin subir, todavía las puede subir.<br>" +
+        "• Si <b>cobran los dos a la vez</b>, elige otra caja: cada caja trabaja en un solo equipo.</div>",
       botones: [{ txt: "Elegir otra caja", v: false }, { txt: "Sí, este la reemplaza", v: true, cls: "naranja" }] });
     if (!r) return;
     AC.reemplaza = eqs[0].nombre;
@@ -248,11 +248,12 @@ async function activarEquipo(btn){
   await kvSet("equipo", S.eq);
   await borrarDatosDelEquipo();   // datos y números del equipo anterior (si lo hubo); las ventas sin subir se quedan
   if (cambiaCaja && S.turno) aviso({ icono: "🧾", titulo: "Hay un turno abierto de otra caja", html: "Ciérralo cuando puedas: las ventas nuevas quedan como de la Caja " + r.caja + "." });
-  S.permisoMal = ""; S.datosMal = "";
+  S.permisoMal = ""; S.datosMal = ""; S.reemplazado = false;
   btnLibre(btn);
   toast("✅ Equipo activado: " + r.equipo);
-  if (AC.reemplaza) { const viejo = AC.reemplaza; AC.reemplaza = null;
-    aviso({ icono: "🧾", titulo: "Da de baja el equipo viejo", html: "Este equipo ya es la <b>Caja " + esc(r.caja) + "</b>. Para que <b>«" + esc(viejo) + "»</b> no siga cobrando como Caja " + esc(r.caja) + ", dalo de baja en el sistema: <b>Configuración → Administración → Caja nueva</b>." }); }
+  AC.reemplaza = null;
+  if (r.reemplazados && r.reemplazados.length)   // 4.1 · un solo equipo por caja: el sistema dio de baja al otro
+    aviso({ icono: "🧾", titulo: "Este equipo reemplazó a otro", html: "Este equipo ya es la <b>Caja " + esc(r.caja) + "</b>. <b>«" + r.reemplazados.map(esc).join("», «") + "»</b> quedó dado de baja: ya no puede abrir la Caja " + esc(r.caja) + "." });
   S.pedirPin = true;   // 2.9: después de activar, lo primero es el cajero (o el PIN del turno abierto)
   continuarArranque();
 }
@@ -260,7 +261,7 @@ async function activarEquipo(btn){
 async function olvidarEquipo(){
   if (ventaAMedias()) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de activar el equipo otra vez." }); return; }
   if (!await confirmar({ icono: "🔌", titulo: "Activar este equipo otra vez", ok: "Sí, activar", html: "Hace falta un usuario con permiso de la caja y la <b>clave maestra</b>. Las ventas guardadas en este equipo no se borran: se suben con el permiso nuevo." })) return;
-  S.eq = null; S.permisoMal = "";
+  S.eq = null; S.permisoMal = ""; S.reemplazado = false;
   await kvSet("equipo", null);
   pintarBanners();
   continuarArranque();

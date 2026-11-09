@@ -276,6 +276,18 @@ async function abrirTurno(btn, modo){
               cajeroId: c.id, cajeroNombre: c.nombre, apertura: ahoraTxt(ahora), aperturaMs: ahora.getTime(),   // 3.0: la hora exacta, para el efectivo movido desde el sistema
               fondoBs: r2(fondo.BS), fondoUsd: r2(fondo.USD), fondoContado: { bs: fb, usd: fu },
               fondoPrev: pv ? { bs: pv.bs, usd: pv.usd, cajero: pv.cajero, cierre: pv.cierre } : null, fondoExpl: expl };   // 1b
+  // 4.1 · Un turno por caja: se abre SOLO con internet. El sistema revisa que esta caja no esté abierta en otro equipo
+  // y deja el turno anotado de una vez. Después de abierto, la caja vende con o sin internet.
+  let rA = null;
+  if (hayInternet()) { try { rA = await api("cj_turno", { op: "abrir", turno: turnoParaSistema(t) }, 30000); } catch (e) { rA = null; } }
+  if (!rA) {
+    btnLibre(btn);
+    aviso({ icono: "📡", titulo: "Hace falta internet para abrir el turno", html: "Para abrir el turno, la caja tiene que revisar en el sistema que la <b>Caja " + esc(S.datos.caja) + "</b> no esté abierta en otro equipo.<br><br>Conéctate a internet y vuelve a tocar <b>Abrir turno</b>. Después de abierto, la caja vende con o sin internet." });
+    return;
+  }
+  if (rA.ok === false && /no reconocida/i.test(String(rA.msg || ""))) { /* el sistema todavía no tiene esta versión: abre como antes */ }
+  else if (rA.ok === false) { btnLibre(btn); aviso({ icono: "❌", titulo: "No se abrió el turno", html: esc(rA.msg || "El sistema no respondió.") }); return; }
+  else if (rA.libre === false) { btnLibre(btn); aviso({ icono: "🔒", titulo: "La Caja " + esc(S.datos.caja) + " ya está abierta", html: esc(rA.msg) }); return; }
   try { await kvSet("turno", t); }
   catch (e) { btnLibre(btn); aviso({ icono: "❌", titulo: "No se abrió el turno", html: "El equipo no pudo guardar el turno (" + esc(e.message) + "). Vuelve a intentar." }); return; }
   S.turno = t; _turnoOk = null; _turnoSel = null; FD.noCoincide = null; FD.contado = null; FD.aj = {}; FD.nota = "";
