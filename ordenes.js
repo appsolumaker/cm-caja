@@ -15,7 +15,7 @@ const _ord = { lista: [], abiertas: 0, cerrar: null, timer: null, ocupado: false
 
 const ordD = () => S.datos || {};
 function ordModoCajero(){ return ordD().modoCajas === "cajero" || !ordD().trabajoVendedores; }
-function ordConVend(){ const d = ordD(); return !!d.trabajoVendedores && d.modoCajas === "cajero"; }   // la factura tiene selector de vendedor
+function ordConVend(){ return !!ordD().trabajoVendedores; }   // la factura tiene selector de vendedor (4.3: siempre que se trabaje con vendedores)
 function ordEnLinea(){ return hayInternet() && sesionViva(); }
 function ordEsperaServidor(){ return ordModoCajero() && ordEnLinea(); }
 const ordDig = s => String(s == null ? "" : s).replace(/\D/g, "");

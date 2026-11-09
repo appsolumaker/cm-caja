@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.2 · 9-11-2026";
+const APP_VER = "4.3 · 9-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -373,7 +373,7 @@ function pintarCabecera(){
   if (S.turno) $("cajeroNombre").textContent = S.turno.cajeroNombre;
   $("menuCierre").classList.toggle("oculto", !S.turno);
   const ms = $("menuSacar"); if (ms) ms.classList.toggle("oculto", !S.turno);   // 3.3: 💸 Sacar efectivo
-  $("btnBloquear").classList.toggle("oculto", !S.turno);
+  $("btnBloquear").classList.add("oculto");   // 4.3: sin el candado arriba (sigue en ☰ Menú → Bloquear la caja)
   $("menuBloq").classList.toggle("oculto", !S.turno);
   const u = S.ses && S.ses.usuario;
   $("menuInfo").innerHTML = "<b>" + esc(d.negocio || "Mi negocio") + "</b><br>Caja " + esc(d.caja) + " · equipo " + esc(d.equipo || "") + (d.nombreEquipo ? " (" + esc(d.nombreEquipo) + ")" : "") +
@@ -689,15 +689,13 @@ function pintarSelectores(){
   // Vendedor
   const sel = $("selVend"), badge = $("badgeVend");
   $("vendBar").classList.add("oculto"); badge.classList.add("oculto");
-  if (d.trabajoVendedores && d.modoCajas === "cajero") {
-    if (F.vend === "") F.vend = d.vendedorCajaId ? String(d.vendedorCajaId) : "directa";
+  if (d.trabajoVendedores) {   // 4.3: con la caja nueva el vendedor SIEMPRE se elige en la factura (ya no hay vendedor fijo por caja)
+    if (F.vend === "") F.vend = "directa";
     sel.innerHTML = '<option value="directa">🏪 Venta directa (sin comisión)</option>' + (d.vendedores || []).map(v => '<option value="' + esc(v.id) + '">🧑‍💼 ' + esc(v.nombre) + "</option>").join("");
     if (F.orden && F.orden.origen === "VENDEDOR" && F.orden.vendedorId && !(d.vendedores || []).some(v => String(v.id) === String(F.orden.vendedorId)))   // vendedor de la orden que ya no está activo
       sel.innerHTML += '<option value="' + esc(F.orden.vendedorId) + '">🧑‍💼 ' + esc(F.orden.vendedor || "Vendedor de la orden") + "</option>";
     sel.value = F.vend; if (sel.value !== F.vend) { F.vend = "directa"; sel.value = "directa"; }
     $("vendBar").classList.remove("oculto");
-  } else if (d.trabajoVendedores && d.vendedor && d.vendedor.nombre) {
-    badge.innerHTML = "<label>Vendedor:</label><b>🧑‍💼 " + esc(d.vendedor.nombre) + "</b>"; badge.classList.remove("oculto");
   }
   // Descuento
   $("tipoDescuento").value = F.desc.tipo;
@@ -2278,7 +2276,6 @@ function vendedorDeLaVenta(){
   const cj = { cajeroNombre: S.turno ? S.turno.cajeroNombre : ((d.cajero && d.cajero.nombre) || ""), cajeroId: S.turno ? S.turno.cajeroId : 0 };   // el cajero del turno
   if (F.orden && F.orden.origen === "WEB") return Object.assign({ ventaDirecta: true, vendedorNombre: "", comision: 0, canal: "WEB" }, cj);   // pedido web: Tienda online
   if (!d.trabajoVendedores) return Object.assign({ ventaDirecta: true, vendedorNombre: "", comision: 0 }, cj);
-  if (d.modoCajas !== "cajero") return Object.assign({ vendedorNombre: (d.vendedor && d.vendedor.nombre) || "", comision: Number(d.vendedor && d.vendedor.comision) || 0 }, cj);
   const v = (d.vendedores || []).find(x => String(x.id) === String(F.vend));
   if (v) return Object.assign({ vendedorId: v.id, vendedorNombre: v.nombre, comision: Number(v.comision) || 0 }, cj);
   if (F.orden && F.orden.vendedorId && String(F.orden.vendedorId) === String(F.vend)) return Object.assign({ vendedorId: F.orden.vendedorId, vendedorNombre: F.orden.vendedor, comision: 0 }, cj);
