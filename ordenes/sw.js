@@ -2,9 +2,9 @@
 // Guarda la página en el equipo para que abra sin internet.
 // Con internet trae la versión nueva (y la guarda); sin internet usa la guardada.
 // Las llamadas al sistema (/ordenes/api, POST) no pasan por aquí.
-const CACHE = "cm-ordenes-web-v4";
+const CACHE = "cm-ordenes-web-v5";
 const BASE = new URL("./", self.location).pathname;   // /ordenes/
-const ARCHIVOS = ["./", "./index.html", "./ordenes.css", "./ov.js"];
+const ARCHIVOS = ["./", "./index.html", "./ordenes.css", "./ov.js", "./escaner.js", "./zxing.min.js"];   // 1.9: el escáner y su lector (también sin internet)
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS)).then(() => self.skipWaiting()));

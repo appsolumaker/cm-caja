@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "1.8 · 8-11-2026";
+const OV_VER = "1.9 · 8-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -443,7 +443,7 @@ function agregar(p){
   const ya = O.items.find(l => String(l.codigo) === String(p.codigo) && esServ(l) === sv && !l.manual && l.tipoIdx === 0);
   if (ya) ya.cantidad = r3((Number(ya.cantidad) || 0) + 1);
   else O.items.push({ key: ++O.seq, tipo: sv ? "servicio" : "producto", codigo: p.codigo, nombre: p.nombre, cantidad: 1, tipoIdx: 0, manual: false, pFinal: 0, iva: null });
-  const n = String(p.nombre); toast("✅ " + (n.length > 30 ? n.slice(0, 29) + "…" : n) + " ×" + fmtCant(enOrden(p.codigo, sv)));
+  const n = String(p.nombre); if (!(typeof ESC !== "undefined" && ESC.on)) toast("✅ " + (n.length > 30 ? n.slice(0, 29) + "…" : n) + " ×" + fmtCant(enOrden(p.codigo, sv)));   // 1.9: con la cámara abierta lo dice la barra del escáner
   buscar(true); pintarLineas(); pintarTotal(); guardarBorrador();
 }
 function pintarLineas(){

@@ -268,3 +268,39 @@ input,select,textarea,.inp{font-size:16px;}
 .serv-ico{display:flex;align-items:center;justify-content:center;font-size:22px;background:rgba(142,68,173,0.12);}
 .l-img.serv-ico{font-size:18px;}
 .serv-tag{display:inline-block;font-size:10px;font-weight:800;padding:1px 7px;border-radius:10px;background:rgba(142,68,173,0.16);color:#8e44ad;margin-top:3px;}
+
+/* ── 1.9 · 📷 Escáner con la cámara (el mismo de la caja) ── */
+.busca-fila{display:flex;gap:6px;align-items:center;}
+.busca-fila .inp{flex:1;min-width:0;}
+.btn-esc{display:none;flex-shrink:0;width:46px;height:42px;border-radius:9px;border:1px solid var(--border-g);background:var(--green-dim);font-size:20px;cursor:pointer;align-items:center;justify-content:center;padding:0;}
+@media (hover:none) and (pointer:coarse){ .btn-esc{display:flex;} }
+.esc-fondo{position:fixed;inset:0;width:100%;height:100%;height:100dvh;z-index:9000;background:#07090d;color:#f0f4f8;display:none;flex-direction:column;overflow:hidden;}
+.esc-fondo.on{display:flex;}
+.esc-top{height:52px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0;font-size:15px;}
+.esc-top .sep{flex:1;}
+.esc-x{width:38px;height:38px;border-radius:9px;border:1px solid rgba(255,255,255,.15);background:#131920;color:#f0f4f8;font-size:16px;cursor:pointer;}
+.esc-stage{flex:1 1 auto;min-height:0;min-width:0;position:relative;background:#000;overflow:hidden;}
+#escVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
+.esc-frame{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;}
+.esc-box{width:82%;max-width:360px;aspect-ratio:1.7/1;position:relative;box-shadow:0 0 0 3000px rgba(0,0,0,.42);border-radius:14px;}
+.esc-box::before,.esc-box::after,.esc-box i::before,.esc-box i::after{content:"";position:absolute;width:28px;height:28px;border:3px solid #00e87a;}
+.esc-box::before{top:-2px;left:-2px;border-right:0;border-bottom:0;border-radius:14px 0 0 0;}
+.esc-box::after{top:-2px;right:-2px;border-left:0;border-bottom:0;border-radius:0 14px 0 0;}
+.esc-box i::before{bottom:-2px;left:-2px;border-right:0;border-top:0;border-radius:0 0 0 14px;}
+.esc-box i::after{bottom:-2px;right:-2px;border-left:0;border-top:0;border-radius:0 0 14px 0;}
+.esc-laser{position:absolute;top:50%;left:14%;right:14%;height:2px;background:#00e87a;box-shadow:0 0 8px #00e87a;animation:escLaser 2s ease-in-out infinite;}
+@keyframes escLaser{0%,100%{transform:translateY(-46px);}50%{transform:translateY(46px);}}
+.esc-hint{position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:13px;color:#cfeede;text-shadow:0 1px 4px #000;padding:0 16px;}
+.esc-torch{position:absolute;top:12px;right:12px;width:46px;height:46px;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.5);color:#fff;font-size:20px;cursor:pointer;display:none;align-items:center;justify-content:center;}
+.esc-torch.on{background:#00e87a;color:#07090d;}
+.esc-ov{position:absolute;inset:0;z-index:2;background:#07090d;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px;gap:12px;}
+.esc-ov h3{font-size:17px;}
+.esc-ov p{font-size:14px;color:#9aa8b6;line-height:1.5;max-width:320px;}
+.esc-fb{flex-shrink:0;min-height:58px;display:flex;align-items:center;justify-content:center;padding:10px 16px;font-size:15px;font-weight:800;text-align:center;background:#0d1117;border-top:1px solid rgba(255,255,255,.07);word-break:break-word;}
+.esc-fb.ok{background:rgba(0,232,122,.16);color:#00e87a;}
+.esc-fb.err{background:rgba(255,107,107,.16);color:#ff8a8a;}
+.esc-bot{flex-shrink:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:#0d1117;}
+.esc-bot .btn{padding:14px;font-size:16px;}
+.esc-fb.warn{background:rgba(227,179,65,.18);color:#f0c75e;}
+.esc-fondo .btn{border:none;border-radius:10px;padding:12px 22px;font-weight:800;font-size:15px;cursor:pointer;background:#00e87a;color:#07090d;}
+.esc-fondo .btn.block{width:100%;display:block;}
