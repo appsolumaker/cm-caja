@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "1.7 · 8-11-2026";
+const OV_VER = "1.8 · 8-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -22,7 +22,7 @@ function ahoraTxt(){ const d = new Date(); return d.getFullYear() + "-" + pad(d.
 function llave(){ const a = new Uint8Array(9); try { crypto.getRandomValues(a); } catch (e) { for (let i = 0; i < 9; i++) a[i] = Math.floor(Math.random() * 256); } return "APP-" + Date.now().toString(36) + "-" + Array.from(a, b => b.toString(16).padStart(2, "0")).join(""); }
 
 // ── Estado ──
-const OV = { tel: "", ses: null, quien: null, d: null, pend: [], vista: "nueva", online: null, cat: "", enviando: false, sinInternet: false, pref: { claro: true } };
+const OV = { tel: "", ses: null, quien: null, d: null, pend: [], vista: "nueva", online: null, cat: "", vistaS: "productos", enviando: false, sinInternet: false, pref: { claro: true } };
 let O = nuevaOrden();   // la orden que se está armando (o editando)
 function nuevaOrden(){ return { id: "", idLocal: "", cliente: null, vendedorId: 0, moneda: "bcv", items: [], dlv: { tipo: "delivery", monto: 0 }, notas: "", clave: "", seq: 0, reservaPropia: {}, editPend: "" }; }
 
@@ -336,15 +336,20 @@ function divRate(){ return Number(OV.d && OV.d.tasaDivisas) || bcvRate(); }
 function enPantalla(base){ const b = Number(base) || 0; return binOn() && O.moneda === "bcv" && bcvRate() > 0 ? r2(b * divRate() / bcvRate()) : r2(b); }
 const uTxt = () => !binOn() ? "" : O.moneda === "divisas" ? " div" : " BCV";
 function prodDe(cod){ return ((OV.d && OV.d.productos) || []).find(p => String(p.codigo) === String(cod)) || null; }
+// 1.8 · Servicios (como en Ventas y la caja): no tienen existencia ni foto
+function servDe(cod){ return ((OV.d && OV.d.servicios) || []).find(p => String(p.codigo) === String(cod)) || null; }
+const esServ = l => !!l && l.tipo === "servicio";
+function catDe(l){ return esServ(l) ? servDe(l.codigo) : prodDe(l.codigo); }
+function hayServicios(){ return !!(OV.d && (OV.d.servicios || []).length); }
 function precioLista(p, ti){ const l = p.precios || []; const x = l[ti] && l[ti].base > 0 ? l[ti] : l[0] || { base: 0, iva: 0 }; return { base: Number(x.base) || 0, iva: Number(x.iva) || 0 }; }
 // Precio unitario CON IVA de una línea, en la moneda de la orden
 function puLinea(l){
   if (l.manual) return r2(l.pFinal);
-  const p = prodDe(l.codigo); if (!p) return 0;
+  const p = catDe(l); if (!p) return 0;
   const x = precioLista(p, l.tipoIdx);
   return r2(enPantalla(x.base) * (1 + x.iva / 100));
 }
-function ivaLinea(l){ if (l.manual && l.iva != null) return Number(l.iva) || 0; const p = prodDe(l.codigo); return p ? precioLista(p, l.manual ? 0 : l.tipoIdx).iva : 0; }
+function ivaLinea(l){ if (l.manual && l.iva != null) return Number(l.iva) || 0; const p = catDe(l); return p ? precioLista(p, l.manual ? 0 : l.tipoIdx).iva : 0; }
 function totales(){
   let prod = 0; O.items.forEach(l => { prod += puLinea(l) * (Number(l.cantidad) || 0); });
   prod = r2(prod);
@@ -358,7 +363,7 @@ function disponible(cod){
   const res = (OV.d.reservas || {})[cod] || 0, propia = O.reservaPropia[cod] || 0;
   return r3(p.stock - res + propia);
 }
-const enOrden = cod => r3(O.items.filter(l => String(l.codigo) === String(cod)).reduce((s, l) => s + (Number(l.cantidad) || 0), 0));
+const enOrden = (cod, serv) => r3(O.items.filter(l => String(l.codigo) === String(cod) && esServ(l) === !!serv).reduce((s, l) => s + (Number(l.cantidad) || 0), 0));
 
 // ══ NUEVA ORDEN ══
 function pintarNueva(){
@@ -379,7 +384,11 @@ function pintarNueva(){
   $("monBlq").classList.toggle("oculto", !binOn());
   document.querySelectorAll(".mon-op").forEach(b => b.classList.toggle("on", b.dataset.m === O.moneda));
   // Categorías
-  const cats = [...new Set((d.productos || []).map(p => p.categoria).filter(Boolean))].sort();
+  if (!hayServicios()) OV.vistaS = "productos";
+  $("segPS").classList.toggle("oculto", !hayServicios());
+  $("segPS").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === OV.vistaS));
+  $("busca").placeholder = OV.vistaS === "servicios" ? "🔍 Buscar servicio" : "🔍 Buscar producto, marca o código";
+  const cats = OV.vistaS === "servicios" ? [] : [...new Set((d.productos || []).map(p => p.categoria).filter(Boolean))].sort();
   $("cats").innerHTML = cats.length > 1 ? ['<button type="button" class="cat' + (!OV.cat ? " on" : "") + '" data-c="">Todas</button>'].concat(cats.map(c => '<button type="button" class="cat' + (OV.cat === c ? " on" : "") + '" data-c="' + esc(c) + '">' + esc(c) + "</button>")).join("") : "";
   $("cats").querySelectorAll(".cat").forEach(b => b.addEventListener("click", () => { OV.cat = b.dataset.c; pintarNueva(); }));
   $("selDl").value = O.dlv.tipo === "envio" ? "envio" : "delivery";
@@ -397,9 +406,11 @@ const LISTA_PASO = 40;
 let _lista = { de: 0, prods: [] }, _filtro = "", _lim = LISTA_PASO;
 function productosOrdenados(){
   const d = OV.d || {};
-  if (_lista.de !== d.descargadoEn) _lista = { de: d.descargadoEn, prods: (d.productos || []).slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")) };
-  return _lista.prods;
+  if (_lista.de !== d.descargadoEn) _lista = { de: d.descargadoEn, prods: (d.productos || []).slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")),
+    servs: (d.servicios || []).map(x => Object.assign({ tipo: "servicio" }, x)).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")) };
+  return OV.vistaS === "servicios" ? _lista.servs : _lista.prods;
 }
+function vistaPS(v){ OV.vistaS = v === "servicios" ? "servicios" : "productos"; OV.cat = ""; $("busca").value = ""; pintarNueva(); }
 // Igual que Ventas: recuadro «Sin foto» (mismo dibujo) y la foto con fondo blanco, sin recortarla
 const SIN_FOTO = '<span class="sin-foto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5.2-5.2a1 1 0 0 0-1.4 0L5 20"/></svg><small>Sin foto</small></span>';
 function sinFoto(img){ const s = img && img.parentNode; if (s) { s.classList.remove("con-img"); s.innerHTML = SIN_FOTO; } }
@@ -410,14 +421,17 @@ function fotoHTML(p, cls){
 function verMas(){ _lim += LISTA_PASO; buscar(true); }
 function buscar(seguir){
   const q = norm($("busca").value);
-  const f = q + "|" + OV.cat;
+  const f = q + "|" + OV.cat + "|" + OV.vistaS;
   if (!seguir && f !== _filtro) { _filtro = f; _lim = LISTA_PASO; }
   const pal = q.split(/\s+/).filter(Boolean);
-  const T = productosOrdenados().filter(p => (!OV.cat || p.categoria === OV.cat) && (!pal.length || pal.every(w => norm(p.nombre + " " + p.marca + " " + p.codigo + " " + p.codigoBarras).indexOf(w) >= 0)));
+  const T = productosOrdenados().filter(p => (!OV.cat || p.categoria === OV.cat) && (!pal.length || pal.every(w => norm(p.nombre + " " + (p.marca || "") + " " + p.codigo + " " + (p.codigoBarras || "")).indexOf(w) >= 0)));
   const L = T.slice(0, _lim);
-  if (!L.length) { $("res").innerHTML = '<div class="vacio">' + (q ? "No hay productos con «" + esc($("busca").value) + "»." : "No hay productos en esta categoría.") + "</div>"; return; }
+  const sv = OV.vistaS === "servicios";
+  if (!L.length) { $("res").innerHTML = '<div class="vacio">' + (q ? "No hay " + (sv ? "servicios" : "productos") + " con «" + esc($("busca").value) + "»." : sv ? "No hay servicios." : "No hay productos en esta categoría.") + "</div>"; return; }
   $("res").innerHTML = L.map((p, k) => {
-    const x = precioLista(p, 0), pu = r2(enPantalla(x.base) * (1 + x.iva / 100)), q2 = enOrden(p.codigo), disp = r3(disponible(p.codigo) - q2);
+    const x = precioLista(p, 0), pu = r2(enPantalla(x.base) * (1 + x.iva / 100)), q2 = enOrden(p.codigo, sv), disp = sv ? 0 : r3(disponible(p.codigo) - q2);
+    if (sv) return '<div class="res-item"><span class="r-img serv-ico">🛠️</span><div class="r-info"><div class="r-nom">' + esc(p.nombre) + '</div><div class="r-sub">' + esc(p.codigo) + '</div><span class="serv-tag">Servicio</span></div>' +
+      '<div class="r-pre">$' + fmt(pu) + "<small>" + esc(uTxt().trim()) + '</small></div><button type="button" class="btn-mas" data-k="' + k + '">+' + (q2 > 0 ? '<span class="q">' + fmtCant(q2) + "</span>" : "") + "</button></div>";
     const cls = disp <= 0 ? "no" : disp <= 3 ? "poco" : "";
     return '<div class="res-item">' + fotoHTML(p, "r-img") + '<div class="r-info"><div class="r-nom">' + esc(p.nombre) + '</div><div class="r-sub">' + esc([p.marca, p.codigo].filter(Boolean).join(" · ")) + '</div><span class="quedan ' + cls + '">' + (disp > 0 ? "quedan " + fmtCant(disp) : "no queda") + "</span></div>" +
       '<div class="r-pre">$' + fmt(pu) + "<small>" + esc(uTxt().trim()) + '</small></div><button type="button" class="btn-mas" data-k="' + k + '">+' + (q2 > 0 ? '<span class="q">' + fmtCant(q2) + "</span>" : "") + "</button></div>";
@@ -425,10 +439,11 @@ function buscar(seguir){
   $("res").querySelectorAll(".btn-mas").forEach(b => b.addEventListener("click", () => agregar(L[Number(b.dataset.k)])));
 }
 function agregar(p){
-  const ya = O.items.find(l => String(l.codigo) === String(p.codigo) && !l.manual && l.tipoIdx === 0);
+  const sv = p.tipo === "servicio";
+  const ya = O.items.find(l => String(l.codigo) === String(p.codigo) && esServ(l) === sv && !l.manual && l.tipoIdx === 0);
   if (ya) ya.cantidad = r3((Number(ya.cantidad) || 0) + 1);
-  else O.items.push({ key: ++O.seq, codigo: p.codigo, nombre: p.nombre, cantidad: 1, tipoIdx: 0, manual: false, pFinal: 0, iva: null });
-  const n = String(p.nombre); toast("✅ " + (n.length > 30 ? n.slice(0, 29) + "…" : n) + " ×" + fmtCant(enOrden(p.codigo)));
+  else O.items.push({ key: ++O.seq, tipo: sv ? "servicio" : "producto", codigo: p.codigo, nombre: p.nombre, cantidad: 1, tipoIdx: 0, manual: false, pFinal: 0, iva: null });
+  const n = String(p.nombre); toast("✅ " + (n.length > 30 ? n.slice(0, 29) + "…" : n) + " ×" + fmtCant(enOrden(p.codigo, sv)));
   buscar(true); pintarLineas(); pintarTotal(); guardarBorrador();
 }
 function pintarLineas(){
@@ -436,17 +451,17 @@ function pintarLineas(){
   $("btnVaciar").classList.toggle("oculto", !O.items.length && !O.cliente);
   if (!O.items.length) { $("lineas").innerHTML = '<div class="vacio">La orden está vacía. Agrega productos con el botón <b>+</b>.</div>'; return; }
   $("lineas").innerHTML = O.items.map(l => {
-    const p = prodDe(l.codigo);
+    const p = catDe(l), sv = esServ(l);
     const opts = tps.map((n, i) => ({ n, i })).filter(o => o.i === 0 || (p && p.precios[o.i] && p.precios[o.i].base > 0)).map(o => '<option value="' + o.i + '"' + (!l.manual && l.tipoIdx === o.i ? " selected" : "") + ">" + esc(o.n) + "</option>").join("") +
       '<option value="manual"' + (l.manual ? " selected" : "") + ">Manual</option>";
-    const falta = p && enOrden(l.codigo) > disponible(l.codigo) + 0.0005;
+    const falta = !sv && p && enOrden(l.codigo) > disponible(l.codigo) + 0.0005;
     const pu = puLinea(l), tot = r2(pu * (Number(l.cantidad) || 0));
-    return '<div class="lin' + (falta || !p ? " falta" : "") + '" id="ln_' + l.key + '"><div class="lin-cab">' + fotoHTML(p, "l-img") + '<span class="l-nom">' + esc(l.nombre) + '</span><button type="button" class="btn-cli-x" onclick="quitar(' + l.key + ')">✕</button></div>' +
+    return '<div class="lin' + (falta || !p ? " falta" : "") + '" id="ln_' + l.key + '"><div class="lin-cab">' + (sv ? '<span class="l-img serv-ico">🛠️</span>' : fotoHTML(p, "l-img")) + '<span class="l-nom">' + esc(l.nombre) + (sv ? ' <span class="serv-tag">Servicio</span>' : "") + '</span><button type="button" class="btn-cli-x" onclick="quitar(' + l.key + ')">✕</button></div>' +
       '<div class="lin-fila"><div class="paso"><button type="button" onclick="paso(' + l.key + ',-1)">−</button><input type="number" inputmode="decimal" min="0" step="any" id="q_' + l.key + '" value="' + (l.cantidad === "" ? "" : l.cantidad) + '" placeholder="Cant." oninput="cant(' + l.key + ',this.value)"><button type="button" onclick="paso(' + l.key + ',1)">+</button></div>' +
       '<select onchange="tipoLinea(' + l.key + ',this)">' + opts + "</select>" +
       (l.manual ? '<input class="man" type="number" inputmode="decimal" min="0" step="any" id="pm_' + l.key + '" placeholder="Precio c/IVA" value="' + (l.pFinal > 0 ? l.pFinal : "") + '" oninput="precioMan(' + l.key + ',this.value)">' : '<span class="l-pu">$' + fmt(pu) + " c/u</span>") +
       '<span class="l-tot" id="t_' + l.key + '">$' + fmt(tot) + "</span></div>" +
-      (!p ? '<div class="l-aviso">⚠️ Este producto ya no está en los datos del teléfono (puede que lo hayan quitado): quítalo de la orden.</div>' : '<div class="l-aviso" id="la_' + l.key + '">' + (falta ? avisoFalta(l.codigo) : "") + "</div>") + "</div>";
+      (!p ? '<div class="l-aviso">⚠️ Este ' + (sv ? "servicio" : "producto") + ' ya no está en los datos del teléfono (puede que lo hayan quitado): quítalo de la orden.</div>' : '<div class="l-aviso" id="la_' + l.key + '">' + (falta ? avisoFalta(l.codigo) : "") + "</div>") + "</div>";
   }).join("");
 }
 const itemDe = k => O.items.find(l => l.key === k);
@@ -454,7 +469,7 @@ function avisoFalta(cod){ return "⚠️ No alcanza: quedan " + fmtCant(Math.max
 // Marca en rojo las líneas sin existencia suficiente (sin repintar: no se pierde el cursor)
 function marcarFaltas(){
   O.items.forEach(l => {
-    const el = $("ln_" + l.key), av = $("la_" + l.key); if (!el || !av) return;
+    const el = $("ln_" + l.key), av = $("la_" + l.key); if (!el || !av || esServ(l)) return;
     const falta = enOrden(l.codigo) > disponible(l.codigo) + 0.0005;
     el.classList.toggle("falta", falta); av.textContent = falta ? avisoFalta(l.codigo) : "";
   });
@@ -554,10 +569,10 @@ function datosDeOrden(){
       if (l.manual) {
         const pr = (Number(l.pFinal) || 0) / (1 + i / 100);   // sin IVA, en la moneda de la orden
         const libro = binOn() && O.moneda === "bcv" && divRate() > 0 ? pr * bcvRate() / divRate() : pr;
-        return { tipo: "producto", codigo: l.codigo, nombre: l.nombre, cantidad: Number(l.cantidad), tipoIdx: -1, cobro: O.moneda, manual: true, manualTipo: O.moneda, precio: pr, precioBase: pr, precioBin: libro, iva: i };
+        return { tipo: esServ(l) ? "servicio" : "producto", codigo: l.codigo, nombre: l.nombre, cantidad: Number(l.cantidad), tipoIdx: -1, cobro: O.moneda, manual: true, manualTipo: O.moneda, precio: pr, precioBase: pr, precioBin: libro, iva: i };
       }
-      const p = prodDe(l.codigo), x = precioLista(p, l.tipoIdx), pant = enPantalla(x.base);
-      return { tipo: "producto", codigo: l.codigo, nombre: l.nombre, cantidad: Number(l.cantidad), tipoIdx: l.tipoIdx, cobro: O.moneda, manual: false, manualTipo: "", precio: pant, precioBase: pant, precioBin: x.base, iva: x.iva };
+      const p = catDe(l), x = precioLista(p, l.tipoIdx), pant = enPantalla(x.base);
+      return { tipo: esServ(l) ? "servicio" : "producto", codigo: l.codigo, nombre: l.nombre, cantidad: Number(l.cantidad), tipoIdx: l.tipoIdx, cobro: O.moneda, manual: false, manualTipo: "", precio: pant, precioBase: pant, precioBin: x.base, iva: x.iva };
     }),
     totalRef: totales().tot, clavePrecio: O.items.some(l => l.manual) ? O.clave : "",
     delivery: r2(O.dlv.monto), tipoDelivery: O.dlv.tipo === "envio" ? "envio" : "delivery"
@@ -572,8 +587,8 @@ async function enviarOrden(){
     const c = await pedirClave(); if (!c) return;
     O.clave = c;
   }
-  const noEx = O.items.find(l => !prodDe(l.codigo)); if (noEx) { aviso({ icono: "📦", titulo: "Producto que ya no está", html: "<b>" + esc(noEx.nombre) + "</b> ya no está en los datos del teléfono. Quítalo de la orden." }); return; }
-  const faltan = [...new Set(O.items.map(l => l.codigo))].filter(c => enOrden(c) > disponible(c) + 0.0005).map(c => prodDe(c));
+  const noEx = O.items.find(l => !catDe(l)); if (noEx) { aviso({ icono: "📦", titulo: (esServ(noEx) ? "Servicio" : "Producto") + " que ya no está", html: "<b>" + esc(noEx.nombre) + "</b> ya no está en los datos del teléfono. Quítalo de la orden." }); return; }
+  const faltan = [...new Set(O.items.filter(l => !esServ(l)).map(l => l.codigo))].filter(c => enOrden(c) > disponible(c) + 0.0005).map(c => prodDe(c));
   if (faltan.length && !await confirmar({ icono: "📦", titulo: "No alcanza la existencia", colorOk: "naranja", ok: "Enviar igual",
     html: "Según los datos del teléfono no alcanza para:<ul style=\"margin:8px 0 8px 18px;line-height:1.6;\">" + faltan.map(p => "<li><b>" + esc(p.nombre) + "</b>: pides " + fmtCant(enOrden(p.codigo)) + ", quedan " + fmtCant(Math.max(0, disponible(p.codigo))) + "</li>").join("") +
       "</ul>El sistema revisa la existencia al recibirla: si de verdad no alcanza, no la acepta y te dice qué ajustar." })) return;
@@ -692,12 +707,12 @@ function cargarOrden(o, editPend){
   O = nuevaOrden(); O.idLocal = llave();
   O.moneda = binOn() && o.moneda === "divisas" ? "divisas" : "bcv";
   (o.items || []).forEach(it => {
-    const p = prodDe(it.codigo); if (!p) { faltan.push(it.nombre || it.codigo); return; }
+    const sv = it.tipo === "servicio", p = sv ? servDe(it.codigo) : prodDe(it.codigo); if (!p) { faltan.push(it.nombre || it.codigo); return; }
     const man = it.manual === true || Number(it.tipoIdx) === -1;
-    const l = { key: ++O.seq, codigo: p.codigo, nombre: p.nombre, cantidad: Number(it.cantidad) || 0, tipoIdx: man ? 0 : Math.max(0, Math.min(2, Number(it.tipoIdx) || 0)), manual: man, pFinal: 0, iva: null };
+    const l = { key: ++O.seq, tipo: sv ? "servicio" : "producto", codigo: p.codigo, nombre: p.nombre, cantidad: Number(it.cantidad) || 0, tipoIdx: man ? 0 : Math.max(0, Math.min(2, Number(it.tipoIdx) || 0)), manual: man, pFinal: 0, iva: null };
     if (man) { const iva = it.iva !== undefined && it.iva !== "" ? Number(it.iva) || 0 : precioLista(p, 0).iva; l.iva = iva; l.pFinal = Number(it.precio) > 0 ? r2(Number(it.precio) * (1 + iva / 100)) : r2(it.precioManual); }
     items.push(l);
-    if (!editPend) O.reservaPropia[p.codigo] = r3((O.reservaPropia[p.codigo] || 0) + l.cantidad);
+    if (!editPend && !sv) O.reservaPropia[p.codigo] = r3((O.reservaPropia[p.codigo] || 0) + l.cantidad);
   });
   O.items = items;
   O.cliente = { cedula: o.cedula, nombre: o.cliente, telefono: o.telefono || "" };

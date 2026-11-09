@@ -260,3 +260,11 @@ input,select,textarea,.inp{font-size:16px;}
 .sin-foto small{font-size:8.5px;font-weight:700;line-height:1;white-space:nowrap;}
 .fac-img .sin-foto small,.l-img .sin-foto small{display:none;}
 .fac-img .sin-foto svg,.l-img .sin-foto svg{width:72%;height:72%;}
+
+/* ── 1.8 · Servicios (como en Ventas y la caja) ── */
+.seg-ps{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:3px;margin:0 0 8px;border-radius:10px;background:var(--bg2);border:1px solid var(--border);}
+.seg-ps button{padding:9px 6px;border:none;border-radius:8px;background:transparent;color:var(--text-dim);font-weight:800;font-size:14px;cursor:pointer;}
+.seg-ps button.on{background:var(--green-dim);color:var(--green);box-shadow:inset 0 0 0 1px var(--border-g);}
+.serv-ico{display:flex;align-items:center;justify-content:center;font-size:22px;background:rgba(142,68,173,0.12);}
+.l-img.serv-ico{font-size:18px;}
+.serv-tag{display:inline-block;font-size:10px;font-weight:800;padding:1px 7px;border-radius:10px;background:rgba(142,68,173,0.16);color:#8e44ad;margin-top:3px;}

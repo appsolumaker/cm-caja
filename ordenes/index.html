@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
-<meta name="cm-ver" content="1.7">
+<meta name="cm-ver" content="1.8">
 <title>Órdenes · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="ordenes.css?v=1.7">
+<link rel="stylesheet" href="ordenes.css?v=1.8">
 </head>
 <body class="light">
 
@@ -74,6 +74,7 @@
       <div class="ov-col-izq">
         <div class="blq" id="blqProd">
           <div class="blq-tit">🛒 Productos</div>
+          <div class="seg-ps oculto" id="segPS"><button type="button" data-v="productos" onclick="vistaPS('productos')">📦 Productos</button><button type="button" data-v="servicios" onclick="vistaPS('servicios')">🛠️ Servicios</button></div>
           <input class="inp" id="busca" type="search" placeholder="🔍 Buscar producto, marca o código" autocomplete="off" oninput="buscar()">
           <div class="cats" id="cats"></div>
           <div class="res-lista" id="res"></div>
@@ -123,6 +124,6 @@
 <div class="cargando oculto" id="cargando"><div class="cg-box"><div class="cg-sp"></div><div class="cg-txt" id="cgTxt">Cargando…</div><div class="cg-sub" id="cgSub"></div></div></div>
 <div id="toast"></div>
 
-<script src="ov.js?v=1.7"></script>
+<script src="ov.js?v=1.8"></script>
 </body>
 </html>
