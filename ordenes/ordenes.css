@@ -210,12 +210,12 @@ input,select,textarea,.inp{font-size:16px;}
 #vNueva.on{display:flex;flex-direction:column;}
 #vNueva .ov-col-izq,#vNueva .ov-col-der{display:contents;}
 #editBanda{order:0;} #blqCli{order:1;} #vendBlq{order:2;} #monBlq{order:3;} #blqProd{order:4;} #blqLin{order:5;} #blqDl{order:6;} #blqNotas{order:7;} #barra{order:8;}
-/* ── 1.5 · Computadora (como Ventas): productos a la izquierda, la orden a la derecha con su total abajo ── */
-@media (min-width:1000px){
+/* ── 1.5 · Computadora (como Ventas): productos a la izquierda, la orden a la derecha con su total abajo · 1.7: desde 821 px, igual que la caja (antes 1000: una laptop con la pantalla al 125 % o 150 % veía la de teléfono) ── */
+@media (min-width:821px){
   .ov-main{overflow:hidden;display:flex;}
   .ov-wrap{flex:1;max-width:1440px;width:100%;height:100%;padding:12px 16px 12px;display:flex;flex-direction:column;min-height:0;}
   .vista.on{flex:1;min-height:0;overflow-y:auto;}
-  #vNueva.on{display:grid;grid-template-columns:minmax(380px,42%) 1fr;gap:14px;overflow:hidden;}
+  #vNueva.on{display:grid;grid-template-columns:minmax(340px,42%) minmax(0,1fr);gap:14px;overflow:hidden;}
   #vNueva .ov-col-izq,#vNueva .ov-col-der{display:flex;flex-direction:column;min-height:0;}
   #vNueva .ov-col-der{overflow-y:auto;padding-right:2px;}
   #blqProd{flex:1;display:flex;flex-direction:column;min-height:0;margin-bottom:0;}
@@ -238,12 +238,12 @@ input,select,textarea,.inp{font-size:16px;}
 #vNueva.on{display:flex;flex-direction:column;}
 #vNueva .ov-col-izq,#vNueva .ov-col-der{display:contents;}
 #editBanda{order:0;} #blqCli{order:1;} #vendBlq{order:2;} #monBlq{order:3;} #blqProd{order:4;} #blqLin{order:5;} #blqDl{order:6;} #blqNotas{order:7;} #barra{order:8;}
-/* ── 1.5 · Computadora (como Ventas): productos a la izquierda, la orden a la derecha con su total abajo ── */
-@media (min-width:1000px){
+/* ── 1.5 · Computadora (como Ventas): productos a la izquierda, la orden a la derecha con su total abajo · 1.7: desde 821 px, igual que la caja (antes 1000: una laptop con la pantalla al 125 % o 150 % veía la de teléfono) ── */
+@media (min-width:821px){
   .ov-main{overflow:hidden;display:flex;}
   .ov-wrap{flex:1;max-width:1440px;width:100%;height:100%;padding:12px 16px 12px;display:flex;flex-direction:column;min-height:0;}
   .vista.on{flex:1;min-height:0;overflow-y:auto;}
-  #vNueva.on{display:grid;grid-template-columns:minmax(380px,42%) 1fr;gap:14px;overflow:hidden;}
+  #vNueva.on{display:grid;grid-template-columns:minmax(340px,42%) minmax(0,1fr);gap:14px;overflow:hidden;}
   #vNueva .ov-col-izq,#vNueva .ov-col-der{display:flex;flex-direction:column;min-height:0;}
   #vNueva .ov-col-der{overflow-y:auto;padding-right:2px;}
   #blqProd{flex:1;display:flex;flex-direction:column;min-height:0;margin-bottom:0;}
