@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
-<meta name="cm-ver" content="1.9">
+<meta name="cm-ver" content="2.0">
 <title>Órdenes · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="ordenes.css?v=1.9">
+<link rel="stylesheet" href="ordenes.css?v=2.0">
 </head>
 <body class="light">
 
@@ -24,40 +24,27 @@
   <div class="menu-vta-info" id="menuInfo"></div>
   <button type="button" class="menu-vta-item" onclick="cerrarMenu();actualizarDatos(true)"><span class="mv-ico">🔄</span><span><span class="mv-tit">Actualizar datos</span><span class="mv-sub">Productos, precios, existencias y clientes (con internet)</span></span></button>
   <button type="button" class="menu-vta-item" onclick="cerrarMenu();cambiarTema()"><span class="mv-ico">🌙</span><span><span class="mv-tit">Cambiar tema</span><span class="mv-sub">Claro u oscuro</span></span></button>
-  <button type="button" class="menu-vta-item" onclick="cerrarMenu();salir()"><span class="mv-ico">🚪</span><span><span class="mv-tit">Salir</span><span class="mv-sub">La próxima vez entras con tu PIN</span></span></button>
+  <button type="button" class="menu-vta-item" onclick="cerrarMenu();salir()"><span class="mv-ico">🚪</span><span><span class="mv-tit">Salir</span><span class="mv-sub">La próxima vez entras con tu usuario y contraseña</span></span></button>
 </div>
 
-<!-- ENTRAR -->
+<!-- ENTRAR: usuario y contraseña del sistema (2.0) -->
 <div class="entrar oculto" id="vEntrar">
   <div class="entrar-box">
     <div style="font-size:40px;">📋</div>
     <h2>Órdenes de venta</h2>
+    <div class="en-hola oculto" id="enHola"></div>
     <div class="en-aviso oculto" id="enAviso"></div>
-    <p id="enTxt">Para entrar, pídele al administrador tu <b>enlace</b>. Ábrelo en este teléfono y después entras solo con tu <b>PIN</b>.</p>
-    <div class="oculto" id="enForm">
-      <div class="fg"><label for="enUsu">Usuario</label><input class="inp" id="enUsu" autocomplete="username" autocapitalize="off" placeholder="Tu usuario"></div>
-      <div class="fg"><label for="enCla">Clave</label><input class="inp" id="enCla" type="password" autocomplete="current-password" placeholder="Tu clave" onkeydown="if(event.key==='Enter')entrarUsuario()"></div>
+    <p id="enTxt">Entra con tu <b>usuario y contraseña</b> del sistema.</p>
+    <div id="enForm">
+      <div class="fg"><label for="enUsu">Usuario</label><input class="inp" id="enUsu" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Tu usuario" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('enCla').focus();}"></div>
+      <div class="fg"><label for="enCla">Contraseña</label><input class="inp" id="enCla" type="password" autocomplete="current-password" placeholder="Tu contraseña" onkeydown="if(event.key==='Enter')entrarUsuario()"></div>
       <button type="button" class="btn green block" id="btnEntrar" onclick="entrarUsuario()">Entrar</button>
     </div>
     <div class="entrar-links">
-      <button type="button" class="lnk" id="enAdm" onclick="verFormAdmin()">🔐 Soy administrador: entrar con usuario y clave</button>
-      <button type="button" class="lnk oculto" id="enOffline" onclick="seguirSinInternet()">📝 Seguir sin internet</button>
+      <button type="button" class="lnk oculto" id="enOffline" onclick="seguirSinInternet()">📝 Seguir sin entrar (las órdenes se envían cuando entres)</button>
+      <button type="button" class="lnk" onclick="olvideClave()">Olvidé mi contraseña</button>
     </div>
     <div class="ver-txt" id="verTxt"></div>
-  </div>
-</div>
-<div class="entrar oculto" id="vPin">
-  <div class="entrar-box">
-    <div style="font-size:40px;">👋</div>
-    <h2 id="piHola">Hola</h2>
-    <p>Escribe tu PIN para entrar.</p>
-    <div class="pin-dots" id="piDots"><span></span><span></span><span></span><span></span></div>
-    <div class="m-err" id="piErr"></div>
-    <div class="teclado" id="piTec"></div>
-    <div class="entrar-links">
-      <button type="button" class="lnk oculto" id="piOffline" onclick="seguirSinInternet()">📝 Seguir sin internet (las órdenes se envían cuando vuelva)</button>
-      <button type="button" class="lnk" onclick="olvidePin()">Olvidé mi PIN</button>
-    </div>
   </div>
 </div>
 
@@ -124,7 +111,7 @@
 <div class="cargando oculto" id="cargando"><div class="cg-box"><div class="cg-sp"></div><div class="cg-txt" id="cgTxt">Cargando…</div><div class="cg-sub" id="cgSub"></div></div></div>
 <div id="toast"></div>
 
-<script src="ov.js?v=1.9"></script>
-<script src="escaner.js?v=1.9"></script>
+<script src="ov.js?v=2.0"></script>
+<script src="escaner.js?v=2.0"></script>
 </body>
 </html>

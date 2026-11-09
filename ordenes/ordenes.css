@@ -185,13 +185,8 @@ select.inp{padding:8px 10px;}
 .entrar-box h2{font-size:20px;font-weight:900;margin:6px 0 4px;}
 .entrar-box p{font-size:13px;color:var(--text-dim);line-height:1.5;margin-bottom:14px;}
 .entrar-box .fg{text-align:left;margin-bottom:10px;}
-.pin-dots{display:flex;justify-content:center;gap:14px;margin:12px 0 6px;}
-.pin-dots span{width:16px;height:16px;border-radius:50%;border:2px solid var(--green);}
-.pin-dots span.on{background:var(--green);}
-.teclado{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;}
-.teclado button{height:58px;border-radius:12px;border:1px solid var(--border);background:var(--bg2);font-size:24px;font-weight:800;}
-.teclado button.t-x{font-size:18px;}
 .entrar-links{display:flex;flex-direction:column;gap:8px;margin-top:16px;}
+.en-hola{font-size:18px;font-weight:900;margin:6px 0 2px;}
 .en-aviso{background:rgba(227,179,65,0.14);border:1px solid rgba(227,179,65,0.45);color:var(--text);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45;text-align:left;margin:8px 0 12px;}
 .lnk{background:none;border:none;color:var(--green);font-size:13px;font-weight:800;text-decoration:underline;}
 .ver-txt{font-size:10px;color:var(--text-dim);margin-top:14px;}
