@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.4 · 9-11-2026";
+const APP_VER = "4.5 · 9-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -419,11 +419,31 @@ function menuVtaAccion(a){
   if (a === "servicio") { nuevoServicio(); return; }       // 3.9 (tanda2.js)
   irA(a);
 }
+// 4.5 · Lo que no sube: si algo «por subir» ya falló 2 veces con un motivo del sistema, cuenta como «con problema» y se
+// muestra POR QUÉ (se sigue intentando solo cada minuto; cuando se corrige en el sistema, sube solo).
+function trabado(x, tipo){
+  if (!x || x.estado !== "por_subir" || !x.msg) return false;
+  return tipo === "venta" ? (Number(x.intentos) || 0) >= 3 : (Number(x.fallas) || 0) >= 2;
+}
+function trabadosLista(){
+  const L = [];
+  S.ventas.forEach(v => { if (trabado(v, "venta")) L.push({ que: "Venta " + (v.numeroTicket ? "#" + v.numeroTicket : "PROV " + v.numero) + " · " + fechaCorta(v.fecha) + " " + horaDe(v.creada) + " · Bs " + fmt(v.totalBs), msg: v.msg }); });
+  S.cierres.forEach(c => { if (trabado(c, "cierre")) L.push({ que: "Cierre del turno de " + c.cajeroNombre + " · " + fechaCorta(c.apertura) + " " + horaDe(c.apertura) + "–" + horaDe(c.cierre), msg: c.msg }); });
+  (S.movs || []).forEach(m => { if (trabado(m, "mov")) L.push({ que: gvEtiqueta(m) + " · " + (m.signo < 0 ? "− " : "+ ") + gvPlata(m.moneda, m.monto) + " · " + fechaCorta(m.fecha || m.creada) + " " + horaDe(m.creada), msg: m.msg }); });
+  return L;
+}
+function trabadosHTML(){
+  const L = trabadosLista();
+  if (!L.length) return "";
+  return '<div class="card" style="margin-bottom:10px;border-color:var(--red);"><div class="card-tit">⚠️ No se ha podido subir</div><table class="cie-tabla">' +
+    L.map(x => "<tr><td><b>" + esc(x.que) + '</b><div class="cie-sis" style="color:var(--red);">El sistema dice: ' + esc(x.msg) + "</div></td></tr>").join("") + "</table>" +
+    '<div class="cie-ayuda" style="margin:8px 0 0;">Sigue guardado en este equipo y se vuelve a intentar solo cada minuto. Si el motivo es algo del sistema (un saldo, un cliente, un producto…), corrígelo allá y sube solo.</div></div>';
+}
 function cuentas(){
   let por = 0, mal = 0;
-  S.ventas.forEach(v => { if (v.estado === "por_subir") por++; else if (v.estado === "pendiente" || v.estado === "invalida") mal++; });
-  S.cierres.forEach(c => { if (c.estado === "por_subir") por++; });
-  (S.movs || []).forEach(m => { if (m.estado === "por_subir") por++; else if (m.estado === "rechazado") mal++; });   // 3.3: lo de la gaveta
+  S.ventas.forEach(v => { if (v.estado === "por_subir") { if (trabado(v, "venta")) mal++; else por++; } else if (v.estado === "pendiente" || v.estado === "invalida") mal++; });
+  S.cierres.forEach(c => { if (c.estado === "por_subir") { if (trabado(c, "cierre")) mal++; else por++; } });
+  (S.movs || []).forEach(m => { if (m.estado === "por_subir") { if (trabado(m, "mov")) mal++; else por++; } else if (m.estado === "rechazado") mal++; });   // 3.3: lo de la gaveta
   return { por, mal };
 }
 function pintarEstado(){
@@ -2842,7 +2862,7 @@ async function subirCierres(){
     let r;
     try { r = await api("cj_cierre", { cierre: c }, 60000); } catch (e) { return; }
     if (r && r.ok) {
-      c.estado = "subido"; c.msg = "";
+      c.estado = "subido"; c.msg = ""; c.fallas = 0;
       if (r.sistema && r.sistema.cambio) {   // 3.0: el sistema le sumó al cierre efectivo movido desde el sistema que la caja no alcanzó a ver
         c.sistemaFinal = { bs: r2(r.sistema.bs), usd: r2(r.sistema.usd), difBs: r2(r.sistema.difBs), difUsd: r2(r.sistema.difUsd) };
         const falta = (v, m) => Math.abs(v) < 0.005 ? "" : (v > 0 ? "+" : "−") + (m === "BS" ? "Bs " : "$") + fmt(Math.abs(v));
@@ -2852,7 +2872,7 @@ async function subirCierres(){
           [falta(extraBs, "BS"), falta(extraUsd, "USD")].filter(Boolean).join(" y ") + " (abonos, pagos a proveedores, compras o gastos de esta caja).<br><br>" +
           "Con eso el resultado real es:<br>• Bs: " + difHTML(c.sistemaFinal.difBs) + "<br>• $: " + difHTML(c.sistemaFinal.difUsd) + "<br><br>Queda anotado en el sistema." });
       }
-    } else { c.msg = (r && r.msg) || "No se pudo subir."; if (r && r.codigo === "EQUIPO") return; }
+    } else { c.msg = (r && r.msg) || "No se pudo subir."; c.fallas = (Number(c.fallas) || 0) + 1; if (r && r.codigo === "EQUIPO") { await kvSet("cierres", S.cierres); return; } }
     await kvSet("cierres", S.cierres);
   }
 }
@@ -2865,6 +2885,9 @@ async function subirAhora(btn){
   else if (r && r.subidas) toast("✅ " + r.subidas + " venta" + (r.subidas > 1 ? "s subidas" : " subida"));
   else if (!c.por && !c.mal) toast("✅ Todo está subido");
   pintarVentas();
+  const tb = trabadosLista();   // 4.5
+  if (!(r && r.cortado) && tb.length) aviso({ icono: "⚠️", titulo: tb.length === 1 ? "Hay algo que no sube" : "Hay " + tb.length + " cosas que no suben",
+    html: tb.map(x => "<b>" + esc(x.que) + "</b><br>El sistema dice: " + esc(x.msg)).join("<br><br>") + "<br><br>Sigue guardado en este equipo y se vuelve a intentar solo cada minuto. Si el motivo es algo del sistema (un saldo, un cliente, un producto…), corrígelo allá y sube solo." });
 }
 // S2: el sistema no la registró porque algo no cuadra (tasa, total, precio o caja). Si está bien así, el
 // administrador la sube igual con la clave de precio manual del sistema (la de Ventas) y queda el aviso.
@@ -2943,7 +2966,7 @@ function pintarVentas(){
   const porCj = {};
   deHoy.forEach(v => { const k = v.pago.cajeroNombre || "Sin cajero"; const x = porCj[k] = porCj[k] || { n: 0, bs: 0, usd: 0 }; x.n++; x.bs += Number(v.totalBs) || 0; x.usd += bcvDe(v); });
   const cjs = Object.keys(porCj);
-  $("porCajero").innerHTML = gvHTMLVentas() + (cjs.length ? '<div class="card" style="margin-bottom:10px;"><div class="card-tit">🧾 Hoy por cajero</div><table class="cie-tabla">' +
+  $("porCajero").innerHTML = trabadosHTML() + gvHTMLVentas() + (cjs.length ? '<div class="card" style="margin-bottom:10px;"><div class="card-tit">🧾 Hoy por cajero</div><table class="cie-tabla">' +
     cjs.map(k => "<tr><td><b>" + esc(k) + "</b> · " + porCj[k].n + " venta" + (porCj[k].n === 1 ? "" : "s") + '</td><td class="r">Bs ' + fmt(porCj[k].bs) + ' <span style="color:var(--text-dim);font-weight:600;">· $' + fmt(porCj[k].usd) + "</span></td></tr>").join("") + "</table></div>" : "");   // 3.3: antes, lo de la gaveta del turno abierto
   // Turnos
   const tl = S.cierres.slice().reverse().slice(0, 20);
@@ -2952,7 +2975,7 @@ function pintarVentas(){
   tl.forEach((c, k) => {
     const dif = (Math.abs(c.efBsDif) < 0.005 && Math.abs(c.efUsdDif) < 0.005) ? '<span class="dif-ok">cuadra</span>' : '<span class="dif-mal">dif. Bs ' + fmt(c.efBsDif) + " · $" + fmt(c.efUsdDif) + "</span>";
     th += "<tr><td>🔒 <b>" + esc(c.cajeroNombre) + "</b> · " + fechaCorta(c.apertura) + " " + horaDe(c.apertura) + "–" + horaDe(c.cierre) + " · " + c.ventas + " ventas · " + dif +
-      (c.estado === "subido" ? "" : ' · <span style="color:var(--blue);">⏳ por subir</span>') + '</td><td class="r">Bs ' + fmt(c.totalBs) +
+      (c.estado === "subido" ? "" : ' · <span style="color:' + (trabado(c, "cierre") ? "var(--red)" : "var(--blue)") + ';">⏳ por subir' + (c.msg ? " · " + esc(c.msg) : "") + "</span>") + '</td><td class="r">Bs ' + fmt(c.totalBs) +
       ' <button type="button" class="btn sm" onclick="imprimirCierreN(' + (S.cierres.length - 1 - k) + ')">🖨️</button></td></tr>';
   });
   $("turnosLista").innerHTML = th ? '<div class="card" style="margin-bottom:10px;"><div class="card-tit">🔒 Turnos</div><table class="cie-tabla">' + th + "</table></div>" : "";

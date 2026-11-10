@@ -85,12 +85,12 @@ async function gvSubir(){
     for (const m of cola) {
       let r;
       try { r = await api("cj_turno", { op: "mov", turno: { id: m.turno, cajeroNombre: m.cajero, mov: gvParaSubir(m) } }, 60000); }
-      catch (e) { m.msg = e.message; cambio = true; break; }
+      catch (e) { m.msg = e.message; cambio = true; break; }   // sin conexión: no cuenta como falla
       cambio = true;
       if (r && r.codigo === "EQUIPO") { m.msg = r.msg || ""; break; }
-      if (r && r.ok) { m.estado = "subido"; m.msg = ""; }
+      if (r && r.ok) { m.estado = "subido"; m.msg = ""; m.fallas = 0; }
       else if (r && r.estado === "invalida") { m.estado = "rechazado"; m.msg = r.msg || "El sistema no lo aceptó."; }
-      else { m.msg = (r && r.msg) || "No se pudo subir."; break; }
+      else { m.msg = (r && r.msg) || "No se pudo subir."; m.fallas = (Number(m.fallas) || 0) + 1; continue; }   // 4.5: cuenta la falla y sigue con lo demás
     }
   } finally {
     GV.sube = false;
@@ -244,7 +244,7 @@ async function gvRedondeo(x){
 function gvHTMLVentas(){
   if (!S.turno) return "";
   const l = gvMovsTurno(S.turno.id);
-  const est = m => m.estado === "subido" ? '<span class="dif-ok">✓ en el sistema</span>' : m.estado === "rechazado" ? '<span class="dif-mal">❌ ' + esc(m.msg || "no se registró") + "</span>" : '<span style="color:var(--blue);">⏳ por subir</span>';
+  const est = m => m.estado === "subido" ? '<span class="dif-ok">✓ en el sistema</span>' : m.estado === "rechazado" ? '<span class="dif-mal">❌ ' + esc(m.msg || "no se registró") + "</span>" : '<span style="color:' + (trabado(m, "mov") ? "var(--red)" : "var(--blue)") + ';">⏳ por subir' + (m.msg ? " · " + esc(m.msg) : "") + "</span>";
   return '<div class="card" style="margin-bottom:10px;"><div class="card-tit">💵 Efectivo sacado o ajustado en este turno</div>' +
     (l.length ? '<table class="cie-tabla">' + l.map(m => "<tr><td>" + esc(gvEtiqueta(m)) + '<div class="cie-sis">' + esc(horaDe(m.creada)) + (m.autorizo ? " · autorizó " + esc(m.autorizo) : "") + " · " + est(m) + '</div></td><td class="r">' +
       (m.signo < 0 ? "− " : "+ ") + gvPlata(m.moneda, m.monto) + "</td></tr>").join("") + "</table>" : '<div class="cie-ayuda" style="margin:0 0 8px;">Nada todavía.</div>') +
