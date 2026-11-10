@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.5 · 9-11-2026";
+const APP_VER = "4.6 · 10-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -508,7 +508,7 @@ function vendidoLocal(){
   S.ventas.forEach(v => {
     if (v.estado === "invalida") return;
     if (v.subidaEn && v.subidaEn <= desde) return;   // ya estaba en las existencias que mandó el sistema
-    v.items.forEach(i => { if (i.tipo !== "servicio") m[i.codigo] = (m[i.codigo] || 0) + (Number(i.cantidad) || 0); });
+    v.items.forEach(i => { if (i.tipo !== "servicio" && !(depLinea() && i.lugar === "deposito")) m[i.codigo] = (m[i.codigo] || 0) + (Number(i.cantidad) || 0); });
   });
   return (_vendidoLocal = m);
 }
@@ -519,6 +519,48 @@ function enDeposito(p){ const d = S.datos && S.datos.deposito; return d ? Number
 function disponible(p){ return r3((Number(p.existencia) || 0) - enDeposito(p) - (vendidoLocal()[p.codigo] || 0)); }
 function enFactura(cod){ return F.items.filter(i => i.tipo !== "servicio" && String(i.codigo) === String(cod)).reduce((s, i) => s + (Number(i.cantidad) || 0), 0); }
 function existenciaLocal(p){ return r3(disponible(p) - enFactura(p.codigo)); }
+// ══ 4.6 · Depósito por línea (Configuración → Administración: «Elegir si sale de la tienda o del depósito») ══
+// Cada línea de la factura dice de dónde sale: 🏪 Tienda o 📦 Depósito. Arranca en la tienda; si en la tienda
+// no queda y en el depósito sí, arranca en el depósito. Apagado (o sin Depósito), todo queda como antes.
+function depLinea(){ return !!(S.datos && S.datos.deposito && S.datos.depositoLinea === true); }
+function lugarDe(i){ return depLinea() && i && i.tipo !== "servicio" ? (i.lugar === "deposito" ? "deposito" : "tienda") : ""; }
+function vendidoLocalDep(){
+  const m = {}, desde = S.datos ? (S.datos.exiEn || S.datos.descargadoEn) : 0;
+  S.ventas.forEach(v => {
+    if (v.estado === "invalida" || (v.subidaEn && v.subidaEn <= desde)) return;
+    v.items.forEach(i => { if (i.tipo !== "servicio" && i.lugar === "deposito") m[i.codigo] = (m[i.codigo] || 0) + (Number(i.cantidad) || 0); });
+  });
+  return m;
+}
+function dispDeposito(p){ return r3(enDeposito(p) - (vendidoLocalDep()[p.codigo] || 0)); }
+function enFacturaLugar(cod, lugar, sinKey){ return r3(F.items.filter(i => i.tipo !== "servicio" && String(i.codigo) === String(cod) && lugarDe(i) === lugar && i.key !== sinKey).reduce((s, i) => s + (Number(i.cantidad) || 0), 0)); }
+function quedaTienda(p, sinKey){ return r3(disponible(p) - enFacturaLugar(p.codigo, "tienda", sinKey)); }
+function quedaDeposito(p, sinKey){ return r3(dispDeposito(p) - enFacturaLugar(p.codigo, "deposito", sinKey)); }
+const LUG_TXT = { tienda: "la tienda", deposito: "el depósito" }, LUG_DE = { tienda: "de la tienda", deposito: "del depósito" };
+// Las líneas que llegan sin lugar (orden, venta en espera…): tienda si alcanza; si no, depósito si alcanza; si no, tienda
+function asignarLugares(){
+  if (!depLinea()) return;
+  const c = cat();
+  F.items.forEach(i => {
+    if (i.tipo === "servicio" || i.lugar === "tienda" || i.lugar === "deposito") return;
+    const p = c.find(x => x.tipo === "producto" && String(x.codigo) === String(i.codigo)), q = Number(i.cantidad) || 0;
+    i.lugar = !p || quedaTienda(p, i.key) >= q - 0.0005 || quedaDeposito(p, i.key) < q - 0.0005 ? "tienda" : "deposito";
+  });
+}
+function lugarHTML(i, p){
+  if (!depLinea() || !p || i.tipo === "servicio") return "";
+  const l = lugarDe(i), t = quedaTienda(p, i.key), d = quedaDeposito(p, i.key);
+  const b = (x, ico, n) => '<button type="button" class="lug-b' + (l === x ? " on" : "") + '" onclick="cambiarLugar(' + i.key + ",'" + x + "')\" title=\"Sale de " + LUG_TXT[x] + '">' + ico + ' <small>hay ' + fmtCant(Math.max(0, n)) + "</small></button>";
+  return '<span class="lug">' + b("tienda", "🏪 Tienda", t) + b("deposito", "📦 Depósito", d) + "</span>";
+}
+function cambiarLugar(key, lugar){
+  const i = itemDe(key); if (!i || lugarDe(i) === lugar) return;
+  i.lugar = lugar === "deposito" ? "deposito" : "tienda";
+  delete F.avisoEx[String(i.codigo) + "|" + i.lugar];
+  pintarFactura();
+  toast(i.lugar === "deposito" ? "📦 Sale del depósito" : "🏪 Sale de la tienda");
+  revisarExistencia(key);
+}
 // ── Existencias al día entre cajas: con internet, cada 2 minutos, solo si cambiaron (la misma consulta de Ventas) ──
 let _exiFirma = "", _exiOcupado = false;
 async function existenciasAlDia(){
@@ -616,6 +658,7 @@ function buscar(){
       const ex = disponible(p);   // como Ventas: lo que hay (sin restar la factura en pantalla)
       info = (p.categoria ? '<div class="prod-barcode">🏷️ ' + esc(p.categoria) + "</div>" : "") + (p.marca ? '<div class="prod-barcode">Marca: ' + esc(p.marca) + "</div>" : "") +
         (S.datos.buscarRepuesto && p.codRepuesto ? '<div class="prod-barcode">Cód. Producto: ' + esc(p.codRepuesto) + "</div>" : "") +
+        (p.ubicacion ? '<div class="prod-barcode prod-ubic">📍 ' + esc(p.ubicacion) + "</div>" : "") +   // 4.6: dónde está guardado (Inventario → Ubicación)
         (p.codigoBarras && String(p.codigoBarras) !== String(p.codigo) ? '<div class="prod-barcode">Cód. de Barras: ' + esc(p.codigoBarras) + "</div>" : "") +
         '<div style="margin-top:4px;"><span class="prod-stock" style="' + semaforo(ex, p) + '">' + (ex <= 0 ? (enDeposito(p) > 0 ? "Tienda 0" : "Sin stock") : fmtCant(ex) + " uds") + "</span>" +
         (enDeposito(p) > 0 ? ' <span class="prod-barcode" style="display:inline;">📦 Depósito: ' + fmtCant(enDeposito(p)) + "</span>" : "") + "</div>";
@@ -684,7 +727,18 @@ function clicProducto(el, k){
   el.classList.add("highlight");
 }
 async function agregar(p){
-  if (p.tipo !== "servicio") {
+  let lugar = "";
+  if (p.tipo !== "servicio" && depLinea()) {
+    const t = quedaTienda(p), d = quedaDeposito(p);
+    lugar = t >= 1 - 0.0005 ? "tienda" : (d >= 1 - 0.0005 ? "deposito" : "tienda");
+    if (t < 1 - 0.0005 && d < 1 - 0.0005 && !F.avisoEx[String(p.codigo)]) {
+      const ok = await confirmar({ icono: "📦", titulo: "No hay existencia de este producto", colorOk: "naranja", ok: "Sí, venderlo igual", cancel: "No agregarlo",
+        html: "<b>" + esc(p.nombre) + "</b><br>Según el sistema no queda en la tienda" + (t > 0 ? " (solo " + fmtCant(t) + ")" : "") + " ni en el depósito" + (d > 0 ? " (solo " + fmtCant(d) + ")" : "") + "." +
+          "<br><br><b>¿Lo tienes en la mano?</b> Véndelo: la venta se registra igual y en el sistema queda el aviso para revisar la existencia de ese producto." });
+      if (!ok) return;
+      F.avisoEx[String(p.codigo)] = true;
+    }
+  } else if (p.tipo !== "servicio") {
     const e = existenciaLocal(p);
     if (e < 1 && !F.avisoEx[String(p.codigo)]) {   // 3.9: se pregunta una sola vez por producto en cada venta
       const dep = enDeposito(p);
@@ -696,15 +750,15 @@ async function agregar(p){
     }
   }
   const pr = precioDe(p, F.tipoPrecio);
-  const ya = F.items.find(i => i.codigo === p.codigo && i.tipo === p.tipo && !i.manual && i.tipoIdx === F.tipoPrecio);
+  const ya = F.items.find(i => i.codigo === p.codigo && i.tipo === p.tipo && !i.manual && i.tipoIdx === F.tipoPrecio && lugarDe(i) === lugar);
   if (ya) ya.cantidad = r3((Number(ya.cantidad) || 0) + 1);
   else F.items.push({ key: ++F.seq, tipo: p.tipo, codigo: p.codigo, nombre: p.nombre, codigoBarras: p.codigoBarras || p.codigo,
-    cantidad: 1, libro: pr.base, base: basePantalla(pr.base), iva: pr.iva, manual: false, tipoIdx: F.tipoPrecio });   // libro: base del sistema (divisas con TasaBin) · base: en pantalla
+    cantidad: 1, libro: pr.base, base: basePantalla(pr.base), iva: pr.iva, manual: false, tipoIdx: F.tipoPrecio, lugar: lugar || undefined });   // libro: base del sistema (divisas con TasaBin) · base: en pantalla
   const habia = $("busca").value !== "";
   $("busca").value = "";
   if (habia) buscar(); else marcarEnFactura();   // 2.9: si la lista no cambia, solo el número del «+» (no se vuelven a cargar las fotos)
   pintarFactura();
-  const n = String(p.nombre || ""); if (!(typeof ESC !== "undefined" && ESC.on)) toast("✅ " + (n.length > 34 ? n.slice(0, 33) + "…" : n) + "  ×" + fmtCant(cuantasEnFactura(p.codigo)));   // 3.9: con la cámara abierta lo dice la barra del escáner
+  const n = String(p.nombre || ""); if (!(typeof ESC !== "undefined" && ESC.on)) toast("✅ " + (n.length > 34 ? n.slice(0, 33) + "…" : n) + "  ×" + fmtCant(cuantasEnFactura(p.codigo)) + (lugar === "deposito" ? " · 📦 del depósito" : ""));   // 3.9: con la cámara abierta lo dice la barra del escáner
   if (window.innerWidth > 820 && !(typeof ESC !== "undefined" && ESC.on)) $("busca").focus();
 }
 
@@ -777,6 +831,7 @@ const totLinea = i => r2((Number(i.base) || 0) * (1 + (Number(i.iva) || 0) / 100
 function pintarFactura(){
   _vendidoLocal = null;
   repreciar();
+  asignarLugares();
   const tps = tiposConPrecio(), c = cat();
   $("tablaFactura").innerHTML = !F.items.length ? '<tr class="fac-vacia"><td colspan="8"><span class="solo-pc">Busca un producto o pasa el lector de códigos. Doble clic en un producto para agregarlo.</span><span class="solo-movil">La factura está vacía. Agrega productos desde la pestaña 🛒 Productos.</span></td></tr>' : F.items.map(i => {
     const srv = i.tipo === "servicio", p = c.find(x => x.codigo === i.codigo && x.tipo === i.tipo);
@@ -785,7 +840,7 @@ function pintarFactura(){
     opts += '<option value="manual"' + (i.manual ? " selected" : "") + ">Manual</option>";
     const cant = '<td><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',-1)" title="Una menos">−</button><input type="number" min="0" step="any" id="q_' + i.key + '" placeholder="Cant." value="' + (i.cantidad === "" ? "" : i.cantidad) + '" oninput="cambiarCant(' + i.key + ',this.value)" onchange="revisarExistencia(' + i.key + ')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'busca\').focus();}"><button type="button" class="mv-paso" onclick="pasoCant(' + i.key + ',1)" title="Una más">+</button></td>';
     const cod = '<td><span style="font-size:11px;">' + esc(i.codigoBarras || i.codigo) + "</span>" + (srv ? ' <span class="srv">SRV</span>' : "") + "</td>";
-    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + (hayFotos() ? '<span class="vta-fcel">' + miniFoto(i.codigo, srv) + '<span class="vta-fnom">' + esc(i.nombre) + "</span></span>" : esc(i.nombre)) + (srv ? "" : '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
+    const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + (hayFotos() ? '<span class="vta-fcel">' + miniFoto(i.codigo, srv) + '<span class="vta-fnom">' + esc(i.nombre) + "</span></span>" : esc(i.nombre)) + (srv ? "" : lugarHTML(i, p) + '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
     const fin = '<td><select onchange="cambiarTipoLinea(' + i.key + ',this)">' + opts + '</select></td><td><button type="button" class="btn-del" onclick="quitarLinea(' + i.key + ')" title="Quitar">✕</button></td>';
     if (i.manual) return '<tr data-key="' + i.key + '" data-cod="' + esc(i.codigo) + '">' + cod + nom + cant +
       '<td><input type="number" class="man" min="0" step="any" id="pu_' + i.key + '" value="' + r2(i.base).toFixed(2) + '" oninput="manualPU(' + i.key + ',this.value)"></td>' +
@@ -802,28 +857,54 @@ function pintarFactura(){
 function faltasExistencia(){
   const c = cat(), out = [], vistos = {};
   F.items.forEach(i => {
-    if (i.tipo === "servicio" || vistos[i.codigo]) return;
-    vistos[i.codigo] = 1;
+    const l = lugarDe(i), k = i.codigo + "|" + l;
+    if (i.tipo === "servicio" || vistos[k]) return;
+    vistos[k] = 1;
     const p = c.find(x => x.tipo === "producto" && String(x.codigo) === String(i.codigo)); if (!p) return;
+    if (l) {   // 4.6 · depósito por línea: cada lugar con lo suyo
+      const disp = l === "deposito" ? dispDeposito(p) : disponible(p), pide = enFacturaLugar(i.codigo, l);
+      const otro = l === "deposito" ? quedaTienda(p) : quedaDeposito(p);
+      if (pide > disp + 0.0005) out.push({ codigo: String(i.codigo), lugar: l, nombre: i.nombre, pide, disp: Math.max(0, disp), dep: 0, otro: Math.max(0, otro) });
+      return;
+    }
     const disp = disponible(p), pide = r3(enFactura(i.codigo));
-    if (pide > disp + 0.0005) out.push({ codigo: String(i.codigo), nombre: i.nombre, pide, disp: Math.max(0, disp), dep: enDeposito(p) });
+    if (pide > disp + 0.0005) out.push({ codigo: String(i.codigo), lugar: "", nombre: i.nombre, pide, disp: Math.max(0, disp), dep: enDeposito(p) });
   });
   return out;
 }
 function marcarExistencias(){
-  const f = {}; faltasExistencia().forEach(x => f[x.codigo] = x);
+  const f = {}; faltasExistencia().forEach(x => f[x.codigo + "|" + x.lugar] = x);
   F.items.forEach(i => {
     const sp = $("sx_" + i.key); if (!sp) return;
-    const x = f[String(i.codigo)], tr = sp.closest("tr");
+    const x = f[String(i.codigo) + "|" + lugarDe(i)], tr = sp.closest("tr");
     sp.classList.toggle("oculto", !x);
-    sp.textContent = x ? "⚠️ Sin existencia suficiente: " + (x.disp > 0 ? "quedan " + fmtCant(x.disp) : "no queda ninguno") + (x.dep > 0 ? " en tienda" : "") + " y van " + fmtCant(x.pide) : "";
+    sp.textContent = !x ? "" : x.lugar
+      ? "⚠️ En " + LUG_TXT[x.lugar] + " " + (x.disp > 0 ? "quedan " + fmtCant(x.disp) : "no queda ninguno") + " y van " + fmtCant(x.pide)
+      : "⚠️ Sin existencia suficiente: " + (x.disp > 0 ? "quedan " + fmtCant(x.disp) : "no queda ninguno") + (x.dep > 0 ? " en tienda" : "") + " y van " + fmtCant(x.pide);
     if (tr) tr.classList.toggle("sin-ex-tr", !!x);
   });
 }
 // Al terminar de escribir la cantidad: si pasa de lo que hay, se avisa una vez por producto
 async function revisarExistencia(key){
   const i = itemDe(key); if (!i || i.tipo === "servicio") return;
-  const x = faltasExistencia().find(y => y.codigo === String(i.codigo));
+  const x = faltasExistencia().find(y => y.codigo === String(i.codigo) && y.lugar === lugarDe(i));
+  if (x && x.lugar) {   // 4.6 · depósito por línea: si el otro lugar tiene, se ofrece sacar de ahí lo que falta
+    const k = x.codigo + "|" + x.lugar;
+    if (F.avisoEx[k]) return;
+    F.avisoEx[k] = true;
+    const falta = r3(x.pide - x.disp), mover = r3(Math.min(falta, x.otro, Number(i.cantidad) || 0)), otroL = x.lugar === "deposito" ? "tienda" : "deposito";
+    if (mover > 0.0005) {
+      const ok = await confirmar({ icono: "📦", titulo: "No alcanza en " + LUG_TXT[x.lugar], colorOk: "naranja", ok: "Sí, sacar " + fmtCant(mover) + " " + LUG_DE[otroL], cancel: "No, dejarlo así",
+        html: "De <b>" + esc(x.nombre) + "</b> en " + LUG_TXT[x.lugar] + " " + (x.disp > 0 ? "quedan <b>" + fmtCant(x.disp) + "</b>" : "no queda <b>ninguno</b>") + " y en la factura van <b>" + fmtCant(x.pide) + "</b>." +
+          "<br>En " + LUG_TXT[otroL] + " hay <b>" + fmtCant(x.otro) + "</b>.<br><br>¿Sacamos <b>" + fmtCant(mover) + "</b> " + LUG_DE[otroL] + "? La factura queda con dos líneas: una de cada lugar." });
+      if (ok && itemDe(key)) partirLinea(key, mover, otroL);
+      return;
+    }
+    await aviso({ icono: "📦", titulo: "No hay suficiente existencia", colorOk: "naranja",
+      html: "De <b>" + esc(x.nombre) + "</b> en " + LUG_TXT[x.lugar] + " " + (x.disp > 0 ? "quedan <b>" + fmtCant(x.disp) + "</b>" : "no queda <b>ninguno</b>") + " (y en " + LUG_TXT[otroL] + " tampoco hay) y en la factura van <b>" + fmtCant(x.pide) + "</b>." +
+        "<br><br>Si lo tienes en la mano, puedes venderlo: la línea queda marcada en rojo y al registrarse el sistema avisa que hay que revisar el inventario." });
+    return;
+  }
   if (!x || F.avisoEx[x.codigo]) return;
   F.avisoEx[x.codigo] = true;
   await aviso({ icono: "📦", titulo: "No hay suficiente existencia", colorOk: "naranja",
@@ -873,6 +954,18 @@ function pasoCant(key, d){
   const inp = $("q_" + key); if (inp) inp.value = nv;
   cambiarCant(key, nv);
   if (d > 0) revisarExistencia(key);
+}
+// 4.6 · Pasa «cant» de la línea al otro lugar (a una línea igual que ya exista, o a una nueva)
+function partirLinea(key, cant, lugar){
+  const i = itemDe(key); if (!i) return;
+  cant = r3(Math.min(cant, Number(i.cantidad) || 0)); if (!(cant > 0)) return;
+  const otra = F.items.find(x => x !== i && x.codigo === i.codigo && x.tipo === i.tipo && !!x.manual === !!i.manual && x.tipoIdx === i.tipoIdx && lugarDe(x) === lugar && (!i.manual || (x.base === i.base && x.iva === i.iva)));
+  if (otra) otra.cantidad = r3((Number(otra.cantidad) || 0) + cant);
+  else F.items.splice(F.items.indexOf(i) + 1, 0, Object.assign({}, i, { key: ++F.seq, cantidad: cant, lugar: lugar }));
+  i.cantidad = r3((Number(i.cantidad) || 0) - cant);
+  if (!(i.cantidad > 0.0005)) F.items = F.items.filter(x => x !== i);
+  pintarFactura(); marcarEnFactura();
+  toast("✅ " + fmtCant(cant) + " sale" + (cant === 1 ? "" : "n") + " " + LUG_DE[lugar]);
 }
 function quitarLinea(key){ F.items = F.items.filter(x => x.key !== key); pintarFactura(); marcarEnFactura(); }
 // El numerito del «+» de cada producto de la lista (cuántos van en la factura), sin volver a pintar la lista
@@ -1338,7 +1431,7 @@ async function registrarVenta(){
   const faltas = faltasExistencia();
   if (faltas.length && !await confirmar({ icono: "📦", titulo: "Hay productos sin existencia suficiente", colorOk: "naranja", ok: "Sí, vender igual",
     html: "Según los datos de este equipo no alcanza la existencia de:<ul style=\"margin:8px 0 8px 18px;line-height:1.6;\">" +
-      faltas.map(x => "<li><b>" + esc(x.nombre) + "</b>: van " + fmtCant(x.pide) + ", " + (x.disp > 0 ? "quedan " + fmtCant(x.disp) : "no queda ninguno") + (x.dep > 0 ? " en tienda" : "") + "</li>").join("") +
+      faltas.map(x => "<li><b>" + esc(x.nombre) + "</b>: van " + fmtCant(x.pide) + (x.lugar ? " " + LUG_DE[x.lugar] : "") + ", " + (x.disp > 0 ? "quedan " + fmtCant(x.disp) : "no queda ninguno") + (x.dep > 0 ? " en tienda" : "") + "</li>").join("") +
       "</ul>Si los tienes en la mano, véndelos: la venta se registra igual y el sistema avisa que hay que revisar el inventario." })) return;
   if (!F.cliente.cedula) {
     const r = await modal({ icono: "", titulo: "🧾 ¿A quién le vendes?", centrado: true,
@@ -2340,7 +2433,7 @@ async function pgGuardar(pagos, vuelto){
     tasas: { bcv: tb, div: binOn() ? tDiv() : tDivOff(), binOn: binOn() },
     modo: m, unidad: m === "div" ? "div" : "BCV",   // venta en $ BCV o Venta en Dólares
     // precio = base en los libros (lo que recibe el sistema) · pu = base en pantalla (el ticket)
-    items: F.items.map(i => ({ tipo: i.tipo, codigo: i.codigo, nombre: i.nombre, codigoBarras: i.codigoBarras, cantidad: Number(i.cantidad), precio: i.libro, pu: i.base, iva: i.iva, manual: !!i.manual })),
+    items: F.items.map(i => ({ tipo: i.tipo, codigo: i.codigo, nombre: i.nombre, codigoBarras: i.codigoBarras, cantidad: Number(i.cantidad), precio: i.libro, pu: i.base, iva: i.iva, manual: !!i.manual, lugar: lugarDe(i) || undefined })),   // 4.6: lugar = de dónde sale (con depósito por línea)
     pago: Object.assign({
       pagos: pagos, vuelto: vuelto,
       referencia: $("pgRef").value.trim(), observaciones: $("pgObs").value.trim(),
