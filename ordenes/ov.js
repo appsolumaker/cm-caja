@@ -8,7 +8,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "2.0 · 8-11-2026";
+const OV_VER = "2.1 · 10-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -320,7 +320,7 @@ function pintarNueva(){
   $("segPS").classList.toggle("oculto", !hayServicios());
   $("segPS").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === OV.vistaS));
   $("busca").placeholder = OV.vistaS === "servicios" ? "🔍 Buscar servicio" : "🔍 Buscar producto, marca o código";
-  const cats = OV.vistaS === "servicios" ? [] : [...new Set((d.productos || []).map(p => p.categoria).filter(Boolean))].sort();
+  const cats = OV.vistaS === "servicios" ? [] : ordenarCats([...new Set((d.productos || []).map(p => p.categoria).filter(Boolean))], d.ordenCategorias);
   $("cats").innerHTML = cats.length > 1 ? ['<button type="button" class="cat' + (!OV.cat ? " on" : "") + '" data-c="">Todas</button>'].concat(cats.map(c => '<button type="button" class="cat' + (OV.cat === c ? " on" : "") + '" data-c="' + esc(c) + '">' + esc(c) + "</button>")).join("") : "";
   $("cats").querySelectorAll(".cat").forEach(b => b.addEventListener("click", () => { OV.cat = b.dataset.c; pintarNueva(); }));
   $("selDl").value = O.dlv.tipo === "envio" ? "envio" : "delivery";
@@ -336,6 +336,13 @@ function pintarCliente(){
 // La lista de productos (ordenada por nombre), de 40 en 40 con «Ver más». Con foto si el producto la tiene.
 const LISTA_PASO = 40;
 let _lista = { de: 0, prods: [] }, _filtro = "", _lim = LISTA_PASO;
+// 2.1 · Orden de las categorías que eligió el dueño (Inventario → Categorías → Orden). Llega con los datos
+// (ordenCategorias); si no llega, alfabético. Las que no están en su lista van al final.
+function ordenarCats(cats, orden){
+  const ix = new Map((orden || []).map((c, i) => [String(c).toLowerCase(), i]));
+  const p = c => { const k = String(c).toLowerCase(); return ix.has(k) ? ix.get(k) : 1e9; };
+  return cats.sort((a, b) => (p(a) - p(b)) || String(a).localeCompare(String(b), "es"));
+}
 function productosOrdenados(){
   const d = OV.d || {};
   if (_lista.de !== d.descargadoEn) _lista = { de: d.descargadoEn, prods: (d.productos || []).slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")),
