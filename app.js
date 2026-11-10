@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.6 · 10-11-2026";
+const APP_VER = "4.7 · 10-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -604,9 +604,16 @@ function vtaVista(v){
   $("selCat").classList.toggle("oculto", S.vtaVista === "servicios"); $("mvCats").classList.toggle("oculto", S.vtaVista === "servicios");
   buscar();
 }
+// 4.7 · Orden de las categorías que eligió el dueño (Inventario → Categorías → Orden). Llega con los datos
+// (ordenCategorias); si no llega, alfabético. Las que no están en su lista van al final.
+function ordenarCats(cats, orden){
+  const ix = new Map((orden || []).map((c, i) => [String(c).toLowerCase(), i]));
+  const p = c => { const k = String(c).toLowerCase(); return ix.has(k) ? ix.get(k) : 1e9; };
+  return cats.sort((a, b) => (p(a) - p(b)) || String(a).localeCompare(String(b), "es"));
+}
 function pintarCategorias(){
   const d = S.datos || {}, sel = $("selCat"), act = sel.value;
-  const cats = [...new Set((d.productos || []).map(p => String(p.categoria || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const cats = ordenarCats([...new Set((d.productos || []).map(p => String(p.categoria || "").trim()).filter(Boolean))], d.ordenCategorias);
   sel.innerHTML = '<option value="">🏷️ Todas las categorías</option>' + cats.map(c => '<option value="' + esc(c) + '">' + esc(c) + "</option>").join("");
   sel.value = cats.indexOf(act) >= 0 ? act : "";
   $("mvCats").innerHTML = ['<button type="button" class="mv-cat" data-v="">Todas</button>'].concat(cats.map(c => '<button type="button" class="mv-cat" data-v="' + esc(c) + '">' + esc(c) + "</button>")).join("");
