@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.3 · 9-11-2026";
+const APP_VER = "4.4 · 9-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -440,9 +440,32 @@ function pintarEstado(){
   p.title = t + " — tocar para ver las ventas de este equipo";
   if (typeof pintarBotonOrdenes === "function") pintarBotonOrdenes();   // 📋 Órdenes marca cuando no hay internet
 }
+// 4.4 · El reloj y la zona horaria del equipo. Las ventas sin internet, los turnos y los cierres usan la hora del equipo:
+// si está mal, se avisa arriba (no se tranca nada). El sistema manda su hora y la zona del país en cada respuesta.
+const RELOJ_PAIS = { "America/Caracas": "Venezuela", "America/Bogota": "Colombia", "America/Mexico_City": "México" };
+function relojRevisar(srv, t0, t1){
+  if (!srv || !(Number(srv.ms) > 0)) return;
+  const real = Number(srv.ms) + (t1 - t0) / 2, offEq = -new Date().getTimezoneOffset();
+  const n = { horaMal: Math.abs(Date.now() - real) > 5 * 60000, zonaMal: typeof srv.off === "number" && srv.off !== offEq,
+              tz: String(srv.tz || ""), offSrv: srv.off, offEq: offEq, real: real, visto: Date.now() };
+  const cambio = !S.reloj || S.reloj.horaMal !== n.horaMal || S.reloj.zonaMal !== n.zonaMal;
+  S.reloj = n;
+  if (cambio) pintarBanners();
+}
+function relojTxt(){
+  const r = S.reloj;
+  if (!r || (!r.horaMal && !r.zonaMal)) return "";
+  const pais = RELOJ_PAIS[r.tz] || "el negocio", utc = m => "UTC" + (m < 0 ? "−" : "+") + Math.abs(m / 60);
+  let hReal = "";
+  try { hReal = new Date(r.real + (Date.now() - r.visto)).toLocaleTimeString("es-VE", { timeZone: r.tz || undefined, hour: "numeric", minute: "2-digit" }); } catch (e) {}
+  const hEq = new Date().toLocaleTimeString("es-VE", { hour: "numeric", minute: "2-digit" });
+  if (r.zonaMal) return "🕒 Este equipo no está en la hora de " + pais + " (el equipo está en " + utc(r.offEq) + " y " + pais + " en " + utc(r.offSrv) + "). Corrige la <b>zona horaria</b> en la configuración del equipo: las ventas y los cierres usan su hora.";
+  return "🕒 La hora de este equipo está mal: dice <b>" + esc(hEq) + "</b> y en " + pais + " son las <b>" + esc(hReal) + "</b>. Corrígela en la configuración del equipo: las ventas y los cierres usan su hora.";
+}
 function pintarBanners(){
   pintarNumFactura();
   let h = "";
+  { const rl = relojTxt(); if (rl) h += '<div class="banner av">' + rl + "</div>"; }   // 4.4
   if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + (S.reemplazado ? " Las ventas guardadas se suben solas; cierra el turno." : ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a>') + "</div>";
   if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + ' <a href="#" onclick="actualizarDatos(null,false);return false;" style="color:inherit;font-weight:800;">Reintentar</a></div>';
   if (S.sesionMal) h += '<div class="banner av">🔐 ' + esc(S.sesionMal) + ' <a href="#" onclick="pedirEntrarOtraVez();return false;" style="color:inherit;font-weight:800;">Entrar</a></div>';
