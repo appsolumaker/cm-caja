@@ -128,7 +128,7 @@ function pintarTurno(){
     const otras = (inf.detalle || []).map(x => "Caja " + x.caja + (x.abierta ? " (abierta" + (x.cajero ? ", " + esc(x.cajero) : "") + ")" : " (cerrada, lo que dejó)") + ": " +
       [x.bs ? gvPlata("BS", x.bs) : "", x.usd ? gvPlata("USD", x.usd) : ""].filter(Boolean).join(" · ")).filter(x => !/: $/.test(x));
     box.innerHTML = '<div class="pk-hola">⚠️ Hay más efectivo del que tiene el sistema</div>' +
-      '<div class="pk-sub">Todo el efectivo de la gaveta tiene que estar en las cuentas de efectivo del sistema. Di de dónde salió lo de más (lo autoriza un <b>administrador</b> con su contraseña) y el turno abre. O vuelve a contar.</div>' +
+      '<div class="pk-sub">Todo el efectivo de la caja tiene que estar en las cuentas de efectivo del sistema. Di de dónde salió lo de más (lo autoriza un <b>administrador</b> con su contraseña) y el turno abre. O vuelve a contar.</div>' +
       mons.map(linea).join("") +
       (otras.length ? '<div class="cie-ayuda" style="text-align:left;">💵 En las otras cajas: ' + otras.join(" · ") + "</div>" : "") +
       '<div class="m-err" id="tFondoErr" style="text-align:left;"></div>' +
@@ -151,7 +151,7 @@ function pintarTurno(){
     const grandes = fdGrandes();
     // Sin un efectivo con cuenta en el sistema no se puede registrar: queda como antes (explicar y abrir)
     if (grandes.some(z => !gvMetodos(z[0]).length)) {
-      box.innerHTML = '<div class="pk-hola">⚠️ No coincide</div><div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la gaveta.</div>' + tabla +
+      box.innerHTML = '<div class="pk-hola">⚠️ No coincide</div><div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la caja.</div>' + tabla +
         '<div class="cie-arreglo" style="text-align:left;">No se puede registrar la diferencia porque en el sistema no hay un método de <b>efectivo</b> ligado a una cuenta (Configuración → métodos de pago).</div>' +
         '<label class="lbl" for="tFondoExpl" style="text-align:left;">¿Por qué no coincide? (obligatorio para abrir)</label>' +
         '<textarea class="inp" id="tFondoExpl" rows="2" maxlength="200" placeholder="Ej. el dueño sacó Bs 200 para pagar el agua"></textarea>' +
@@ -165,14 +165,14 @@ function pintarTurno(){
       if (d > 0) return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔺 Sobran <b>' + p + "</b>. ¿De dónde salieron?</div>" + fdOrigenHTML("aj", mon, d) + "</div>";
       return '<div class="cie-mon" style="text-align:left;"><div class="cie-preg">🔻 Faltan <b>' + p + "</b>. ¿Qué pasó?</div>" +
         '<div class="cie-mots"><button type="button" class="cie-mot" onclick="fdSinCaja()">📋 Salió para algo que ya está registrado en el sistema<small>Un gasto, un pago a un proveedor, un depósito al banco… registrado sin decir de qué caja. Elígelo y «Debe haber» baja.</small></button>' +
-        '<button type="button" class="cie-mot' + (a.tipo === "gasto" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'gasto\')">💸 Se pagó un gasto con el efectivo de la gaveta<small>Agua, hielo, un flete… que NO está registrado. Se registra en Egresos con su tipo.</small></button>' +
+        '<button type="button" class="cie-mot' + (a.tipo === "gasto" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'gasto\')">💸 Se pagó un gasto con el efectivo de la caja<small>Agua, hielo, un flete… que NO está registrado. Se registra en Egresos con su tipo.</small></button>' +
         (a.tipo === "gasto" ? '<div class="cie-arreglo"><label class="lbl" for="fdCat' + mon + '" style="margin-top:0;">Tipo de gasto</label><select class="inp" id="fdCat' + mon + '" onchange="FD.aj.' + mon + '.cat=this.value"><option value="">— Elige —</option>' +
           lt.map(t => '<option value="' + esc(t) + '"' + (a.cat === t ? " selected" : "") + ">" + esc(t) + "</option>").join("") + "</select>" +
           '<label class="lbl" for="fdDesc' + mon + '">¿Qué se pagó?</label><input class="inp" id="fdDesc' + mon + '" maxlength="120" placeholder="Ej. 2 botellones de agua" value="' + esc(a.desc || "") + '" oninput="FD.aj.' + mon + '.desc=this.value"></div>' : "") +
         '<button type="button" class="cie-mot' + (a.tipo === "faltante" ? " on" : "") + '" onclick="fdElegir(\'' + mon + '\', \'faltante\')">💱 Registrar faltante de caja de ' + p + "<small>Un billete que no aparece, un error en el cierre anterior… Se registra como gasto «Faltante de caja».</small></button></div></div>";
     };
     box.innerHTML = '<div class="pk-hola">⚠️ No coincide</div>' +
-      '<div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la gaveta. Para abrir, se registra lo que pasó (lo autoriza un <b>administrador</b> con su contraseña) y así las cuentas del negocio quedan como la gaveta.</div>' + tabla +
+      '<div class="pk-sub">Lo que contaste no es lo que dejó el turno anterior en la caja. Para abrir, se registra lo que pasó (lo autoriza un <b>administrador</b> con su contraseña) y así las cuentas del negocio quedan igual a lo que hay en la caja.</div>' + tabla +
       grandes.map(z => bloque(z[0], z[1])).join("") +
       '<label class="lbl" for="tFondoNota" style="text-align:left;">¿Qué pasó? (opcional)</label>' +
       '<input class="inp" id="tFondoNota" maxlength="120" placeholder="Ej. el dueño sacó Bs 200 y no lo anotó" value="' + esc(FD.nota || "") + '" oninput="FD.nota=this.value">' +
@@ -187,7 +187,7 @@ function pintarTurno(){
     const vb = $("tFondoBs") ? $("tFondoBs").value : (FD.contado ? String(FD.contado.bs) : ""), vu = $("tFondoUsd") ? $("tFondoUsd").value : (FD.contado ? String(FD.contado.usd) : "");
     PK.c = null;
     box.innerHTML = '<div class="pk-hola">✅ ' + esc(c.nombre) + "</div>" +
-      '<div class="pk-sub">' + (FD.prev ? "Cuenta el efectivo que hay en la gaveta y escríbelo. Si no hay, escribe 0." : "¿Con cuánto efectivo arranca la gaveta? Si no hay, déjalo vacío.") + "</div>" +
+      '<div class="pk-sub">' + (FD.prev ? "Cuenta el efectivo que hay en la caja y escríbelo. Si no hay, escribe 0." : "¿Con cuánto efectivo arranca la caja? Si no hay, déjalo vacío.") + "</div>" +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:left;"><div><label class="lbl" for="tFondoBs" style="margin-top:0;">Efectivo Bs</label><input class="inp" id="tFondoBs" type="number" inputmode="decimal" min="0" step="any" placeholder="Bs (vacío = 0)"></div>' +
       '<div><label class="lbl" for="tFondoUsd" style="margin-top:0;">Efectivo $</label><input class="inp" id="tFondoUsd" type="number" inputmode="decimal" min="0" step="any" placeholder="$ (vacío = 0)"></div></div>' +
       '<div class="m-btns"><button type="button" class="btn" onclick="elegirCajero(null)">← Cancelar</button><button type="button" class="btn green" id="btnAbrirTurno" onclick="abrirTurno(this)">🔓 Abrir turno</button></div>';
@@ -297,7 +297,7 @@ async function fdSinCaja(){
   const desde = pv.cierreMs || msDeTexto(pv.cierre) || Date.now() - 864e5;
   const r = await sinCajaElegir({ desde: desde, modo: "antes",
     ayuda: "Esto se registró en el sistema con el efectivo desde que se cerró el turno anterior" + (pv.cierre ? " (" + esc(fechaCorta(pv.cierre)) + " " + esc(horaDe(pv.cierre)) + ")" : "") +
-           ", sin decir de qué caja. Marca lo que salió (o entró) de <b>esta gaveta</b> antes de abrir." });
+           ", sin decir de qué caja. Marca lo que salió (o entró) de <b>esta caja</b> antes de abrir." });
   if (!r) return;
   const contado = FD.noCoincide;
   await fondoPrevCargar();   // el sistema ya descuenta lo elegido de lo que dejó
@@ -477,7 +477,7 @@ function pintarBloqueo(){
     box.innerHTML = '<div class="bq-ico">👥</div><div class="pk-hola">' + (sinPin ? "Caja bloqueada" : "Va a entrar otro cajero") + "</div>" +
       '<div class="pk-sub bq-txt">' +
       (sinPin ? "El turno abierto es de <b>" + esc(t.cajeroNombre) + "</b>, pero ese usuario ya no tiene permiso de esta caja (o se borró), así que hay que cerrar su turno.<br><br>"
-              : "El turno de <b>" + esc(t.cajeroNombre) + "</b> sigue abierto. Para que entre otro cajero, primero se <b>cierra ese turno</b> contando el efectivo de la gaveta.<br><br>" +
+              : "El turno de <b>" + esc(t.cajeroNombre) + "</b> sigue abierto. Para que entre otro cajero, primero se <b>cierra ese turno</b> contando el efectivo de la caja.<br><br>" +
                 "• Si <b>" + esc(t.cajeroNombre) + "</b> está aquí: que escriba su contraseña y cierre su turno en <b>☰ Menú → Cerrar turno</b>.<br>") +
       (esAdm ? "" : "• Si " + (sinPin ? "no está" : "ya se fue") + ": lo cierra un <b>administrador</b> con su contraseña.") +
       (!esAdm && !admOk ? "<br><br>" + textoSinAdmin() : "") + "</div>" +
@@ -545,7 +545,7 @@ async function efectivoAlDia(forzar, silencioso){
         (m.usuario ? "<br><span style=\"color:var(--text-dim);font-size:12px;\">Lo registró " + esc(m.usuario) + (m.hora ? " · " + esc(m.hora) : "") + "</span>" : "") +
         (m.detalle ? "<br><span style=\"color:var(--text-dim);font-size:12px;\">" + esc(m.detalle) + "</span>" : "") + "</div>").join("");
       aviso({ icono: "💵", titulo: nuevos.length === 1 ? "Se movió efectivo de esta caja" : "Se movió efectivo de esta caja (" + nuevos.length + ")",
-        html: "Desde el sistema se registró con el efectivo de esta gaveta:" + lin + "<br>Al cerrar el turno, el cierre ya lo toma en cuenta en <b>Debe haber</b>." });
+        html: "Desde el sistema se registró con el efectivo de esta caja:" + lin + "<br>Al cerrar el turno, el cierre ya lo toma en cuenta en <b>Debe haber</b>." });
     }
   }
   if (cambio) { try { await kvSet("turno", t); } catch (e) {} }

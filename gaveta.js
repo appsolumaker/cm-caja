@@ -11,7 +11,7 @@
 //     sola vez al sistema (cj_turno op "mov", MovCaja.gs): la cuenta de efectivo y los reportes quedan al día.
 // ══════════════════════════════════════════════════════════════
 const GV_TIPOS = {
-  gasto:    { ico: "💸", txt: "Gasto pagado con la gaveta" },
+  gasto:    { ico: "💸", txt: "Gasto pagado con el efectivo de la caja" },
   faltante: { ico: "💱", txt: "Faltante de caja" },
   sobrante: { ico: "💰", txt: "Sobrante de caja" },
   redondeo: { ico: "🪙", txt: "Redondeo de caja" }
@@ -107,13 +107,13 @@ async function gvSubir(){
 // o = { moneda, monto } cuando viene del cierre (lo que falta)
 async function gvGasto(o){
   o = o || {};
-  if (!S.turno) { aviso({ icono: "🔒", titulo: "No hay turno abierto", html: "Para sacar efectivo de la gaveta tiene que haber un turno abierto." }); return; }
+  if (!S.turno) { aviso({ icono: "🔒", titulo: "No hay turno abierto", html: "Para sacar efectivo de la caja tiene que haber un turno abierto." }); return; }
   if (BQ.on) return;
   GV.mon = o.moneda === "USD" ? "USD" : "BS";
   if (!gvMetodos("BS").length && !gvMetodos("USD").length) { gvSinMetodo(GV.mon); return; }
   const tipos = ((S.datos && S.datos.tiposEgreso) || []).filter(Boolean);
   const listaTipos = tipos.length ? tipos : ["Otros"];
-  const html = '<div class="m-txt" style="margin-bottom:8px;">Para lo que se paga <b>en efectivo con el dinero de la gaveta</b> (agua, hielo, un flete…). Un Pago Móvil o una transferencia se registran en el sistema (Egresos).</div>' +
+  const html = '<div class="m-txt" style="margin-bottom:8px;">Para lo que se paga <b>en efectivo con el dinero de la caja</b> (agua, hielo, un flete…). Un Pago Móvil o una transferencia se registran en el sistema (Egresos).</div>' +
     '<label class="lbl" style="margin-top:0;">¿En qué moneda salió?</label>' +
     '<div class="gv-mon"><button type="button" class="cie-mot" id="gvMonBS" onclick="gvMoneda(\'BS\')">💵 Bs</button><button type="button" class="cie-mot" id="gvMonUSD" onclick="gvMoneda(\'USD\')">💵 Dólares ($)</button></div>' +
     '<div id="gvMetBox"></div>' +
@@ -123,7 +123,7 @@ async function gvGasto(o){
     '<label class="lbl" for="gvDesc">¿Qué se pagó?</label><input class="inp" id="gvDesc" maxlength="120" placeholder="Ej. 2 botellones de agua">' +
     '<div class="m-err" id="gvErr"></div>';
   let datos = null;
-  const r = await modal({ icono: "💸", titulo: "Sacar efectivo de la gaveta", html: html, foco: "gvMonto",
+  const r = await modal({ icono: "💸", titulo: "Sacar efectivo de la caja", html: html, foco: "gvMonto",
     botones: [{ txt: "Cancelar", v: false }, { txt: "Siguiente: lo autoriza un administrador →", v: true, cls: "green" }],
     alAbrir: fondo => {
       gvMoneda(GV.mon);
@@ -143,7 +143,7 @@ async function gvGasto(o){
       return true;
     } });
   if (!r || !datos) return;
-  const adm = await gvPinAdmin("Autorizar el gasto", "Sale de la gaveta <b>" + gvPlata(datos.mon, datos.monto) + "</b><br>" + esc(datos.tipo) + ": " + esc(datos.desc));
+  const adm = await gvPinAdmin("Autorizar el gasto", "Sale de la caja <b>" + gvPlata(datos.mon, datos.monto) + "</b><br>" + esc(datos.tipo) + ": " + esc(datos.desc));
   if (!adm) return;
   const m = await gvRegistrar({ tipo: "gasto", moneda: datos.mon, metodo: datos.metodo, monto: datos.monto, signo: -1, cat: datos.tipo, desc: datos.desc, autorizo: adm.nombre });
   if (!m) return;
@@ -159,7 +159,7 @@ function gvMoneda(mon){
   const hay = $("gvHay");
   if (hay && S.turno) { const R = resumenTurno(S.turno), sis = (CIE.sis && CIE.tid === S.turno.id && CIE.sis.ok) ? CIE.sis : { bs: 0, usd: 0 };
     const v = mon === "BS" ? r2(R.efBsEsperado + (sis.bs || 0)) : r2(R.efUsdEsperado + (sis.usd || 0));
-    hay.textContent = "Según la caja, en la gaveta debería haber " + gvSimbolo(mon) + fmt(v) + "."; }
+    hay.textContent = "Según lo registrado, en la caja debería haber " + gvSimbolo(mon) + fmt(v) + "."; }
 }
 
 // ══ FALTANTE O SOBRANTE DE CAJA (desde el cierre) ══
@@ -170,8 +170,8 @@ async function gvAjuste(tipo, mon, monto){
   if (!l.length) { gvSinMetodo(mon); return; }
   const falta = tipo === "faltante", sim = gvSimbolo(mon);
   const html = '<div class="m-txt">' + (falta
-      ? "En la gaveta hay <b>" + sim + fmt(monto) + " menos</b> de lo que debería. Se registra como <b>gasto</b> («Faltante de caja») y sale de la cuenta del efectivo, para que las cuentas del negocio queden como la gaveta."
-      : "En la gaveta hay <b>" + sim + fmt(monto) + " más</b> de lo que debería. Se registra como <b>ingreso extra</b> («Sobrante de caja») y entra a la cuenta del efectivo, para que las cuentas del negocio queden como la gaveta.") + "</div>" +
+      ? "En la caja hay <b>" + sim + fmt(monto) + " menos</b> de lo que debería. Se registra como <b>gasto</b> («Faltante de caja») y sale de la cuenta del efectivo, para que las cuentas del negocio queden igual a lo que hay en la caja."
+      : "En la caja hay <b>" + sim + fmt(monto) + " más</b> de lo que debería. Se registra como <b>ingreso extra</b> («Sobrante de caja») y entra a la cuenta del efectivo, para que las cuentas del negocio queden igual a lo que hay en la caja.") + "</div>" +
     (l.length > 1 ? '<label class="lbl" for="gvMet">¿De qué efectivo?</label><select class="inp" id="gvMet">' + l.map(m => '<option value="' + esc(m.metodo) + '">' + esc(m.metodo) + "</option>").join("") + "</select>" : "") +
     '<label class="lbl" for="gvNota">¿Qué pasó? (opcional)</label><input class="inp" id="gvNota" maxlength="120" placeholder="' + (falta ? "Ej. le di Bs 50 de más de vuelto a un cliente" : "Ej. un cliente pagó y no se registró") + '">';
   let met = l[0].metodo, nota = "";
@@ -212,7 +212,7 @@ async function sinCajaElegir(o){
       if (!lista) return err("Todavía estoy buscando en el sistema. Espera un momento.");
       if (!lista.ok || !(lista.movs || []).length) return err("No hay nada para elegir.");
       elegidos = [...document.querySelectorAll("#scLista input[type=checkbox]:checked")].map(x => lista.movs[Number(x.dataset.i)]).filter(Boolean);
-      if (!elegidos.length) return err("Marca lo que salió (o entró) de esta gaveta.");
+      if (!elegidos.length) return err("Marca lo que salió (o entró) de esta caja.");
       return true;
     } });
   if (!r || !elegidos.length) return null;

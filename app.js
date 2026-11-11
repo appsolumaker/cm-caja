@@ -31,8 +31,10 @@
 //  dónde) ③ ¿cuánto? (en efectivo: ¿con cuánto te pagó? y el vuelto) [el delivery] ④ revisar y registrar. Mismas cuentas.
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
+//  4.9: en pantalla nunca dice «gaveta» (dice «caja»). El total de la factura, la barra del teléfono y el modal de pago
+//  llevan el monto en Bs grande y el de $ debajo; en Venta en Dólares (TasaBin), el $ grande y los Bs debajo (totalesTxt).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.8 · 10-11-2026";
+const APP_VER = "4.9 · 11-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -159,7 +161,7 @@ async function arrancar(){
   if (verPag !== APP_VER.split(" ")[0] || faltaJs) {
     let ya = ""; try { ya = sessionStorage.getItem("cm_recargo") || ""; } catch (e) {}
     if (!ya) { try { sessionStorage.setItem("cm_recargo", "1"); } catch (e) {} location.reload(); return; }
-    pantalla({ ico: "⏳", tit: "Caja", html: "<p>La caja se está actualizando y el navegador trajo archivos de versiones distintas" + (faltaJs ? " (falta <b>cajero.js</b> o <b>gaveta.js</b>)" : "") + ". Espera un par de minutos y toca <b>Reintentar</b>.</p>" +
+    pantalla({ ico: "⏳", tit: "Caja", html: "<p>La caja se está actualizando y el navegador trajo archivos de versiones distintas" + (faltaJs ? " (falta un archivo de la caja)" : "") + ". Espera un par de minutos y toca <b>Reintentar</b>.</p>" +
       '<p style="font-size:12px;color:var(--text-dim);">Página ' + esc(verPag || "anterior a la 2.7.1") + " · archivos " + esc(APP_VER) + "</p>",
       btns: '<button type="button" class="btn green" onclick="location.reload()">🔄 Reintentar</button>' });
     return;
@@ -921,23 +923,34 @@ async function revisarExistencia(key){
     html: "De <b>" + esc(x.nombre) + "</b> " + (x.disp > 0 ? "quedan <b>" + fmtCant(x.disp) + "</b>" : "no queda <b>ninguno</b>") + (x.dep > 0 ? " en la tienda (y " + fmtCant(x.dep) + " en el depósito)" : "") + " según los datos de este equipo, y en la factura van <b>" + fmtCant(x.pide) + "</b>." +
       "<br><br>Si lo tienes en la mano, puedes venderlo: la línea queda marcada en rojo y al registrarse el sistema avisa que hay que revisar el inventario." });
 }
+// 4.9 · Los dos montos del total: el principal (grande) y el de abajo. Bs arriba, salvo en Venta en Dólares (TasaBin
+// encendido y la casilla marcada): ahí va el $ arriba. Sin tasa BCV (Bs en 0) también va el $ arriba, para no mostrar «Bs 0,00».
+// u: la unidad del $ («BCV», «div» o "") · cls: la clase de la unidad (vacía = <small>)
+function totalesTxt(usd, bs, u, cls){
+  const uH = u ? (cls ? '<span class="' + cls + '">' + u + "</span>" : "<small>" + u + "</small>") : "";
+  const usdH = "$ " + fmt(usd) + uH, bsH = "Bs " + fmt(bs);
+  const enUsd = modoVenta() === "div" || !(tBcv() > 0);
+  return { enUsd: enUsd, prin: enUsd ? usdH : bsH, seg: enUsd ? bsH : usdH };
+}
 function pintarTotales(){
   const x = totales(F.items, F.desc), T = totalConDlv(), bs = T.bs;
   $("subTotal").textContent = fmt(x.sub);
   $("ivaTotal").textContent = fmt(x.ivaR);
   $("rowDesc").classList.toggle("oculto", !(x.desc > 0));
   $("descMonto").textContent = fmt(x.desc);
-  $("totalUSD").textContent = fmt(T.total);
   $("rowDeliv").classList.toggle("oculto", !(T.dlv > 0));
   $("delivLbl").textContent = (F.dlv.tipo === "envio" ? "📦 " : "🛵 ") + dlvTxt();
   $("delivMonto").textContent = fmt(T.dlv);
   $("delivNota").textContent = binOn() ? " BCV" : "";
-  $("totalU").textContent = binOn() ? (unidadU() === "div" ? "div" : "BCV") : "";
-  $("totalBS").textContent = fmt(bs);
+  // 4.9: el total grande es el de Bs y debajo el de $; en Venta en Dólares (TasaBin), al revés (totalesTxt)
+  const tx = totalesTxt(T.total, bs, binOn() ? unidadU() : "", "t-u");
+  $("totalPrin").innerHTML = tx.prin;
+  $("totalSeg").innerHTML = tx.seg;
   // Teléfono: el total abajo y cuántos productos van
   const n = F.items.length;
-  $("mvTotUSD").textContent = "$ " + fmt(T.total) + (binOn() ? " " + unidadU() : "");
-  $("mvTotBS").textContent = "Bs " + fmt(bs);
+  const txm = totalesTxt(T.total, bs, binOn() ? unidadU() : "", "");
+  $("mvTotPrin").innerHTML = txm.prin;
+  $("mvTotSeg").innerHTML = txm.seg;
   $("mvCnt").textContent = n ? String(n) : "";
   $("mvCntTxt").textContent = n ? (n === 1 ? "1 producto" : n + " productos") : "Factura vacía";
   document.querySelectorAll("#listaProd .mv-add").forEach(b => { const q = cuantasEnFactura(b.dataset.cod); b.innerHTML = "+" + (q > 0 ? '<span class="mv-q">' + fmtCant(q) + "</span>" : ""); });
@@ -1548,8 +1561,9 @@ async function abrirPago(){
       '<div class="tp-fila"><span>' + (F.dlv.tipo === "envio" ? "📦 " : "🛵 ") + dlvTxt() + '</span><span>$' + fmt(T.dlv) + " <small>(o Bs " + fmt(r2(T.dlv * tBcv())) + ")</small></span></div></div>";
     $("pgTotalBs").textContent = "";
   } else {
-    $("pgTotal").innerHTML = "$ " + fmt(tot) + "<small>" + unidadU() + "</small>";
-    $("pgTotalBs").textContent = "Bs " + fmt(r2(tot * bsPorU())) + (T.dlv > 0 ? " · incluye " + dlvTxt().toLowerCase() + " $" + fmt(T.dlv) : "");
+    const tx = totalesTxt(tot, r2(tot * bsPorU()), unidadU(), "");   // 4.9: Bs arriba (en Venta en Dólares, $ arriba)
+    $("pgTotal").innerHTML = tx.prin;
+    $("pgTotalBs").innerHTML = tx.seg + (T.dlv > 0 ? " · incluye " + esc(dlvTxt().toLowerCase()) + " $" + fmt(T.dlv) : "");
   }
   $("pgPaso1").classList.toggle("oculto", !aparte); $("pgPaso1M").textContent = "$" + fmt(T.prod);
   $("pgHint").innerHTML = m === "div"
@@ -2656,7 +2670,7 @@ function cieDescuadre(x){ return x.dBs != null && x.dUsd != null && (Math.abs(x.
 function cieQueda(){ return { bs: CIE.qBs === "" ? null : r2(Number(CIE.qBs)), usd: CIE.qUsd === "" ? null : r2(Number(CIE.qUsd)) }; }
 function cieQuedaProblema(){
   const x = cierreCalc(), q = cieQueda();
-  if (q.bs == null || q.usd == null) return "Escribe cuánto efectivo queda en la gaveta en <b>Bs</b> y en <b>$</b> para el próximo turno. Si no queda nada, escribe <b>0</b>.";
+  if (q.bs == null || q.usd == null) return "Escribe cuánto efectivo queda en la caja en <b>Bs</b> y en <b>$</b> para el próximo turno. Si no queda nada, escribe <b>0</b>.";
   if (q.bs < 0 || q.usd < 0) return "Lo que queda no puede ser negativo.";
   if (q.bs > x.bs + 0.004) return "No puede quedar más de lo que contaste: contaste <b>Bs " + fmt(x.bs) + "</b>.";
   if (q.usd > x.usd + 0.004) return "No puede quedar más de lo que contaste: contaste <b>$" + fmt(x.usd) + "</b>.";
@@ -2666,8 +2680,8 @@ function cieQuedaTxt(){
   const el = $("cQRes"); if (!el) return;
   const x = cierreCalc(), q = cieQueda(), p = (q.bs != null && q.usd != null) ? cieQuedaProblema() : "";
   el.innerHTML = p ? '<span class="dif-mal">⚠️ ' + p + "</span>" :
-    (q.bs != null && q.usd != null ? '<div class="cie-queda"><div class="q-si">🟢 <span>Queda en la gaveta para el próximo turno:</span><b>Bs ' + fmt(q.bs) + " · $" + fmt(q.usd) + "</b></div>" +
-      '<div class="q-sale">📤 <span>Sale de la gaveta (se le entrega al dueño o al encargado):</span><b>Bs ' + fmt(r2(x.bs - q.bs)) + " · $" + fmt(r2(x.usd - q.usd)) + "</b></div></div>" : "");   // 1c: más claro (lo contado ya está arriba)
+    (q.bs != null && q.usd != null ? '<div class="cie-queda"><div class="q-si">🟢 <span>Queda en la caja para el próximo turno:</span><b>Bs ' + fmt(q.bs) + " · $" + fmt(q.usd) + "</b></div>" +
+      '<div class="q-sale">📤 <span>Sale de la caja (se le entrega al dueño o al encargado):</span><b>Bs ' + fmt(r2(x.bs - q.bs)) + " · $" + fmt(r2(x.usd - q.usd)) + "</b></div></div>" : "");   // 1c: más claro (lo contado ya está arriba)
 }
 const CIE_PASOS = [["1", "Efectivo Bs"], ["2", "Efectivo $"], ["3", "Revisar"], ["4", "Lo que queda"], ["5", "Cerrar"]];
 function irCierre(){
@@ -2684,7 +2698,7 @@ async function cieSinCaja(){
   const t = S.turno;
   if (!t) return;
   const r = await sinCajaElegir({ desde: t.aperturaMs || msDeTexto(t.apertura), modo: "turno", turnoId: t.id,
-    ayuda: "Esto se registró en el sistema con el efectivo durante este turno, sin decir de qué caja. Marca lo que salió (o entró) de <b>esta gaveta</b>: el cierre lo suma." });
+    ayuda: "Esto se registró en el sistema con el efectivo durante este turno, sin decir de qué caja. Marca lo que salió (o entró) de <b>esta caja</b>: el cierre lo suma." });
   if (r) await cierreTraerSistema();
 }
 async function cierreTraerSistema(){
@@ -2726,10 +2740,10 @@ function cierrePaso(n){
     aviso({ icono: "⚠️", titulo: "La caja no cuadra", html: "No se puede cerrar el turno hasta que cuadre. Abajo de <b>Resultado</b> elige qué pasó y regístralo (lo autoriza un <b>administrador</b> con su contraseña), o vuelve a contar." });
     return;
   }
-  if (n >= 5) { const p = cieQuedaProblema(); if (p) { CIE.paso = 4; pintarCierre(); aviso({ icono: "💵", titulo: "Revisa lo que queda en la gaveta", html: p }); return; } }
+  if (n >= 5) { const p = cieQuedaProblema(); if (p) { CIE.paso = 4; pintarCierre(); aviso({ icono: "💵", titulo: "Revisa lo que queda en la caja", html: p }); return; } }
   CIE.paso = n; pintarCierre();
 }
-function avisoConteo(m){ aviso({ icono: "💵", titulo: "Falta el conteo en " + m, html: "Cuenta el efectivo en <b>" + m + "</b> que hay en la gaveta y escríbelo. Si no hay, escribe <b>0</b>." }); }
+function avisoConteo(m){ aviso({ icono: "💵", titulo: "Falta el conteo en " + m, html: "Cuenta el efectivo en <b>" + m + "</b> que hay en la caja y escríbelo. Si no hay, escribe <b>0</b>." }); }
 function cierreGuardarCampo(id, k){ const el = $(id); if (el) CIE[k] = el.value; }
 function pintarCierre(){
   const box = $("cierreCard"); if (!box || !S.turno) return;
@@ -2746,7 +2760,7 @@ function pintarCierre(){
   let cuerpo = "";
   if (CIE.paso === 1 || CIE.paso === 2) {
     const bs = CIE.paso === 1, id = bs ? "cBs" : "cUsd", k = bs ? "bs" : "usd", m = bs ? "Bs" : "$";
-    cuerpo = '<div class="cie-paso"><div class="cie-preg">' + (bs ? "💵 ¿Cuánto efectivo en <b>Bs</b> hay en la gaveta?" : "💵 ¿Cuánto efectivo en <b>dólares ($)</b> hay en la gaveta?") + "</div>" +
+    cuerpo = '<div class="cie-paso"><div class="cie-preg">' + (bs ? "💵 ¿Cuánto efectivo en <b>Bs</b> hay en la caja?" : "💵 ¿Cuánto efectivo en <b>dólares ($)</b> hay en la caja?") + "</div>" +
       '<div class="cie-ayuda">Cuenta todos los billetes' + (bs ? "" : " en dólares") + ", también los del fondo con que abriste. Si no hay, escribe 0.</div>" +
       '<input class="inp cie-num" id="' + id + '" type="number" inputmode="decimal" min="0" step="any" placeholder="' + m + ' contados" value="' + esc(CIE[k]) + '" oninput="cierreGuardarCampo(\'' + id + "','" + k + '\')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();cierrePaso(' + (CIE.paso + 1) + ');}">' +
       "</div>" +
@@ -2757,8 +2771,8 @@ function pintarCierre(){
       (R.cashea ? '<tr><td>🛍️ Cashea paga después (no entra a caja)</td><td class="r">Bs ' + fmt(R.casheaBs) + "</td></tr>" : "") +
       (R.saf ? '<tr><td>🎁 Saldo a favor (no entra a caja)</td><td class="r">$' + fmt(R.saf) + "</td></tr>" : "");
     const od = R.otroDia || { n: 0, lista: [] };   // Tanda 1: ventas de otro día hechas en este turno
-    const filasOd = od.n ? '<div class="cie-tit">📅 Ventas de otro día (no cuentan en la gaveta)</div><table class="cie-tabla">' + od.lista.map(o => "<tr><td>" + esc(o.nro) + " · del " + fechaCorta(o.fecha) + '</td><td class="r">Bs ' + fmt(o.totalBs) + "</td></tr>").join("") +
-      '</table><div class="cie-ayuda" style="margin-top:4px;">Se registran con su fecha y las tasas de ese día. Su dinero no se pide en la gaveta de hoy.</div>' : "";
+    const filasOd = od.n ? '<div class="cie-tit">📅 Ventas de otro día (no cuentan en la caja)</div><table class="cie-tabla">' + od.lista.map(o => "<tr><td>" + esc(o.nro) + " · del " + fechaCorta(o.fecha) + '</td><td class="r">Bs ' + fmt(o.totalBs) + "</td></tr>").join("") +
+      '</table><div class="cie-ayuda" style="margin-top:4px;">Se registran con su fecha y las tasas de ese día. Su dinero no se cuenta en el cierre de hoy.</div>' : "";
     const sg = cierreSisGrupos(x.sis);
     const sgn = v => (v > 0 ? "+" : v < 0 ? "−" : "") + fmt(Math.abs(v));
     const filasSis = sg.map(g => "<tr><td>" + (g.bs + g.usd >= 0 ? "+ " : "− ") + esc(g.etq) + ' <span class="cie-sis">(del sistema)</span></td><td class="r">' + (g.bs ? sgn(g.bs) : "—") + '</td><td class="r">' + (g.usd ? sgn(g.usd) : "—") + "</td></tr>").join("");
@@ -2769,7 +2783,7 @@ function pintarCierre(){
       (!CIE.cargando && x.sis && !x.sis.ok ? '<div class="banner av" style="margin:0 0 10px;">📡 Sin internet no pude revisar si desde el sistema se movió efectivo de esta caja (abonos, pagos a proveedores, compras, gastos). Si cuadra, puedes cerrar igual: cuando el cierre llegue al sistema, se le suma lo que falte y se te avisa.</div>' : "") +
       (R.sinSubir ? '<div class="banner av" style="margin:0 0 10px;">⏳ ' + R.sinSubir + " venta" + (R.sinSubir > 1 ? "s" : "") + " de este turno todavía no " + (R.sinSubir > 1 ? "están" : "está") + " en el sistema. Puedes cerrar igual: se suben solas cuando haya internet.</div>" : "") +
       (CIE.hora ? '<div class="cie-ayuda" style="margin:0 0 6px;">Con lo que contaste a las ' + esc(CIE.hora) + '. Si entró o salió efectivo después, vuelve a contar en el paso 1.</div>' : "") +
-      '<div class="cie-tit">Efectivo en la gaveta</div>' +
+      '<div class="cie-tit">Efectivo en la caja</div>' +
       '<table class="cie-tabla"><tr><td></td><td class="r">Bs</td><td class="r">$</td></tr>' +
       fila("Fondo inicial", fmt(t.fondoBs), fmt(t.fondoUsd)) +
       fila("+ Efectivo de las ventas (menos vuelto)", fmt(R.efBsVentas), fmt(R.efUsdVentas)) + filasSis + filasGv +
@@ -2784,11 +2798,11 @@ function pintarCierre(){
       '<div class="cie-tit">Por método (cobrado menos vuelto)</div><table class="cie-tabla">' + (filasMet || '<tr><td colspan="2" style="color:var(--text-dim);">Sin ventas en este turno.</td></tr>') + "</table>" + filasOd +
       '<div class="m-btns">' + atras + '<button type="button" class="btn green" onclick="cierrePaso(4)">Siguiente →</button></div>';
   } else if (CIE.paso === 4) {   // 1b: lo que queda en la gaveta para el próximo turno (su fondo)
-    cuerpo = '<div class="cie-paso"><div class="cie-preg">💵 ¿Cuánto efectivo <u>DEJAS en la gaveta</u> para el próximo turno?</div>' +
-      '<div class="cie-ayuda">Contaste <b>Bs ' + fmt(x.bs) + "</b> y <b>$" + fmt(x.usd) + "</b>. Escribe lo que <b>se queda</b> en la gaveta (el fondo con que abre el que sigue: lo va a contar al abrir). Lo demás sale de la gaveta y se le entrega al dueño o al encargado. Si no queda nada, escribe 0.</div>" +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:left;"><div><label class="lbl" for="cQBs" style="margin-top:0;">Se queda en la gaveta (Bs)</label>' +
+    cuerpo = '<div class="cie-paso"><div class="cie-preg">💵 ¿Cuánto efectivo <u>DEJAS en la caja</u> para el próximo turno?</div>' +
+      '<div class="cie-ayuda">Contaste <b>Bs ' + fmt(x.bs) + "</b> y <b>$" + fmt(x.usd) + "</b>. Escribe lo que <b>se queda</b> en la caja (el fondo con que abre el que sigue: lo va a contar al abrir). Lo demás sale de la caja y se le entrega al dueño o al encargado. Si no queda nada, escribe 0.</div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:left;"><div><label class="lbl" for="cQBs" style="margin-top:0;">Se queda en la caja (Bs)</label>' +
       '<input class="inp cie-num" id="cQBs" type="number" inputmode="decimal" min="0" step="any" placeholder="Bs que se quedan" value="' + esc(CIE.qBs) + '" oninput="cierreGuardarCampo(\'cQBs\',\'qBs\');cieQuedaTxt()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();$(\'cQUsd\').focus();}"></div>' +
-      '<div><label class="lbl" for="cQUsd" style="margin-top:0;">Se queda en la gaveta ($)</label>' +
+      '<div><label class="lbl" for="cQUsd" style="margin-top:0;">Se queda en la caja ($)</label>' +
       '<input class="inp cie-num" id="cQUsd" type="number" inputmode="decimal" min="0" step="any" placeholder="$ que se quedan" value="' + esc(CIE.qUsd) + '" oninput="cierreGuardarCampo(\'cQUsd\',\'qUsd\');cieQuedaTxt()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();cierrePaso(5);}"></div></div>' +
       '<div class="cie-res" id="cQRes" style="margin-top:10px;"></div></div>' +
       '<div class="m-btns">' + atras + '<button type="button" class="btn green" onclick="cierrePaso(5)">Siguiente →</button></div>';
@@ -2798,8 +2812,8 @@ function pintarCierre(){
       (cent.length ? '<div class="cie-ayuda">🪙 Diferencia de centavos (' + cent.map(z => (z[1] > 0 ? "sobra " : "falta ") + gvPlata(z[0], z[1])).join(" · ") + "): al cerrar se registra sola como <b>Redondeo de caja</b>.</div>" : "") +
       '<div class="cie-ayuda">Se cierra el turno de <b>' + esc(t.cajeroNombre) + "</b> con " + R.ventas + " venta" + (R.ventas === 1 ? "" : "s") + " por Bs " + fmt(R.totalBs) + ".</div>" +
       '<table class="cie-tabla" style="margin-top:8px;">' +
-      '<tr><td>🟢 Queda en la gaveta para el próximo turno</td><td class="r"><b>Bs ' + fmt(q.bs) + " · $" + fmt(q.usd) + "</b></td></tr>" +
-      '<tr><td>📤 Sale de la gaveta (al dueño o al encargado)</td><td class="r"><b>Bs ' + fmt(r2(x.bs - q.bs)) + " · $" + fmt(r2(x.usd - q.usd)) + "</b></td></tr></table>" +
+      '<tr><td>🟢 Queda en la caja para el próximo turno</td><td class="r"><b>Bs ' + fmt(q.bs) + " · $" + fmt(q.usd) + "</b></td></tr>" +
+      '<tr><td>📤 Sale de la caja (al dueño o al encargado)</td><td class="r"><b>Bs ' + fmt(r2(x.bs - q.bs)) + " · $" + fmt(r2(x.usd - q.usd)) + "</b></td></tr></table>" +
       '<label class="lbl" for="cObs">Observación (opcional)</label><input class="inp" id="cObs" maxlength="200" placeholder="Ej. el dueño se llevó lo entregado al banco" value="' + esc(CIE.obs) + '" oninput="cierreGuardarCampo(\'cObs\',\'obs\')"></div>' +
       '<div class="m-btns">' + atras + '<button type="button" class="btn naranja" id="btnCerrarTurno" onclick="cerrarTurno(this)">🔒 Cerrar turno</button></div>';
   }
@@ -2820,18 +2834,18 @@ function cieBloqueDescuadre(x){
     const tol = mon === "BS" ? CIE_TOL.bs : CIE_TOL.usd;
     if (Math.abs(d) <= tol + 0.0001) return "";
     const p = gvPlata(mon, d), m = Math.abs(d);
-    if (d < 0) return '<div class="cie-mon"><div class="cie-preg">🔻 Faltan <b>' + p + "</b> en la gaveta. ¿Qué pasó?</div>" +
+    if (d < 0) return '<div class="cie-mon"><div class="cie-preg">🔻 Faltan <b>' + p + "</b> en la caja. ¿Qué pasó?</div>" +
       '<div class="cie-mots">' +
-      '<button type="button" class="cie-mot" onclick="gvGasto({ moneda: \'' + mon + "', monto: " + m + ' })">💸 Se pagó un gasto con el efectivo de la gaveta<small>Agua, hielo, un flete… Se registra en Egresos con su tipo.</small></button>' +
+      '<button type="button" class="cie-mot" onclick="gvGasto({ moneda: \'' + mon + "', monto: " + m + ' })">💸 Se pagó un gasto con el efectivo de la caja<small>Agua, hielo, un flete… Se registra en Egresos con su tipo.</small></button>' +
       '<button type="button" class="cie-mot" onclick="gvAjuste(\'faltante\', \'' + mon + "', " + m + ')">💱 Registrar faltante de caja de ' + p + "<small>Un vuelto de más, un billete que no aparece… Se registra como gasto «Faltante de caja».</small></button></div></div>";
-    return '<div class="cie-mon"><div class="cie-preg">🔺 Sobran <b>' + p + "</b> en la gaveta. ¿Qué pasó?</div>" +
+    return '<div class="cie-mon"><div class="cie-preg">🔺 Sobran <b>' + p + "</b> en la caja. ¿Qué pasó?</div>" +
       '<div class="cie-mots">' +
       '<button type="button" class="cie-mot" onclick="irA(\'vender\')">🧾 Falta registrar una venta<small>Cóbrala como siempre y vuelve a 🔒 Cerrar turno: lo contado se guarda y la venta entra en este turno.</small></button>' +
       '<button type="button" class="cie-mot" onclick="gvAjuste(\'sobrante\', \'' + mon + "', " + m + ')">💰 Registrar sobrante de caja de ' + p + "<small>Se registra como ingreso extra «Sobrante de caja».</small></button></div></div>";
   };
   const sinSis = x.sis && !x.sis.ok && !CIE.cargando;
   return '<div class="cie-desc"><div class="cie-preg">⚠️ La caja no cuadra. No se puede cerrar el turno hasta que cuadre.</div>' +
-    '<div class="cie-ayuda">Registra lo que pasó (lo autoriza un <b>administrador</b> con su contraseña) para que las cuentas del negocio queden como la gaveta, o vuelve a contar.</div>' +
+    '<div class="cie-ayuda">Registra lo que pasó (lo autoriza un <b>administrador</b> con su contraseña) para que las cuentas del negocio queden igual a lo que hay en la caja, o vuelve a contar.</div>' +
     (sinSis ? '<div class="cie-arreglo">📡 Sin internet no pude revisar si desde el sistema se movió efectivo de esta caja. Si alguien registró un pago o un gasto desde el sistema eligiendo la <b>Caja ' + esc(caja) + "</b>, espera el internet y toca <b>🔄 Revisar otra vez</b> antes de registrar un faltante.</div>" : "") +
     bloque("BS", x.dBs) + bloque("USD", x.dUsd) +
     '<div class="cie-arreglo">¿Se pagó o se cobró algo desde el <b>sistema</b> (Egresos, Proveedores, Compras, Clientes, Finanzas) con el efectivo de esta caja?' +
@@ -2891,16 +2905,16 @@ function htmlCierre(c){
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Por método (menos vuelto)</div><table>' +
     (c.metodos || []).map(m => fila(esc(String(m.desc || m.metodo).replace(/^[^\wÁÉÍÓÚÑáéíóúñ]+\s*/, "")), (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto))).join("") + (r2(c.credito - (c.cashea || 0)) > 0.004 ? fila("A crédito:", "$" + fmt(r2(c.credito - (c.cashea || 0)))) : "") +
     (c.cashea ? fila("Cashea:", "Bs " + fmt(c.casheaBs != null ? c.casheaBs : c.cashea)) : "") + (c.saf ? fila("Saldo a favor:", "$" + fmt(c.saf)) : "") + "</table>" +
-    (c.otroDia && c.otroDia.n ? '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Ventas de otro día (no van en la gaveta)</div><table>' +
+    (c.otroDia && c.otroDia.n ? '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Ventas de otro día (no van en la caja)</div><table>' +
       c.otroDia.lista.map(o => fila(esc(o.nro) + " del " + fechaCorta(o.fecha), "Bs " + fmt(o.totalBs))).join("") + "</table>" : "") +
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Efectivo Bs</div><table>' +
     fila("Fondo:", fmt(c.fondoBs)) + fila("Ventas:", fmt(c.efBsVentas)) + sisBs.map(g => fila(esc(g.etq) + ":", sgn(g.bs))).join("") + gvBs.map(m => fila(esc(gvTxt(m)) + ":", sgn(m.signo * m.monto))).join("") + sinSis +
     fila("Debe haber:", fmt(c.efBsEsperado)) + fila("Contado:", fmt(c.efBsContado)) + fila("Resultado:", dif(c.efBsDif)) +
-    (c.queda ? fila("Queda en gaveta:", fmt(c.queda.bs)) + fila("Sale (entregado):", fmt(c.entregado.bs)) : "") + "</table>" +
+    (c.queda ? fila("Queda en caja:", fmt(c.queda.bs)) + fila("Sale (entregado):", fmt(c.entregado.bs)) : "") + "</table>" +
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Efectivo $</div><table>' +
     fila("Fondo:", fmt(c.fondoUsd)) + fila("Ventas:", fmt(c.efUsdVentas)) + sisUsd.map(g => fila(esc(g.etq) + ":", sgn(g.usd))).join("") + gvUsd.map(m => fila(esc(gvTxt(m)) + ":", sgn(m.signo * m.monto))).join("") + sinSis +
     fila("Debe haber:", fmt(c.efUsdEsperado)) + fila("Contado:", fmt(c.efUsdContado)) + fila("Resultado:", dif(c.efUsdDif)) +
-    (c.queda ? fila("Queda en gaveta:", fmt(c.queda.usd)) + fila("Sale (entregado):", fmt(c.entregado.usd)) : "") + "</table>" +
+    (c.queda ? fila("Queda en caja:", fmt(c.queda.usd)) + fila("Sale (entregado):", fmt(c.entregado.usd)) : "") + "</table>" +
     (c.sinSubir ? '<hr class="sep"><div>Ventas sin subir al cerrar: ' + c.sinSubir + "</div>" : "") +
     (c.obs ? '<hr class="sep"><div>Obs: ' + esc(c.obs) + "</div>" : "") +
     '<div style="margin-top:28px;border-top:1px solid #000;text-align:center;padding-top:3px;">Firma del cajero</div>' +

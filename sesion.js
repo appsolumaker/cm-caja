@@ -196,8 +196,8 @@ function acPaso1(){
           '<div class="pw-preg ac-preg"><span class="ac-paso">Paso 1 de 2</span>¿Qué caja es este equipo?</div>',
     form: '<div class="pw-ops ac-ops" id="acTarjetas">' + AC.cajas.map(tarjeta).join("") + "</div>" +
           '<div class="act-nota ac-nota">' + (AC.uso && AC.cajas.some(n => acUsoDe(n).length)
-            ? "¿Este equipo <b>reemplaza a otro</b> (se dañó o ya no se usa)? Toca la caja del otro.<br>¿Es un equipo <b>más</b>, que cobra al mismo tiempo? Toca una caja <b>libre</b>: así cada uno cuadra su gaveta."
-            : "¿Cobran en <b>un solo equipo</b>? Toca <b>Caja " + AC.cajas[0] + "</b>.<br>¿Cobran en <b>varios a la vez</b> (dos computadoras, un teléfono…)? Cada equipo es una caja distinta: así cada uno cuadra su gaveta.") + "</div>",
+            ? "¿Este equipo <b>reemplaza a otro</b> (se dañó o ya no se usa)? Toca la caja del otro.<br>¿Es un equipo <b>más</b>, que cobra al mismo tiempo? Toca una caja <b>libre</b>: así cada uno cuadra su propia caja."
+            : "¿Cobran en <b>un solo equipo</b>? Toca <b>Caja " + AC.cajas[0] + "</b>.<br>¿Cobran en <b>varios a la vez</b> (dos computadoras, un teléfono…)? Cada equipo es una caja distinta: así cada uno cuadra su propia caja.") + "</div>",
     btns: '<div style="margin-top:4px;"><button type="button" class="btn sm" onclick="pedirEntrarOtraVez()">Entrar con otro usuario</button></div>' });
 }
 async function acElegir(n){

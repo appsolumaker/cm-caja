@@ -186,7 +186,8 @@ body.light .btn-primary{color:#fff;}
 .t-row.desc-color,.t-row.desc-color span{color:#e74c3c;}
 .t-total{font-size:28px;font-weight:900;color:var(--green);margin-top:4px;line-height:1.1;}
 .t-u{font-size:12px;font-weight:800;opacity:0.7;margin-left:4px;}
-.t-bs{font-size:18px;color:var(--text-dim);font-weight:700;margin-top:2px;}
+.t-bs{font-size:20px;color:var(--text);font-weight:800;margin-top:2px;}   /* 4.9: el segundo monto (debajo del total) se lee bien */
+.t-bs .t-u{opacity:0.6;}
 
 /* ── Modales (como los de Ventas: título arriba, botones abajo a la derecha) ── */
 .mfondo{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:12px;}
@@ -244,9 +245,11 @@ body.light .btn-primary{color:#fff;}
 /* ── Pago (como Ventas) ── */
 .total-pago{text-align:center;padding:10px 14px;background:var(--bg3);border:1px solid var(--border-g);border-radius:8px;margin-bottom:12px;}
 .total-pago .tp-lbl{font-size:10px;font-weight:800;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.6px;}
-.total-pago .usd{font-size:34px;font-weight:900;color:var(--text);line-height:1.15;}
-.total-pago .usd small{font-size:14px;font-weight:800;color:var(--text-dim);margin-left:4px;}
-.total-pago .bs{font-size:14px;color:var(--text-dim);}
+/* 4.9: el total principal (Bs; en Venta en Dólares, $) y debajo el otro, más pequeño pero que se lea bien */
+.total-pago .tp-prin{font-size:34px;font-weight:900;color:var(--text);line-height:1.15;}
+.total-pago .tp-prin small,.total-pago .tp-seg small{font-size:14px;font-weight:800;color:var(--text-dim);margin-left:4px;}
+.total-pago .tp-seg{font-size:20px;font-weight:800;color:var(--text);opacity:0.85;margin-top:1px;}
+.total-pago .tp-seg small{font-size:12px;}
 .pgu-hint{font-size:12px;color:var(--text-dim);margin:2px 0 10px;line-height:1.45;}
 .pgu-hint b{color:var(--text);}
 .pgu-mon-tit{font-size:11px;font-weight:800;letter-spacing:0.6px;text-transform:uppercase;margin:10px 0 6px;display:flex;align-items:center;gap:6px;}
@@ -499,6 +502,9 @@ body:not(.v-vender) .mv-tabs,body:not(.v-vender) .mv-bar{display:none!important;
   .mv-tot{flex:1;min-width:0;}
   .mv-tot b{display:block;font-size:22px;font-weight:900;color:var(--green);line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .mv-tot>span{display:block;font-size:12px;font-weight:700;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mv-tot .mv-seg{font-size:16px;font-weight:800;color:var(--text);}   /* 4.9: el segundo monto se lee bien */
+  .mv-tot b small{font-size:13px;font-weight:800;opacity:0.75;margin-left:4px;}
+  .mv-tot .mv-seg small{font-size:11px;opacity:0.7;margin-left:3px;}
   .mv-ir{flex-shrink:0;padding:15px 20px;border:none;border-radius:11px;background:var(--green);color:#07090d;font-size:15px;font-weight:900;cursor:pointer;}
   body.light .mv-ir{color:#fff;}
   body.mv-fac .mv-ir{visibility:hidden;}
