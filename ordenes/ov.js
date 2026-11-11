@@ -2,13 +2,14 @@
 // ══════════════════════════════════════════════════════════════
 //  ÓRDENES · ControlMaster — la página de los vendedores (Etapa 3)
 //  <cliente>.micontrolmaster.com/ordenes · habla con el sistema por /ordenes/api (acciones "cj_ov_…").
+//  · 2.2: la barra del total lleva los Bs grandes y el $ debajo; en una orden en dólares (TasaBin), al revés.
 //  · 2.0 (Acceso único): el vendedor entra con su USUARIO Y CONTRASEÑA del sistema (el mismo de siempre).
 //    La sesión dura 7 días en ese teléfono. El vendedor de cada usuario se elige en Configuración → Usuarios.
 //  · La orden se arma aunque no haya señal: queda "⏳ Por enviar" y se manda sola cuando vuelva.
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "2.1 · 10-11-2026";
+const OV_VER = "2.2 · 11-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -453,8 +454,12 @@ function pedirClave(){
 function cambiarMoneda(m){ if (O.moneda === m) return; O.moneda = m; O.items.forEach(l => { if (l.manual) { /* el precio manual se queda como lo escribió */ } }); pintarNueva(); guardarBorrador(); toast(m === "divisas" ? "💵 Orden en dólares" : "🧾 Orden en Bs (BCV)"); }
 function pintarTotal(){
   const t = totales(), n = O.items.length;
-  $("btTot").textContent = "$" + fmt(t.tot) + uTxt();
-  $("btSub").textContent = n ? "Bs " + fmt(t.bs) + " · " + n + (n === 1 ? " producto" : " productos") + (t.dl > 0 ? " · con " + (O.dlv.tipo === "envio" ? "envío" : "delivery") : "") : "Orden vacía";
+  // 2.2: el total grande es el de Bs y debajo el de $ (como la caja). Orden en dólares (TasaBin): al revés.
+  // Sin tasa BCV (Bs en 0) también va el $ arriba, para no mostrar «Bs 0,00».
+  const enUsd = (binOn() && O.moneda === "divisas") || !(bcvRate() > 0);
+  const u = uTxt().trim(), usdH = "$" + fmt(t.tot) + (u ? "<small>" + u + "</small>" : ""), bsH = "Bs " + fmt(t.bs);
+  $("btTot").innerHTML = enUsd ? usdH : bsH;
+  $("btSub").innerHTML = n ? '<span class="bt-seg">' + (enUsd ? bsH : usdH) + "</span> · " + n + (n === 1 ? " producto" : " productos") + (t.dl > 0 ? " · con " + (O.dlv.tipo === "envio" ? "envío" : "delivery") : "") : "Orden vacía";
 }
 let _borT = null;
 function guardarBorrador(){ clearTimeout(_borT); _borT = setTimeout(() => { kvSet("borrador", O).catch(() => {}); }, 300); }

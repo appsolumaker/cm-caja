@@ -164,6 +164,10 @@ select.inp{padding:8px 10px;}
 .barra-total .bt-tot{flex:1;min-width:0;}
 .barra-total .bt-tot b{display:block;font-size:22px;font-weight:900;color:var(--green);line-height:1.1;white-space:nowrap;}
 .barra-total .bt-tot span{font-size:12px;font-weight:700;color:var(--text-dim);}
+/* 2.2: el segundo monto (debajo del total) se lee bien */
+.barra-total .bt-tot .bt-seg{font-size:16px;font-weight:800;color:var(--text);}
+.barra-total .bt-tot b small{font-size:13px;font-weight:800;opacity:0.75;margin-left:4px;}
+.barra-total .bt-tot .bt-seg small{font-size:11px;opacity:0.7;margin-left:3px;}
 .barra-total .btn{padding:14px 18px;font-size:15px;border-radius:11px;}
 .ord-card{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--bg3);}
 .ord-fila{display:flex;justify-content:space-between;align-items:center;gap:8px;}
