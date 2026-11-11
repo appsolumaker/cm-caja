@@ -2,7 +2,7 @@
 // Guarda la página en el equipo para que abra sin internet.
 // Con internet trae la versión nueva (y la guarda); sin internet usa la guardada.
 // Las llamadas al sistema (/caja/api, POST) no pasan por aquí.
-const CACHE = "cm-caja-web-v24";
+const CACHE = "cm-caja-web-v25";
 const BASE = new URL("./", self.location).pathname;   // /caja/
 const ARCHIVOS = ["./", "./index.html", "./estilos.css", "./app.js", "./api.js", "./sesion.js", "./numeros.js", "./ordenes.js", "./cajero.js", "./gaveta.js", "./tanda2.js", "./zxing.min.js"];   // 3.9: zxing.min.js = el lector de códigos para iPhone (también sin internet)
 

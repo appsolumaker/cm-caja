@@ -32,7 +32,7 @@
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.7 · 10-11-2026";
+const APP_VER = "4.8 · 10-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -793,9 +793,12 @@ function pintarSelectores(){
   // Vendedor
   const sel = $("selVend"), badge = $("badgeVend");
   $("vendBar").classList.add("oculto"); badge.classList.add("oculto");
-  if (d.trabajoVendedores) {   // 4.3: con la caja nueva el vendedor SIEMPRE se elige en la factura (ya no hay vendedor fijo por caja)
-    if (F.vend === "") F.vend = "directa";
-    sel.innerHTML = '<option value="directa">🏪 Venta directa (sin comisión)</option>' + (d.vendedores || []).map(v => '<option value="' + esc(v.id) + '">🧑‍💼 ' + esc(v.nombre) + "</option>").join("");
+  if (d.trabajoVendedores) {   // 4.3: con la caja nueva el vendedor se elige en cada factura
+    // 4.8: cada factura nueva arranca con el vendedor predeterminado de esta caja (Configuración → Cajas y vendedores;
+    // vendedorCajaId = 0 si no tiene o está inactivo → Venta directa). El cajero lo puede cambiar en cada venta.
+    const vCaja = d.vendedorCajaId && (d.vendedores || []).some(v => String(v.id) === String(d.vendedorCajaId)) ? String(d.vendedorCajaId) : "";
+    if (F.vend === "") F.vend = vCaja || "directa";
+    sel.innerHTML = '<option value="directa">🏪 Venta directa (sin comisión)</option>' + (d.vendedores || []).map(v => '<option value="' + esc(v.id) + '">🧑‍💼 ' + esc(v.nombre) + (String(v.id) === vCaja ? " · de esta caja" : "") + "</option>").join("");
     if (F.orden && F.orden.origen === "VENDEDOR" && F.orden.vendedorId && !(d.vendedores || []).some(v => String(v.id) === String(F.orden.vendedorId)))   // vendedor de la orden que ya no está activo
       sel.innerHTML += '<option value="' + esc(F.orden.vendedorId) + '">🧑‍💼 ' + esc(F.orden.vendedor || "Vendedor de la orden") + "</option>";
     sel.value = F.vend; if (sel.value !== F.vend) { F.vend = "directa"; sel.value = "directa"; }
