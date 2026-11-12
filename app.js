@@ -33,6 +33,9 @@
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
 //  4.9: en pantalla nunca dice «gaveta» (dice «caja»). El total de la factura, la barra del teléfono y el modal de pago
 //  llevan el monto en Bs grande y el de $ debajo; en Venta en Dólares (TasaBin), el $ grande y los Bs debajo (totalesTxt).
+//  4.9 · Tasas (tasas.js): la BCV ya no se escribe a mano (🔄 la trae del BCV y queda en el sistema); fin de semana /
+//  feriado: se elige con cuál se cobra hoy; brecha / Divisas se guardan en el sistema; las tasas llegan a todas las cajas
+//  cada 2 minutos. ✏️ Editar servicio (tanda2.js).
 // ══════════════════════════════════════════════════════════════
 const APP_VER = "4.9 · 11-11-2026";
 const DB_NOMBRE = "cm_caja_web";
@@ -274,7 +277,7 @@ async function descargarDatos(){
   }
   d.descargadoEn = Date.now();
   _exiFirma = "";   // las existencias vienen en los datos: la próxima consulta trae todo de nuevo
-  const antes = F.items.length ? { total: totales(F.items, F.desc).total, u: unidadU() } : null;
+  const antes = F.items.length ? { total: totales(F.items, F.desc).total, u: unidadU(), bs: r2(totales(F.items, F.desc).total * bsPorU()) } : null;   // 4.9: también los Bs
   S.datos = d; S.permisoMal = ""; S.datosMal = ""; S.reemplazado = false;
   await kvSet("datos", d);
   if ((S.clientesNuevos || []).length) {   // los clientes creados sin internet que el sistema ya tiene salen de la lista de este equipo
@@ -291,10 +294,12 @@ async function descargarDatos(){
   if (antes) {   // la factura en pantalla toma las tasas nuevas (los precios del sistema no cambian)
     repreciar();
     const ahora = totales(F.items, F.desc).total;
-    if (antes.u === unidadU() && Math.abs(ahora - antes.total) >= 0.005)
-      aviso({ icono: "💱", titulo: "Precios recalculados", html: "Llegaron tasas nuevas del sistema: " + textoTasas() + ".<br><br>Total de la venta en pantalla: <b>" + txtU(antes.total) + "</b> → <b>" + txtU(ahora) + "</b> (Bs " + fmt(r2(ahora * bsPorU())) + ")." +
+    const bsAhora = r2(ahora * bsPorU());
+    if (antes.u === unidadU() && (Math.abs(ahora - antes.total) >= 0.005 || Math.abs(bsAhora - antes.bs) >= 0.005))   // 4.9: también si solo cambian los Bs
+      aviso({ icono: "💱", titulo: "Precios recalculados", html: "Llegaron tasas nuevas del sistema: " + textoTasas() + ".<br><br>Total de la venta en pantalla: <b>Bs " + fmt(antes.bs) + "</b> → <b>Bs " + fmt(bsAhora) + "</b>" + (Math.abs(ahora - antes.total) >= 0.005 ? " (" + txtU(antes.total) + " → " + txtU(ahora) + ")" : "") + "." +
         (F.items.some(i => i.manual) ? "<br><br>Las líneas con precio manual se pasaron con las tasas nuevas." : "") + "<br><br>Si ya le habías dicho el total al cliente, avísale del cambio." });
   }
+  if (typeof revisarTasaEspera === "function") setTimeout(revisarTasaEspera, 800);   // 4.9: fin de semana / feriado: ¿con cuál tasa se cobra hoy? (tasas.js)
 }
 // Las tasas del equipo en palabras
 function textoTasas(){
@@ -395,15 +400,7 @@ async function toggleTasaVisible(){
   const c = $("chkTasaOculta"); if (c) c.checked = !!S.pref.tasaOculta;
   try { await kvSet("pref", S.pref); } catch (e) {}
 }
-// Tocar la tasa: las tasas del equipo y, con la clave sin internet, cambiarlas
-async function verTasas(){
-  const t = S.tasas || {};
-  const r = await modal({ icono: "💱", titulo: "Tasas para cobrar",
-    html: '<div class="m-txt">' + textoTasas() + "<br><span style=\"color:var(--text-dim);font-size:13px;\">Del " + fechaCorta(t.fecha) + (t.origen === "manual" ? " · puesta a mano" : " · del sistema") +
-      (tasaVieja() ? ' · <b style="color:var(--amber);">no es de hoy</b>' : "") + "</span><br><br>Con internet el equipo toma las tasas del sistema solo. Si hoy son otras y no hay internet, cámbialas con la clave sin internet.</div>",
-    botones: [{ txt: "Cerrar", v: false }, { txt: "🔒 Cambiar tasa", v: true, cls: "green" }] });
-  if (r) cambiarTasa(null);
-}
+// 4.9: verTasas, cambiarTasa y lo demás de las tasas están en tasas.js
 // ── Menú ☰ (como en Ventas) ──
 function abrirMenuVta(){
   const b = $("btnMenuVta"), m = $("menuVta");
@@ -491,10 +488,12 @@ function pintarBanners(){
   if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + (S.reemplazado ? " Las ventas guardadas se suben solas; cierra el turno." : ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a>') + "</div>";
   if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + ' <a href="#" onclick="actualizarDatos(null,false);return false;" style="color:inherit;font-weight:800;">Reintentar</a></div>';
   if (S.sesionMal) h += '<div class="banner av">🔐 ' + esc(S.sesionMal) + ' <a href="#" onclick="pedirEntrarOtraVez();return false;" style="color:inherit;font-weight:800;">Entrar</a></div>';
-  if (S.datos && tasaVieja() && S.tasaOkHoy !== hoyTxt()) h += '<div class="banner av">💱 ' + (S.tasas.origen === "sistema" && S.online !== false
-      ? "El sistema todavía tiene la tasa BCV del <b>" + fechaCorta(S.tasas.fecha) + "</b>: no se ha actualizado hoy. Revísala antes de cobrar y avísale al administrador: "
-      : "Las tasas de este equipo son del <b>" + fechaCorta(S.tasas.fecha) + "</b>. Con internet se actualizan solas; si no hay, revísalas antes de cobrar: ") +
-    '<a href="#" onclick="verTasas();return false;" style="color:inherit;font-weight:800;">ver tasas</a>.</div>';
+  if (S.datos && typeof hayQuePreguntarTasa === "function" && hayQuePreguntarTasa()) h += '<div class="banner av">💱 Hoy el BCV no tiene tasa propia: elige con cuál se cobra hoy. ' +   // 4.9 (tasas.js)
+    '<a href="#" onclick="elegirTasa(\'banner\');return false;" style="color:inherit;font-weight:800;">Elegir la tasa</a>.</div>';
+  else if (S.datos && tasaVieja() && S.tasaOkHoy !== hoyTxt()) h += '<div class="banner av">💱 ' + (S.online !== false
+      ? "El sistema todavía tiene la tasa BCV del <b>" + fechaCorta(S.tasas.fecha) + "</b>: no se ha actualizado hoy. "
+      : "Las tasas de este equipo son del <b>" + fechaCorta(S.tasas.fecha) + "</b>. Con internet se actualizan solas. ") +
+    '<a href="#" onclick="actualizarTasaBCV(null);return false;" style="color:inherit;font-weight:800;">🔄 Actualizar tasa BCV</a>.</div>';
   if (S.turno && S.num && !S.num.lista.length && S.online === false) h += '<div class="banner av">🔢 Este equipo no tiene números de factura apartados: los tickets salen <b>provisionales</b> y el sistema les da su número al subirlos.</div>';
   if (_verNueva) h += '<div class="banner av">🔄 Hay una versión nueva de la caja. Se actualiza sola cuando termines esta venta.</div>';
   const c = cuentas();
@@ -570,8 +569,8 @@ async function existenciasAlDia(){
   _exiOcupado = true;
   const t0 = Date.now();
   try {
-    const r = await api("cj_existencias", { firma: _exiFirma }, 30000);
-    if (r && r.ok) { _exiFirma = r.firma || ""; if (r.cambio) await aplicarExistencias(r, t0); }
+    const r = await api("cj_existencias", { firma: _exiFirma, conTasas: true }, 30000);
+    if (r && r.ok) { _exiFirma = r.firma || ""; if (r.cambio) await aplicarExistencias(r, t0); if (r.tasas && r.tasas.ok) await tomarTasas(r.tasas); }   // 4.9: las tasas al día entre cajas (tasas.js)
   } catch (e) {}
   _exiOcupado = false;
 }
@@ -662,7 +661,7 @@ function buscar(){
   box.innerHTML = nsBtn + lst.map((p, k) => {
     const pr = precioDe(p, F.tipoPrecio), conIva = r2(r2(baseBCV(pr.base)) * (1 + pr.iva / 100)), div = on ? r2(pr.base * (1 + pr.iva / 100)) : 0;
     let info = "";
-    if (p.tipo === "servicio") info = '<div style="margin-top:4px;"><span class="serv-tag">Servicio</span></div>';
+    if (p.tipo === "servicio") info = '<div style="margin-top:4px;"><span class="serv-tag">Servicio</span> <button type="button" class="serv-ed" data-cod="' + esc(p.codigo) + '" onclick="event.stopPropagation();editarServicio(this.dataset.cod)" ondblclick="event.stopPropagation()" title="Editar el servicio">✏️ Editar</button></div>';   // 4.9 (tanda2.js)
     else {
       const ex = disponible(p);   // como Ventas: lo que hay (sin restar la factura en pantalla)
       info = (p.categoria ? '<div class="prod-barcode">🏷️ ' + esc(p.categoria) + "</div>" : "") + (p.marca ? '<div class="prod-barcode">Marca: ' + esc(p.marca) + "</div>" : "") +
@@ -1538,14 +1537,15 @@ async function abrirPago(){
   const malas = F.items.filter(i => !(Number(i.cantidad) > 0));
   if (malas.length) { aviso({ icono: "🔢", titulo: "Falta una cantidad", html: "La línea <b>" + esc(malas[0].nombre) + "</b> no tiene cantidad. Escríbela o quita la línea con ✕." }); return; }
   const t = tasasVenta();   // Tanda 1: con venta de otro día, las de ese día
-  if (!(t.bcv > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa", html: "Este equipo no tiene tasa BCV. Actualiza los datos con internet, o ponla en ⚙️ → Cambiar tasa." }); return; }
-  if (binOn() && !(Number(t.div) > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa Divisas", html: "Este negocio trabaja con TasaBin y el equipo no tiene la tasa Divisas. Actualiza los datos con internet, o ponla en ⚙️ → Cambiar tasa." }); return; }
+  if (!(t.bcv > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa", html: "Este equipo no tiene tasa BCV. Con internet, toca 💱 arriba → <b>🔄 Actualizar tasa BCV</b>." }); return; }
+  if (binOn() && !(Number(t.div) > 0)) { aviso({ icono: "💱", titulo: "Falta la tasa Divisas", html: "Este negocio trabaja con TasaBin y el equipo no tiene la tasa Divisas. Con internet, toca 💱 arriba → <b>% Cambiar brecha</b>." }); return; }
+  if (!F.fechaAnt && hayQuePreguntarTasa()) { const el = await elegirTasa("cobrar"); if (!el || hayQuePreguntarTasa()) return; return abrirPago(); }   // 4.9: fin de semana / feriado (tasas.js): con la tasa elegida, se vuelve a empezar
   if (!F.fechaAnt && t.fecha !== hoyTxt() && S.tasaOkHoy !== hoyTxt()) {
-    const r = await modal({ icono: "💱", titulo: "¿La tasa sigue igual?",
-      html: '<div class="m-txt">' + (t.origen === "sistema" && S.online !== false ? "<b>El sistema todavía no ha actualizado la tasa BCV de hoy</b>: tiene la del <b>" + fechaCorta(t.fecha) + "</b>" : "Las tasas de este equipo son del <b>" + fechaCorta(t.fecha) + "</b>") + ": " + textoTasas() +
-        ".<br><br>Si hoy son otras, cámbialas antes de cobrar (pide la clave)" + (t.origen === "sistema" && S.online !== false ? " y avísale al administrador" : "") + ".</div>",
-      botones: [{ txt: "🔒 Cambiar tasa", v: "cambiar" }, { txt: "Sí, cobrar con esas", v: "ok", cls: "green" }] });
-    if (r === "cambiar") { await cambiarTasa(null); return; }
+    const r = await modal({ icono: "💱", titulo: "¿La tasa sigue igual?",   // 4.9: la BCV ya no se escribe a mano: se trae del BCV
+      html: '<div class="m-txt">' + (S.online !== false ? "<b>El sistema todavía no ha actualizado la tasa BCV de hoy</b>: tiene la del <b>" + fechaCorta(t.fecha) + "</b>" : "Las tasas de este equipo son del <b>" + fechaCorta(t.fecha) + "</b>") + ": " + textoTasas() +
+        ".<br><br>" + (hayInternet() ? "Toca <b>🔄 Actualizar tasa BCV</b> para traer la de hoy del BCV." : "Sin internet no se puede traer la de hoy. Si sabes que no cambió, cobra con esas.") + "</div>",
+      botones: [{ txt: "Sí, cobrar con esas", v: "ok" }].concat(hayInternet() ? [{ txt: "🔄 Actualizar tasa BCV", v: "bcv", cls: "green" }] : []) });
+    if (r === "bcv") { await actualizarTasaBCV(null); return; }
     if (r !== "ok") return;
     S.tasaOkHoy = hoyTxt();
   }
@@ -3198,53 +3198,6 @@ function recargarSiSePuede(){
   location.replace(location.pathname + "?v=" + encodeURIComponent(_verNueva));
   return true;
 }
-async function cambiarTasa(btn){
-  if (!await pedirClave("Cambiar tasa", "para cambiar la tasa (cambia lo que se cobra en Bs)")) return;
-  const t = S.tasas || {}, on = !!t.binOn;
-  const brechaHoy = on && t.bcv > 0 && t.div > 0 ? r2((t.div / t.bcv - 1) * 100) : 0;
-  const r = await modal({
-    icono: "💱", titulo: "Tasas para cobrar",
-    html: '<div class="m-txt" style="font-size:13px;color:var(--text-dim);">Ahora: ' + textoTasas() + ". Cuando haya internet, el equipo toma las del sistema.</div>" +
-      '<label class="lbl">Tasa BCV (Bs por $)</label><input class="inp" id="tBcv" type="number" inputmode="decimal" min="0" step="any" placeholder="Bs ' + fmt(t.bcv) + '">' +
-      (on
-        ? '<label class="lbl">% de brecha cambiaria</label><input class="inp" id="tBre" type="number" inputmode="decimal" min="0" step="any" placeholder="' + (brechaHoy > 0 ? fmt(brechaHoy) + " %" : "Ej. 11,11") + '">' +
-          '<label class="lbl">Tasa Divisas (Bs por $) — o escríbela directo, sin brecha</label><input class="inp" id="tDiv" type="number" inputmode="decimal" min="0" step="any" placeholder="Bs ' + fmt(t.div) + '"><div class="act-nota" id="tHint"></div>'
-        : '<label class="lbl">Tasa Divisas — los $ en efectivo (Bs por $)</label><input class="inp" id="tDiv" type="number" inputmode="decimal" min="0" step="any" placeholder="' + (t.div > 0 ? "Bs " + fmt(t.div) : "Opcional") + '">') +
-      '<div class="m-err" id="tErr"></div>',
-    botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Guardar", v: true, cls: "green" }],
-    foco: "tBcv",
-    alAbrir: () => {
-      if (!on) return;
-      const calc = () => {   // con % de brecha, la Divisas se calcula (BCV × (1 + %))
-        const b = $("tBcv").value === "" ? t.bcv : Number($("tBcv").value), pct = Number($("tBre").value) || 0;
-        $("tDiv").disabled = pct > 0;
-        $("tHint").innerHTML = pct > 0 && b > 0 ? "Divisas = BCV × " + fmt(1 + pct / 100) + " = <b>Bs " + fmt(r2(b * (1 + pct / 100))) + "</b>" : "";
-      };
-      ["tBcv", "tBre"].forEach(id => $(id).addEventListener("input", calc));
-    },
-    antes: (v) => {
-      if (!v) return true;
-      const b = $("tBcv").value === "" ? t.bcv : Number($("tBcv").value);
-      if (!(b > 0)) { $("tErr").textContent = "Escribe la tasa BCV."; return false; }
-      if (t.bcv > 0 && (b > t.bcv * 1.5 || b < t.bcv * 0.6)) { $("tErr").textContent = "La tasa BCV cambia demasiado (más de 50 %). Revisa el número."; return false; }
-      let dv;
-      if (on) {
-        const pct = Number($("tBre").value) || 0;
-        dv = pct > 0 ? r2(b * (1 + pct / 100)) : ($("tDiv").value === "" ? (brechaHoy > 0 ? r2(b * (1 + brechaHoy / 100)) : t.div) : Number($("tDiv").value));
-        if (!(dv > 0)) { $("tErr").textContent = "Escribe el % de brecha o la tasa Divisas."; return false; }
-      } else dv = $("tDiv").value === "" ? t.div : Number($("tDiv").value);
-      if (dv && dv < b * 0.9) { $("tErr").textContent = "La tasa Divisas no puede quedar por debajo de la BCV."; return false; }
-      S.tasas = Object.assign({}, t, { bcv: b, div: dv || 0, fecha: hoyTxt(), origen: "manual" });
-      return true;
-    }
-  });
-  if (!r) return;
-  await kvSet("tasas", S.tasas);
-  S.tasaOkHoy = hoyTxt();
-  toast("✅ Cambios guardados");
-  pintarCabecera(); pintarAjustes(); buscar(); pintarFactura();
-}
-
 // ══ MODALES, TOAST Y BOTONES ══
 function modal(o){
   return new Promise(resolve => {

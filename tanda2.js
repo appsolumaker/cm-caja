@@ -8,6 +8,7 @@
 //     Si Configuración pide clave para reimprimir, es la de precio manual (la misma de Ventas).
 //   · Cada venta ya subida deja en el sistema su copia para reimprimir (desde la caja, Ventas o Historial).
 //   · 🛠️ Nuevo servicio (con internet y la clave maestra): queda en el sistema y entra a la factura.
+//   · 4.9: ✏️ Editar servicio (nombre, precio e IVA; el costo no se toca) y, con TasaBin, cómo queda guardado el precio.
 // ══════════════════════════════════════════════════════════════
 
 // ══ 📷 ESCÁNER ══
@@ -340,8 +341,8 @@ async function nuevoServicio(nombreIni){
   let creado = null;
   const r = await modal({ icono: "🛠️", titulo: "Nuevo servicio",
     html: '<div class="m-txt">Para cobrar un trabajo que no está en la lista. Queda guardado en el sistema (Inventario → Servicios) y entra a esta factura.</div>' +
-      '<label class="lbl" for="nsNom">Nombre del servicio</label><input class="inp" id="nsNom" maxlength="80" placeholder="Ej. Instalación de cerámica" value="' + esc(nombreIni || "") + '">' +
-      '<div class="ns-fila"><div><label class="lbl" for="nsPre">Precio con IVA ($ ' + esc(unidadU()) + ')</label><input class="inp" id="nsPre" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Ej. 10,00" oninput="nsCalc()"></div>' +
+      '<label class="lbl" for="nsNom">Nombre del servicio</label><input class="inp" id="nsNom" maxlength="80" placeholder="Nombre del servicio" value="' + esc(nombreIni || "") + '">' +
+      '<div class="ns-fila"><div><label class="lbl" for="nsPre">Precio con IVA ($ ' + esc(unidadU()) + ')</label><input class="inp" id="nsPre" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Precio con IVA" oninput="nsCalc()"></div>' +
       '<div><label class="lbl" for="nsIva">IVA</label><select class="inp" id="nsIva" onchange="nsCalc()">' + ivas.map(x => '<option value="' + x + '"' + (x === iva0 ? " selected" : "") + ">" + x + " %</option>").join("") + "</select></div></div>" +
       '<div class="ns-calc" id="nsCalc"></div>' +
       '<label class="lbl" for="nsMae">Clave maestra</label><input class="inp" id="nsMae" type="password" autocomplete="off" placeholder="La del administrador" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.closest(\'.modal\').querySelector(\'[data-v=ok]\').click();}">' +
@@ -378,5 +379,64 @@ async function nuevoServicio(nombreIni){
 function nsCalc(){
   const pre = Number($("nsPre").value) || 0, iva = Number($("nsIva").value) || 0, el = $("nsCalc");
   if (!el) return;
-  el.textContent = pre > 0 ? "Sin IVA: " + txtU(r2(pre / (1 + iva / 100))) + (bsPorU() > 0 ? " · En Bs: Bs " + fmt(r2(pre * bsPorU())) : "") : "";
+  if (!(pre > 0)) { el.innerHTML = ""; return; }
+  let h = "Sin IVA: " + txtU(r2(pre / (1 + iva / 100))) + (bsPorU() > 0 ? " · En Bs: Bs " + fmt(r2(pre * bsPorU())) : "");
+  if (binOn() && tBcv() > 0 && tDiv() > 0) {   // 4.9: con TasaBin el precio se guarda en divisas: se dice cómo queda en cada tipo de venta
+    const lib = libroDePantalla(pre);
+    h += '<div class="ns-guarda">Se guarda como <b>$' + fmt(r2(lib)) + " en divisas</b>. En una venta en Bs: <b>$" + fmt(r2(lib * tDiv() / tBcv())) + " BCV</b> (Bs " + fmt(r2(lib * tDiv())) +
+      "). En Venta en Dólares: <b>$" + fmt(r2(lib)) + "</b>.</div>";
+  }
+  el.innerHTML = h;
+}
+
+// ══ ✏️ EDITAR UN SERVICIO (4.9 · con internet y la clave maestra) ══
+// Cambia el nombre, el precio y el IVA en el sistema (el costo no se toca). Las líneas de la factura en pantalla
+// con ese servicio toman el precio nuevo, salvo las que están en precio manual.
+async function editarServicio(cod){
+  const s = ((S.datos && S.datos.servicios) || []).find(x => String(x.codigo) === String(cod));
+  if (!s) { aviso({ icono: "🛠️", titulo: "No encontré el servicio", html: "Toca ☰ → Actualizar datos y vuelve a intentar." }); return; }
+  if (!hayInternet() || !sesionViva()) { await aviso({ icono: "📡", titulo: "Hace falta internet", html: "El servicio se cambia en el sistema: para cambiarlo hace falta <b>internet</b>." }); return; }
+  const iva0 = Number(s.iva) || 0, ivas = [0, 8, 16].concat([iva0, ivaComun()]).filter((x, i, a) => a.indexOf(x) === i).sort((a, b) => a - b);
+  const preHoy = r2(r2(basePantalla(s.base)) * (1 + iva0 / 100));
+  let hecho = null;
+  const r = await modal({ icono: "✏️", titulo: "Editar servicio",
+    html: '<div class="m-txt">Cambia el servicio <b>' + esc(s.nombre) + "</b> (" + esc(s.codigo) + ") en el sistema, para todas las cajas.</div>" +
+      '<label class="lbl" for="nsNom">Nombre del servicio</label><input class="inp" id="nsNom" maxlength="80" placeholder="Nombre del servicio" value="' + esc(s.nombre) + '">' +
+      '<div class="ns-fila"><div><label class="lbl" for="nsPre">Precio con IVA ($ ' + esc(unidadU()) + ')</label><input class="inp" id="nsPre" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Precio con IVA" value="' + (preHoy > 0 ? preHoy : "") + '" oninput="nsCalc()"></div>' +
+      '<div><label class="lbl" for="nsIva">IVA</label><select class="inp" id="nsIva" onchange="nsCalc()">' + ivas.map(x => '<option value="' + x + '"' + (x === iva0 ? " selected" : "") + ">" + x + " %</option>").join("") + "</select></div></div>" +
+      '<div class="ns-calc" id="nsCalc"></div>' +
+      '<label class="lbl" for="nsMae">Clave maestra</label><input class="inp" id="nsMae" type="password" autocomplete="off" placeholder="La del administrador" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.closest(\'.modal\').querySelector(\'[data-v=ok]\').click();}">' +
+      '<div class="m-err" id="nsErr"></div>',
+    botones: [{ txt: "Cancelar", v: false }, { txt: "✅ Guardar", v: true, cls: "green", spin: "Guardando…" }],
+    foco: "nsPre",
+    alAbrir: () => nsCalc(),
+    antes: async v => {
+      if (!v) return true;
+      const err = $("nsErr"), nom = $("nsNom").value.replace(/\s+/g, " ").trim(), pre = Number($("nsPre").value) || 0, iva = Number($("nsIva").value) || 0, mae = $("nsMae").value;
+      err.textContent = "";
+      if (!nom) { err.textContent = "Escribe el nombre del servicio."; $("nsNom").focus(); return false; }
+      if (!(pre > 0)) { err.textContent = "Escribe el precio (mayor que 0)."; $("nsPre").focus(); return false; }
+      if (!mae) { err.textContent = "Escribe la clave maestra."; $("nsMae").focus(); return false; }
+      const base = libroDePantalla(pre / (1 + iva / 100));   // el sistema guarda el precio sin IVA, en la unidad de sus libros
+      let res = null;
+      try { res = await api("cj_servicio_editar", { servicio: { codigo: s.codigo, nombre: nom, precioBase: Math.round(base * 10000) / 10000, iva: iva, clave: mae } }, 45000); }
+      catch (e) { err.textContent = e.message + (e.red ? " Revisa la conexión y vuelve a intentar." : ""); return false; }
+      if (res && res.ok && res.servicio) { hecho = res.servicio; return true; }
+      err.textContent = (res && res.msg) || "El sistema no respondió.";
+      if (res && res.codigo === "CLAVE") { $("nsMae").value = ""; $("nsMae").focus(); }
+      if (res && res.codigo === "REPETIDO") $("nsNom").focus();
+      return false;
+    } });
+  if (!r || !hecho) return;
+  s.nombre = hecho.nombre; s.base = Number(hecho.base) || 0; s.iva = Number(hecho.iva) || 0;
+  _cat = null;
+  try { await kvSet("datos", S.datos); } catch (e) {}
+  let n = 0;
+  F.items.forEach(i => {
+    if (i.tipo !== "servicio" || String(i.codigo) !== String(s.codigo)) return;
+    i.nombre = s.nombre;
+    if (!i.manual) { i.libro = s.base; i.base = basePantalla(s.base); i.iva = s.iva; n++; }
+  });
+  buscar(); pintarFactura();
+  toast(n ? "✅ Cambios guardados · la factura tomó el precio nuevo" : "✅ Cambios guardados");
 }
