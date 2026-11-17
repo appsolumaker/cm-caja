@@ -336,6 +336,7 @@ function ivaComun(){
 }
 async function nuevoServicio(nombreIni){
   if (typeof puedeVender === "function" && !puedeVender()) return;
+  if (ordBloqueada() && !await ordPuedeCambiar("añadir un servicio")) return;   // 5.1 · orden bloqueada (ordenes.js)
   if (!hayInternet() || !sesionViva()) { await aviso({ icono: "📡", titulo: "Hace falta internet", html: "El servicio nuevo se guarda en el sistema: para crearlo hace falta <b>internet</b>." }); return; }
   const iva0 = ivaComun(), ivas = [0, 8, 16].concat([iva0]).filter((x, i, a) => a.indexOf(x) === i).sort((a, b) => a - b);
   let creado = null;

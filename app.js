@@ -39,7 +39,7 @@
 //  feriado: se elige con cuál se cobra hoy; brecha / Divisas se guardan en el sistema; las tasas llegan a todas las cajas
 //  cada 2 minutos. ✏️ Editar servicio (tanda2.js).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "5.0t · 16-11-2026";
+const APP_VER = "5.1a · 17-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -163,7 +163,7 @@ async function arrancar(){
   document.body.classList.add("entrando");
   // 2.7.1: la página (index.html) y sus archivos tienen que ser de la misma versión. Justo después de subir
   // a GitHub, el navegador puede traer uno viejo un rato: se recarga una vez y, si sigue mal, lo dice.
-  const verPag = (document.querySelector('meta[name="cm-ver"]') || {}).content || "", faltaJs = typeof bloquear !== "function" || typeof efectivoAlDia !== "function" || typeof gvGasto !== "function";
+  const verPag = (document.querySelector('meta[name="cm-ver"]') || {}).content || "", faltaJs = typeof bloquear !== "function" || typeof efectivoAlDia !== "function" || typeof gvGasto !== "function" || typeof ordBloqueada !== "function";   // 5.1: ordenes.js con el candado
   if (verPag !== APP_VER.split(" ")[0] || faltaJs) {
     let ya = ""; try { ya = sessionStorage.getItem("cm_recargo") || ""; } catch (e) {}
     if (!ya) { try { sessionStorage.setItem("cm_recargo", "1"); } catch (e) {} location.reload(); return; }
@@ -564,6 +564,7 @@ function lugarHTML(i, p){
 }
 function cambiarLugar(key, lugar){
   const i = itemDe(key); if (!i || lugarDe(i) === lugar) return;
+  if (ordBloqueada()) { ordDesbloquear("cambiar de dónde sale la mercancía (tienda o depósito)"); return; }   // 5.1
   i.lugar = lugar === "deposito" ? "deposito" : "tienda";
   delete F.avisoEx[String(i.codigo) + "|" + i.lugar];
   pintarFactura();
@@ -743,6 +744,7 @@ function clicProducto(el, k){
   el.classList.add("highlight");
 }
 async function agregar(p){
+  if (ordBloqueada() && !await ordPuedeCambiar("añadir productos")) return;   // 5.1 · orden bloqueada (ordenes.js)
   let lugar = "";
   if (p.tipo !== "servicio" && depLinea()) {
     const t = quedaTienda(p), d = quedaDeposito(p);
@@ -829,7 +831,12 @@ function tiposConPrecio(){
   const d = S.datos || {};
   return (d.tiposPrecios || []).map((n, i) => ({ n, i })).filter(o => o.i === 0 || (d.productos || []).some(p => p.precios && p.precios[o.i] && Number(p.precios[o.i].base) > 0));
 }
-function cambiarTipoPrecio(v){
+async function cambiarTipoPrecio(v){
+  if (ordBloqueada()) {   // 5.1 · orden bloqueada: cambia los precios de la orden
+    $("selTipoPrecio").value = String(F.tipoPrecio);
+    if (!await ordPuedeCambiar("cambiar el tipo de precio")) return;
+    $("selTipoPrecio").value = String(v);
+  }
   F.tipoPrecio = Number(v) || 0;
   const c = cat();
   F.items.forEach(i => { if (i.manual || i.tipo === "servicio") return; const p = c.find(x => x.codigo === i.codigo && x.tipo === i.tipo); if (!p) return; const pr = precioDe(p, F.tipoPrecio); i.libro = pr.base; i.base = basePantalla(pr.base); i.iva = pr.iva; i.tipoIdx = F.tipoPrecio; });
@@ -853,7 +860,7 @@ function pintarFactura(){
   _vendidoLocal = null;
   repreciar();
   asignarLugares();
-  const tps = tiposConPrecio(), c = cat();
+  const tps = tiposConPrecio(), c = cat(), bl = ordBloqueada();   // 5.1 · orden bloqueada: cantidades y precios como texto, la ✕ es 🔒
   $("tablaFactura").innerHTML = !F.items.length ? '<tr class="fac-vacia"><td colspan="8"><span class="solo-pc">Busca un producto o pasa el lector de códigos. Doble clic en un producto para agregarlo.</span><span class="solo-movil">La factura está vacía. Agrega productos desde la pestaña 🛒 Productos.</span></td></tr>' : F.items.map(i => {
     const srv = i.tipo === "servicio", p = c.find(x => x.codigo === i.codigo && x.tipo === i.tipo);
     let opts = srv ? '<option value="0"' + (!i.manual ? " selected" : "") + ">Servicio</option>"
@@ -863,6 +870,15 @@ function pintarFactura(){
     const cod = '<td><span style="font-size:11px;">' + esc(i.codigoBarras || i.codigo) + "</span>" + (srv ? ' <span class="srv">SRV</span>' : "") + "</td>";
     const nom = '<td class="nom" title="' + esc(i.nombre) + '">' + (hayFotos() ? '<span class="vta-fcel">' + miniFoto(i.codigo, srv) + '<span class="vta-fnom">' + esc(i.nombre) + "</span></span>" : esc(i.nombre)) + (srv ? "" : lugarHTML(i, p) + '<span class="sin-ex oculto" id="sx_' + i.key + '"></span>') + "</td>";
     const fin = '<td><select onchange="cambiarTipoLinea(' + i.key + ',this)">' + opts + '</select></td><td><button type="button" class="btn-del" onclick="quitarLinea(' + i.key + ')" title="Quitar">✕</button></td>';
+    if (bl) {
+      const tpN = srv && !i.manual ? "Servicio" : i.manual ? "Manual" : ((tps.find(o => o.i === i.tipoIdx) || {}).n || "");
+      return '<tr class="fila-bloq" data-key="' + i.key + '" data-cod="' + esc(i.codigo) + '">' + cod + nom +
+        '<td><button type="button" class="q-bloq" onclick="ordDesbloquear(\'cambiar las cantidades\')" title="Orden bloqueada: toca para desbloquearla con la clave maestra">' + fmtCant(i.cantidad) + "</button></td>" +
+        '<td style="color:var(--green);font-weight:700;">$' + fmt(i.base) + '</td><td style="color:var(--text-dim);">' + fmtCant(i.iva) + "%</td>" +
+        '<td style="font-weight:700;" id="tt_' + i.key + '">$' + fmt(totLinea(i)) + "</td>" +
+        '<td><button type="button" class="tp-bloq" onclick="ordDesbloquear(\'cambiar los precios\')" title="Orden bloqueada: toca para desbloquearla con la clave maestra">' + esc(tpN) + "</button></td>" +
+        '<td><button type="button" class="btn-del bloq" onclick="quitarLinea(' + i.key + ')" title="Orden bloqueada: para quitar hace falta la clave maestra">🔒</button></td></tr>';
+    }
     if (i.manual) return '<tr data-key="' + i.key + '" data-cod="' + esc(i.codigo) + '">' + cod + nom + cant +
       '<td><input type="number" class="man" min="0" step="any" id="pu_' + i.key + '" value="' + r2(i.base).toFixed(2) + '" oninput="manualPU(' + i.key + ',this.value)"></td>' +
       '<td><input type="number" class="man" min="0" max="100" step="any" id="iv_' + i.key + '" value="' + (Number(i.iva) || 0) + '" style="width:55px;color:var(--sk-mid);" oninput="manualIVA(' + i.key + ',this.value)"></td>' +
@@ -973,6 +989,7 @@ let _mvAntes = 0;
 const itemDe = key => F.items.find(x => x.key === key);
 function cambiarCant(key, v){
   const i = itemDe(key); if (!i) return;
+  if (ordBloqueada()) { pintarFactura(); return; }   // 5.1 · no debería pasar: con la orden bloqueada la cantidad no es editable
   i.cantidad = v === "" ? "" : r3(v);
   const t = $("tt_" + key);   // sin repintar la tabla (no se pierde el cursor)
   if (t) { if (t.tagName === "INPUT") t.value = totLinea(i).toFixed(2); else t.textContent = "$" + fmt(totLinea(i)); }
@@ -981,6 +998,7 @@ function cambiarCant(key, v){
 }
 function pasoCant(key, d){
   const i = itemDe(key); if (!i) return;
+  if (ordBloqueada()) { ordDesbloquear("cambiar las cantidades"); return; }   // 5.1
   const nv = r3((Number(i.cantidad) || 0) + d);
   if (nv <= 0) return;   // a cero no baja: para quitar el producto está la ✕
   const inp = $("q_" + key); if (inp) inp.value = nv;
@@ -999,7 +1017,10 @@ function partirLinea(key, cant, lugar){
   pintarFactura(); marcarEnFactura();
   toast("✅ " + fmtCant(cant) + " sale" + (cant === 1 ? "" : "n") + " " + LUG_DE[lugar]);
 }
-function quitarLinea(key){ F.items = F.items.filter(x => x.key !== key); pintarFactura(); marcarEnFactura(); }
+async function quitarLinea(key){
+  if (ordBloqueada() && !await ordPuedeCambiar("quitar productos")) return;   // 5.1 · orden bloqueada (ordenes.js)
+  F.items = F.items.filter(x => x.key !== key); pintarFactura(); marcarEnFactura();
+}
 // El numerito del «+» de cada producto de la lista (cuántos van en la factura), sin volver a pintar la lista
 function marcarEnFactura(){
   const box = $("listaProd"); if (!box) return;
@@ -1013,6 +1034,7 @@ function marcarEnFactura(){
 async function cambiarTipoLinea(key, sel){
   const i = itemDe(key); if (!i) return;
   const val = sel.value, antes = i.manual ? "manual" : String(i.tipoIdx >= 0 ? i.tipoIdx : 0);
+  if (ordBloqueada()) { sel.value = antes; if (!await ordPuedeCambiar("cambiar los precios")) return; sel.value = val; }   // 5.1
   if (val === "manual") {
     if (S.datos.pideClave && S.datos.pideClave.manual && !await claveFactura("Precio manual", "para cambiar el precio de <b>" + esc(i.nombre) + "</b>")) { sel.value = antes; return; }
     // Con TasaBin y un solo producto se pregunta en qué moneda va el precio (como Ventas)
@@ -1042,12 +1064,14 @@ function elegirMonedaManual(){
 // Precio manual escrito en la línea (en la moneda de la pantalla; el P.U. va sin IVA, como en Ventas)
 function manualPU(key, v){
   const i = itemDe(key); if (!i) return;
+  if (ordBloqueada()) { pintarFactura(); return; }   // 5.1
   i.base = Math.max(0, Number(v) || 0); i.libro = libroDePantalla(i.base);   // S2: nunca negativo
   const t = $("tt_" + key); if (t) t.value = totLinea(i).toFixed(2);
   pintarTotales();
 }
 function manualIVA(key, v){
   const i = itemDe(key); if (!i) return;
+  if (ordBloqueada()) { pintarFactura(); return; }   // 5.1
   i.iva = Math.max(0, Math.min(100, Number(v) || 0));
   const t = $("tt_" + key), q = Number(i.cantidad) || 0;
   if (S.datos.ivaEncima || !t) { if (t) t.value = totLinea(i).toFixed(2); }
@@ -1060,6 +1084,7 @@ function manualIVA(key, v){
 }
 function manualTot(key, v){
   const i = itemDe(key); if (!i) return;
+  if (ordBloqueada()) { pintarFactura(); return; }   // 5.1
   const q = Number(i.cantidad) || 0, tot = Math.max(0, Number(v) || 0);   // S2: nunca negativo
   i.base = q > 0 ? tot / q / (1 + (Number(i.iva) || 0) / 100) : 0;   // sin redondear: el total escrito no se desvía
   i.libro = libroDePantalla(i.base);
@@ -1155,13 +1180,20 @@ async function claveFactura(titulo, para){
 // ── Descuento (en Ajustes, como en Ventas): Ninguno · Porcentaje · Monto ──
 async function cambiarTipoDesc(sel){
   const v = sel.value;
+  if (ordBloqueada()) { sel.value = F.desc.tipo; if (!await ordPuedeCambiar("poner un descuento")) return; sel.value = v; }   // 5.1 · orden bloqueada
   if (v !== "ninguno" && S.datos.pideClave && S.datos.pideClave.descuento && !await claveFactura("Descuento", "para hacer un descuento")) { sel.value = F.desc.tipo; return; }
   F.desc = { tipo: v, valor: v === F.desc.tipo ? F.desc.valor : 0 };
   pintarSelectores(); pintarTotales();
   if (v !== "ninguno") setTimeout(() => $("valorDescuento").focus(), 30);
 }
-function cambiarValorDesc(val){ F.desc.valor = Math.max(0, Number(val) || 0); pintarTotales(); }
-function quitarDescuento(){ F.desc = { tipo: "ninguno", valor: 0 }; pintarSelectores(); pintarTotales(); }
+function cambiarValorDesc(val){
+  if (ordBloqueada()) { $("valorDescuento").value = F.desc.valor > 0 ? F.desc.valor : ""; ordDesbloquear("cambiar el descuento"); return; }   // 5.1
+  F.desc.valor = Math.max(0, Number(val) || 0); pintarTotales();
+}
+async function quitarDescuento(){
+  if (ordBloqueada() && !await ordPuedeCambiar("quitar el descuento")) return;   // 5.1
+  F.desc = { tipo: "ninguno", valor: 0 }; pintarSelectores(); pintarTotales();
+}
 // ══ VENTA DE OTRO DÍA (Tanda 1, 3.1) — como Ventas (TasasVenta.gs) ══
 //  Para registrar una venta que se olvidó: va con su fecha y las tasas de ESE día (así no queda diferencial cambiario).
 //  Se toca la fecha de la factura. Pide la misma clave que «Cambiar tasa» si Configuración la pide (N4). Con internet trae
@@ -1176,6 +1208,7 @@ function textoTasasFA(fa){
 }
 async function abrirFechaVenta(){
   if (!S.datos || P || !puedeVender()) return;
+  if (ordBloqueada() && !await ordPuedeCambiar("cambiar la fecha de la venta")) return;   // 5.1 · orden bloqueada
   if (F.fechaAnt) {
     const r = await modal({ icono: "📅", titulo: "Venta de otro día", html: '<div class="m-txt">Esta venta lleva fecha del <b>' + fechaCorta(F.fechaAnt.fecha) + "</b> con las tasas de ese día: " + textoTasasFA() + ".</div>",
       botones: [{ txt: "Cancelar", v: false }, { txt: "↩️ Volver a hoy", v: "hoy" }, { txt: "✏️ Cambiar día o tasas", v: "cambiar", cls: "green" }] });
@@ -1290,8 +1323,14 @@ function ponerFechaAnt(fa){
 function dlvMonto(){ return r2(Math.max(0, Number(F.dlv && F.dlv.monto) || 0)); }
 function dlvLibro(m){ m = r2(Math.max(0, Number(m) || 0)); return binOn() && tBcv() > 0 && tDiv() > 0 && Math.abs(tDiv() - tBcv()) > 0.000001 ? r2(m * tBcv() / tDiv()) : m; }
 function dlvTxt(t){ return (t || (F.dlv && F.dlv.tipo)) === "envio" ? "Envío" : "Delivery"; }
-function cambiarDelivery(v){ F.dlv.monto = Math.max(0, Number(v) || 0); pintarTotales(); }
-function cambiarTipoDelivery(v){ F.dlv.tipo = v === "envio" ? "envio" : "delivery"; pintarTotales(); }
+function cambiarDelivery(v){
+  if (ordBloqueada()) { $("valorDelivery").value = F.dlv.monto > 0 ? F.dlv.monto : ""; ordDesbloquear("poner o cambiar el delivery"); return; }   // 5.1
+  F.dlv.monto = Math.max(0, Number(v) || 0); pintarTotales();
+}
+async function cambiarTipoDelivery(v){
+  if (ordBloqueada()) { $("tipoDelivery").value = F.dlv.tipo; if (!await ordPuedeCambiar("cambiar el delivery o envío")) return; $("tipoDelivery").value = v; }   // 5.1
+  F.dlv.tipo = v === "envio" ? "envio" : "delivery"; pintarTotales();
+}
 // Total de la factura en pantalla con el delivery, y sus Bs (los productos a la tasa de la venta, el delivery a BCV)
 function totalConDlv(){ const x = totales(F.items, F.desc), d = dlvMonto(); return { prod: x.total, dlv: d, total: r2(x.total + d), bs: r2(x.total * bsPorU() + d * tBcv()) }; }
 
@@ -1303,7 +1342,15 @@ function clientesTodos(){
   return sis.concat((S.clientesNuevos || []).filter(c => !ya.has(cedNorm(c.cedula))).map(c => Object.assign({ local: true }, c)));
 }
 function clienteDe(ced){ const k = cedNorm(ced); return k ? clientesTodos().find(c => cedNorm(c.cedula) === k) || null : null; }
-function limpiarCliente(){ F.cliente = { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }; pintarTotales(); }
+async function limpiarCliente(){
+  if (ordBloqueada() && !await ordPuedeCambiar("quitar el cliente")) return;   // 5.1 · orden bloqueada
+  F.cliente = { cedula: "", nombre: "Genérico", direccion: "", telefono: "" }; pintarTotales();
+}
+// 👤 Elegir de arriba de la factura (5.1: con la orden bloqueada pide la clave maestra; elegir cliente para cobrar a crédito no)
+async function elegirClienteBoton(){
+  if (ordBloqueada() && !await ordPuedeCambiar("cambiar el cliente")) return;
+  abrirClientes();
+}
 function ponerCliente(c){
   F.cliente = c ? { cedula: String(c.cedula || ""), nombre: c.nombre || "Genérico", direccion: c.direccion || "", telefono: c.telefono || "", nuevo: !!c.local } : { cedula: "", nombre: "Genérico", direccion: "", telefono: "" };
   pintarTotales();
@@ -1519,8 +1566,12 @@ function libroDePantalla(base){
 // Las líneas de la factura con las tasas y la moneda de ahora (la base en los libros no cambia)
 function repreciar(){ F.items.forEach(i => { i.base = basePantalla(i.libro, i.manual); }); }
 // Venta en Dólares (solo con TasaBin encendido): toda la factura cambia de moneda, como en Ventas
-function cambiarMoneda(){
+async function cambiarMoneda(){
   if (!binOn()) return;
+  if (ordBloqueada()) {   // 5.1 · orden bloqueada: la moneda cambia los precios que vio el cliente
+    $("chkDolares").checked = !!F.dolares;
+    if (!await ordPuedeCambiar("cambiar la moneda (💵 Venta en Dólares)")) return;
+  }
   F.dolares = !F.dolares;
   repreciar(); pintarSelectores(); buscar(); pintarFactura();
   if (F.desc.tipo === "monto") { F.desc = { tipo: "ninguno", valor: 0 }; pintarTotales(); aviso({ icono: "🏷️", titulo: "Se quitó el descuento", html: "El descuento era un monto en $ " + (F.dolares ? "BCV" : "divisas") + ". Si sigue, vuelve a ponerlo en " + (F.dolares ? "$ divisas" : "$ BCV") + "." }); }

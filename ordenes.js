@@ -9,6 +9,8 @@
 //    sin internet (o en modo vendedor) se guarda en este equipo y, en modo cajero, sube sola después.
 //  · 📄 Cotización: se imprime en carta, sin número y sin registrar nada.
 //  Sin internet no se traen órdenes nuevas, pero la que ya está en pantalla se cobra igual.
+//  · 🔒 5.1: una orden de vendedor o un pedido web cargado en la factura queda BLOQUEADO: para cambiar cualquier cosa
+//    (productos, cantidades, precios, descuento, delivery, cliente, fecha…) hace falta la clave maestra, revisada en el sistema.
 // ══════════════════════════════════════════════════════════════
 const ORD_REFRESCO_MS = 90000;
 const _ord = { lista: [], abiertas: 0, cerrar: null, timer: null, ocupado: false, error: "" };
@@ -60,9 +62,11 @@ function pintarChipOrden(){
   const o = F.orden;
   chip.classList.toggle("oculto", !o);
   if (o) {
-    $("chipOrdenId").textContent = ordIcono(o.origen) + " " + o.id;
-    chip.title = o.origen === "WEB" ? "Pedido de la tienda online: se cobra como Tienda online (sin vendedor)" : o.origen === "CAJA" ? "Factura en espera" : "Orden de " + (o.vendedor || "venta");
+    $("chipOrdenId").textContent = (o.bloq ? (o.libre ? "🔓 " : "🔒 ") : "") + ordIcono(o.origen) + " " + o.id;
+    chip.title = (o.origen === "WEB" ? "Pedido de la tienda online: se cobra como Tienda online (sin vendedor)" : o.origen === "CAJA" ? "Factura en espera" : "Orden de " + (o.vendedor || "venta")) +
+      (o.bloq ? (o.libre ? " · desbloqueada con la clave maestra" : " · bloqueada: para cambiarla hace falta la clave maestra") : "");
   }
+  pintarBandaBloqueo();
   $("btnVendOrden").classList.toggle("oculto", !(o && o.origen === "VENDEDOR" && ordConVend()));
   const sel = $("selVend");
   if (sel) { const bloq = !!(o && o.origen !== "CAJA"); sel.disabled = bloq; sel.title = bloq ? "El vendedor viene de la orden " + o.id : ""; }
@@ -202,7 +206,7 @@ async function ordTomar(id, btn){
   S.ordSoltar = (S.ordSoltar || []).filter(x => x !== id); kvSet("ordSoltar", S.ordSoltar).catch(() => {});
   cerrarOrdenes();
   contarOrdenes();
-  await ordCargar(r.orden);
+  await ordCargar(r.orden, r.bloqueo === true || (r.orden && r.orden.bloqueo === true));   // 5.1: el sistema nuevo avisa que sabe desbloquear
 }
 // Una línea de la orden → una línea de la factura. congelada: espera de la caja (precios como estaban).
 function ordLinea(it, cobroDef, congelada){
@@ -228,7 +232,7 @@ function ordLinea(it, cobroDef, congelada){
   }
   return { linea: l };
 }
-async function ordCargar(o){
+async function ordCargar(o, conBloqueo){
   const esp = o.origen === "CAJA", web = o.origen === "WEB", ex = o.extra || {};
   const tp = F.tipoPrecio;
   Object.assign(F, nuevaFactura()); F.tipoPrecio = tp;
@@ -255,7 +259,8 @@ async function ordCargar(o){
     if (esp) { const vs = String(ex.vendSel || (o.vendedorId ? "v:" + o.vendedorId : "directa")); F.vend = vs.indexOf("v:") === 0 ? vs.slice(2) : "directa"; }
     else F.vend = !web && o.vendedorId ? String(o.vendedorId) : "directa";
   }
-  F.orden = { id: o.id, origen: o.origen || "", vendedorId: Number(o.vendedorId) || 0, vendedor: o.vendedor || "", refOrigen: o.refOrigen || "" };
+  F.orden = { id: o.id, origen: o.origen || "", vendedorId: Number(o.vendedorId) || 0, vendedor: o.vendedor || "", refOrigen: o.refOrigen || "",
+    bloq: !!conBloqueo && !esp, libre: false };   // 5.1 · 🔒 de vendedor o web (las esperas de la caja quedan libres)
   if (manuales.length || F.desc.tipo !== "ninguno") F.claveCon = "orden";
   $("busca").value = "";
   pintarSelectores(); buscar(); pintarFactura();
@@ -280,7 +285,7 @@ async function ordCargar(o){
     } catch (e) {}
   }
   if (o.notas) av.push("📝 Nota de la orden: " + esc(o.notas));
-  const tit = (esp ? "Factura en espera " : web ? "Pedido web " : "Orden ") + o.id + " cargada";
+  const tit = (esp ? "Factura en espera " : web ? "Pedido web " : "Orden ") + o.id + " cargada" + (F.orden.bloq ? " 🔒" : "");
   if (av.length) await aviso({ icono: ordIcono(o.origen), titulo: tit, html: av.join("<br><br>") });
   else toast(ordIcono(o.origen) + " " + tit);
   if (cliNuevo) await ordCrearCliente(o);
@@ -435,6 +440,64 @@ async function ordDescartar(id, btn){
   buscarOrdenes(); contarOrdenes();
 }
 
+// ══ 🔒 ORDEN BLOQUEADA (5.1) ══
+//  Una orden de vendedor o un pedido web, cargado en la factura, no se puede cambiar sin la clave maestra: añadir o quitar
+//  productos, cantidades, tipo de precio, precio manual, 💵 Venta en Dólares, descuento, delivery, cliente (👤 Elegir y ✕),
+//  venta de otro día y tienda/depósito. Sin clave sí se puede: cobrarla tal cual (también elegir el cliente si el cobro a
+//  crédito lo pide), imprimir la cotización, soltarla y ponerla en espera. El vendedor sigue con su propia clave maestra.
+//  · La clave se pide UNA vez y desbloquea esa orden mientras esté en pantalla. Al soltarla o ponerla en espera y volver
+//    a cargarla, está bloqueada otra vez.
+//  · La revisa el sistema (cj_ordenes op «desbloquear», que la deja anotada en la orden). Sin internet no se desbloquea.
+//  · Solo si el sistema lo sabe hacer: al tomar la orden responde bloqueo: true. Con la biblioteca vieja todo sigue como antes.
+function ordBloqueada(){ return !!(F.orden && F.orden.bloq && !F.orden.libre); }
+async function ordPuedeCambiar(que){ return !ordBloqueada() || await ordDesbloquear(que); }
+let _ordDesbAbierto = false;
+async function ordDesbloquear(que){
+  const o = F.orden; if (!o || !ordBloqueada()) return true;
+  if (_ordDesbAbierto) return false;   // p. ej. el escáner leyendo otro código con el mini modal abierto
+  _ordDesbAbierto = true;
+  try {
+    const de = o.origen === "WEB" ? "es un <b>pedido de la tienda online</b>" + (o.refOrigen ? " (#" + esc(o.refOrigen) + ")" : "") + ": el cliente lo armó y vio esos precios"
+      : "la preparó <b>" + esc(o.vendedor || "el vendedor") + "</b> con el cliente";
+    if (!ordEnLinea()) {
+      await aviso({ icono: "🔒", titulo: "Orden " + o.id + " bloqueada", html: "La orden " + de + ". Para " + esc(que || "cambiarla") + " hace falta la <b>clave maestra</b>, y la clave se revisa en el sistema: <b>sin internet no se puede desbloquear</b>." +
+        "<br><br>Puedes cobrarla tal como está, o esperar a que vuelva el internet y tocar <b>🔓 Desbloquear</b>." });
+      return false;
+    }
+    let res = null;
+    const ok = await modal({ icono: "🔒", titulo: "Orden " + o.id + " bloqueada",
+      html: '<div class="m-txt">La orden ' + de + ". Para <b>" + esc(que || "cambiarla") + "</b> hace falta la <b>clave maestra</b>: así nadie cambia lo acordado con el cliente (productos, precios, descuento, delivery…) sin permiso del encargado." +
+        "<br><br>La clave desbloquea <b>toda esta orden</b> mientras esté en pantalla. Si no hay que cambiar nada, toca <b>Cancelar</b> y cóbrala tal como está.</div>" +
+        '<input class="inp" id="ordDesbClave" type="password" placeholder="Clave maestra" autocomplete="off" style="margin-top:10px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.closest(\'.modal\').querySelector(\'[data-v=ok]\').click();}"><div class="m-err" id="ordDesbErr"></div>',
+      botones: [{ txt: "Cancelar", v: false }, { txt: "🔓 Desbloquear", v: true, cls: "green", spin: "Verificando…" }],
+      foco: "ordDesbClave",
+      antes: async v => {
+        if (!v) return true;
+        const err = $("ordDesbErr"), clave = $("ordDesbClave").value;
+        if (!clave) { err.textContent = "Escribe la clave maestra."; return false; }
+        let r = null;
+        try { r = await api_ord("desbloquear", { id: o.id, clave: clave }, 30000); }
+        catch (e) { err.textContent = e.red ? "No hay conexión con el sistema. Vuelve a intentar cuando haya internet." : e.message; return false; }
+        if (r && r.codigo === "CLAVE") { err.textContent = r.msg || "Clave maestra incorrecta. Intenta de nuevo."; $("ordDesbClave").value = ""; $("ordDesbClave").focus(); return false; }
+        if (!r || !r.ok) { err.textContent = (r && r.msg) || "El sistema no pudo desbloquear la orden."; return false; }
+        res = r; return true;
+      } });
+    if (!ok || !res || F.orden !== o) return false;
+    o.libre = true;
+    pintarFactura(); pintarChipOrden();
+    toast("🔓 Orden " + o.id + " desbloqueada");
+    return true;
+  } finally { _ordDesbAbierto = false; }
+}
+// La franja de arriba de la factura: dice que la orden está bloqueada y cómo desbloquearla
+function pintarBandaBloqueo(){
+  const b = $("bannerOrdBloq"); if (!b) return;
+  const on = ordBloqueada();
+  b.classList.toggle("oculto", !on);
+  b.innerHTML = !on ? "" : '<span class="ob-txt">🔒 <b>Orden ' + esc(F.orden.id) + " bloqueada.</b> Se cobra tal como vino. Para cambiar cualquier cosa (productos, cantidades, precios, descuento, delivery, cliente…) hace falta la <b>clave maestra</b>.</span>" +
+    '<button type="button" class="btn sm" onclick="ordDesbloquear(\'cambiar la orden\')">🔓 Desbloquear</button>';
+}
+
 // ══ 🗂️ EN ESPERA ══
 // La factura en pantalla, sin funciones ni la lista de precios (para guardarla o subirla)
 function ordFoto(){
@@ -535,6 +598,7 @@ async function ordAbrirLocal(id){
   await kvSet("esperas", S.esperas).catch(() => {});
   const tp = F.tipoPrecio;
   Object.assign(F, nuevaFactura(), e.f);
+  if (F.orden) F.orden.libre = false;   // 5.1 · al volver a abrirla, la orden queda bloqueada otra vez
   if (e.f.tipoPrecio == null) F.tipoPrecio = tp;
   if (!binOn()) F.dolares = false;
   F.seq = F.items.reduce((m, i) => Math.max(m, Number(i.key) || 0), 0);

@@ -240,9 +240,9 @@ function pantallaElegirCaja(){
 // ── Usuario y clave ──
 function pantallaLogin(motivo){
   pantalla({ ico: "🔐",
-    html: (motivo ? "<p>" + motivo + "</p>" : "") + "<p>Entra con tu usuario y tu clave del sistema.</p>",
+    html: (motivo ? "<p>" + motivo + "</p>" : "") + "<p>Entra con tu usuario y tu contraseña del sistema.</p>",
     form: '<label class="lbl" for="lgUsu">Usuario</label><input class="inp" id="lgUsu" autocomplete="username" autocapitalize="off" placeholder="Tu usuario">' +
-          '<label class="lbl" for="lgCla">Clave</label><input class="inp" id="lgCla" type="password" autocomplete="current-password" placeholder="Tu clave">',
+          '<label class="lbl" for="lgCla">Contraseña</label><input class="inp" id="lgCla" type="password" autocomplete="current-password" placeholder="Tu contraseña">',
     btns: '<button type="button" class="btn green block" id="btnEntrar" onclick="entrar(this)">Entrar →</button>' });
   $("lgUsu").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("lgCla").focus(); } });
   $("lgCla").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); entrar($("btnEntrar")); } });
@@ -251,7 +251,7 @@ function pantallaLogin(motivo){
 async function entrar(btn){
   if (btn && btn.disabled) return;
   const u = $("lgUsu").value.trim(), c = $("lgCla").value;
-  if (!u || !c) { aviso({ icono: "🔐", titulo: "Faltan datos", html: "Escribe tu usuario y tu clave." }); return; }
+  if (!u || !c) { aviso({ icono: "🔐", titulo: "Faltan datos", html: "Escribe tu usuario y tu contraseña." }); return; }
   btnOcupado(btn, "Entrando…");
   let r;
   try { r = await api("cj_login", { usuario: u, clave: c }, 30000); }
@@ -425,7 +425,7 @@ async function cerrarSesion(btn){
   btnLibre(btn);
   await borrarSesion();
   S.noDirecta = true;   // hasta que alguien entre: no vuelve a entrar sola
-  pantallaLogin("Entra con tu usuario y clave.");
+  pantallaLogin("Entra con tu usuario y contraseña.");
 }
 
 // ── 🏠 Sistema: vuelve a la pestaña del sistema, o la abre con un pase de un solo uso ──
@@ -435,7 +435,7 @@ async function irSistema(btn){
     aviso({ icono: "📡", titulo: "Sin internet", html: "El sistema necesita internet. La caja sigue funcionando aquí: puedes seguir vendiendo." });
     return;
   }
-  if (!sesionViva()) { aviso({ icono: "🔐", titulo: "Primero entra", html: "Entra con tu usuario y clave para abrir el sistema." }); return; }
+  if (!sesionViva()) { aviso({ icono: "🔐", titulo: "Primero entra", html: "Entra con tu usuario y contraseña para abrir el sistema." }); return; }
   irSistemaAqui(btn); return;   // 5.0j: vuelve a la pestaña del sistema (lo de abajo quedó de antes)
   // 1) Si el sistema abrió esta caja y sigue abierto, se vuelve a esa pestaña
   try {

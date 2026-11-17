@@ -81,6 +81,13 @@ button{cursor:pointer;}
 .banner{margin:8px 10px 0;padding:9px 12px;border-radius:8px;font-size:13px;line-height:1.45;}
 .banner.mal{background:var(--red-dim);border:1px solid rgba(255,107,107,.4);}
 .banner.av{background:var(--amber-dim);border:1px solid rgba(227,179,65,.4);}
+/* 5.1 · 🔒 orden bloqueada (ordenes.js) */
+.banner.ord-bloq{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(52,152,219,.12);border:1px solid rgba(52,152,219,.45);}
+.banner.ord-bloq .ob-txt{flex:1;min-width:200px;}
+.tabla-fac .q-bloq,.tabla-fac .tp-bloq{background:transparent;border:1px dashed var(--border);border-radius:6px;padding:4px 8px;font-weight:700;font-size:13px;color:inherit;cursor:pointer;min-width:42px;}
+.tabla-fac .tp-bloq{font-size:12px;font-weight:600;color:var(--text-dim);}
+.tabla-fac .q-bloq:hover,.tabla-fac .tp-bloq:hover{border-color:rgba(52,152,219,.7);}
+.btn-del.bloq{background:rgba(52,152,219,.15);border-color:rgba(52,152,219,.45);color:inherit;}
 
 /* ── Vistas ── */
 .vista{display:none;}

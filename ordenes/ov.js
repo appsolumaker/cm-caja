@@ -12,7 +12,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "2.4 · 15-11-2026";
+const OV_VER = "2.5 · 17-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -303,6 +303,33 @@ function disponible(cod){
   const res = (OV.d.reservas || {})[cod] || 0, propia = O.reservaPropia[cod] || 0;
   return r3(p.stock - res + propia);
 }
+// 2.5 · «En la orden»: debajo de cada precio, sus equivalentes, con la misma matemática de totales():
+//  orden en Bs (BCV) con TasaBin → $ BCV y debajo $ div y Bs (a tasa BCV) · orden en dólares → $ div y debajo Bs (a tasa Divisas)
+//  · sin TasaBin → $ y debajo Bs (a tasa BCV).
+// P.U. con IVA de la línea en divisas (para la orden en Bs con TasaBin): la base de la lista tal cual; el manual, como lo guarda datosDeOrden()
+function puDivLinea(l){
+  if (l.manual) return bcvRate() > 0 && divRate() > 0 ? (Number(l.pFinal) || 0) * bcvRate() / divRate() : (Number(l.pFinal) || 0);
+  const p = catDe(l); if (!p) return 0;
+  const x = precioLista(p, l.tipoIdx);
+  return x.base * (1 + x.iva / 100);
+}
+// monto: en la moneda de la orden · div: el mismo monto en divisas (solo se usa en la orden en Bs con TasaBin)
+function equivHTML(monto, div){
+  const enDiv = binOn() && O.moneda === "divisas";
+  let h = "";
+  if (binOn() && !enDiv) h += '<small class="l-eq">$' + fmt(r2(div)) + " div</small>";
+  const tasa = enDiv ? divRate() : bcvRate();
+  if (tasa > 0) h += '<small class="l-eq">Bs ' + fmt(r2(monto * tasa)) + "</small>";
+  return h;
+}
+function totLineaHTML(l){
+  const q = Number(l.cantidad) || 0, tot = r2(puLinea(l) * q), u = uTxt().trim();
+  return '<span class="l-tot-m">$' + fmt(tot) + (u ? "<small> " + u + "</small>" : "") + "</span>" + equivHTML(tot, puDivLinea(l) * q);
+}
+function pintarMontosLinea(l){
+  const t = $("t_" + l.key); if (t) t.innerHTML = totLineaHTML(l);
+  const e = $("e_" + l.key); if (e) e.innerHTML = equivHTML(puLinea(l), puDivLinea(l));
+}
 const enOrden = (cod, serv) => r3(O.items.filter(l => String(l.codigo) === String(cod) && esServ(l) === !!serv).reduce((s, l) => s + (Number(l.cantidad) || 0), 0));
 
 // ══ NUEVA ORDEN ══
@@ -405,12 +432,13 @@ function pintarLineas(){
     const opts = tps.map((n, i) => ({ n, i })).filter(o => o.i === 0 || (p && p.precios[o.i] && p.precios[o.i].base > 0)).map(o => '<option value="' + o.i + '"' + (!l.manual && l.tipoIdx === o.i ? " selected" : "") + ">" + esc(o.n) + "</option>").join("") +
       '<option value="manual"' + (l.manual ? " selected" : "") + ">Manual</option>";
     const falta = !sv && p && enOrden(l.codigo) > disponible(l.codigo) + 0.0005;
-    const pu = puLinea(l), tot = r2(pu * (Number(l.cantidad) || 0));
-    return '<div class="lin' + (falta || !p ? " falta" : "") + '" id="ln_' + l.key + '"><div class="lin-cab">' + (sv ? '<span class="l-img serv-ico">🛠️</span>' : fotoHTML(p, "l-img")) + '<span class="l-nom">' + esc(l.nombre) + (sv ? ' <span class="serv-tag">Servicio</span>' : "") + '</span><button type="button" class="btn-cli-x" onclick="quitar(' + l.key + ')">✕</button></div>' +
+    const pu = puLinea(l), u = uTxt().trim();
+    return '<div class="lin' + (falta || !p ? " falta" : "") + '" id="ln_' + l.key + '"><div class="lin-cab">' + (sv ? '<span class="l-img serv-ico">🛠️</span>' : fotoHTML(p, "l-img")) + '<span class="l-nom">' + esc(l.nombre) + (sv ? ' <span class="serv-tag">Servicio</span>' : "") + '<span class="l-cod">Cód. ' + esc(l.codigo) + '</span></span><button type="button" class="btn-cli-x" onclick="quitar(' + l.key + ')">✕</button></div>' +
       '<div class="lin-fila"><div class="paso"><button type="button" onclick="paso(' + l.key + ',-1)">−</button><input type="number" inputmode="decimal" min="0" step="any" id="q_' + l.key + '" value="' + (l.cantidad === "" ? "" : l.cantidad) + '" placeholder="Cant." oninput="cant(' + l.key + ',this.value)"><button type="button" onclick="paso(' + l.key + ',1)">+</button></div>' +
       '<select onchange="tipoLinea(' + l.key + ',this)">' + opts + "</select>" +
-      (l.manual ? '<input class="man" type="number" inputmode="decimal" min="0" step="any" id="pm_' + l.key + '" placeholder="Precio c/IVA" value="' + (l.pFinal > 0 ? l.pFinal : "") + '" oninput="precioMan(' + l.key + ',this.value)">' : '<span class="l-pu">$' + fmt(pu) + " c/u</span>") +
-      '<span class="l-tot" id="t_' + l.key + '">$' + fmt(tot) + "</span></div>" +
+      (l.manual ? '<span class="l-pu"><input class="man" type="number" inputmode="decimal" min="0" step="any" id="pm_' + l.key + '" placeholder="Precio c/IVA" value="' + (l.pFinal > 0 ? l.pFinal : "") + '" oninput="precioMan(' + l.key + ',this.value)"><span id="e_' + l.key + '">' + equivHTML(pu, puDivLinea(l)) + "</span></span>"
+        : '<span class="l-pu"><span class="l-pu-m">$' + fmt(pu) + (u ? " " + u : "") + " c/u</span>" + equivHTML(pu, puDivLinea(l)) + "</span>") +
+      '<span class="l-tot" id="t_' + l.key + '">' + totLineaHTML(l) + "</span></div>" +
       (!p ? '<div class="l-aviso">⚠️ Este ' + (sv ? "servicio" : "producto") + ' ya no está en los datos del teléfono (puede que lo hayan quitado): quítalo de la orden.</div>' : '<div class="l-aviso" id="la_' + l.key + '">' + (falta ? avisoFalta(l.codigo) : "") + "</div>") + "</div>";
   }).join("");
 }
@@ -426,8 +454,8 @@ function marcarFaltas(){
 }
 function quitar(k){ O.items = O.items.filter(l => l.key !== k); buscar(); pintarLineas(); pintarTotal(); guardarBorrador(); }
 function paso(k, dlt){ const l = itemDe(k); if (!l) return; const v = r3((Number(l.cantidad) || 0) + dlt); if (v <= 0) return; l.cantidad = v; buscar(); pintarLineas(); pintarTotal(); guardarBorrador(); }
-function cant(k, v){ const l = itemDe(k); if (!l) return; l.cantidad = v === "" ? "" : r3(v); const t = $("t_" + k); if (t) t.textContent = "$" + fmt(r2(puLinea(l) * (Number(l.cantidad) || 0))); marcarFaltas(); pintarTotal(); guardarBorrador(); }
-function precioMan(k, v){ const l = itemDe(k); if (!l) return; l.pFinal = Math.max(0, Number(v) || 0); const t = $("t_" + k); if (t) t.textContent = "$" + fmt(r2(puLinea(l) * (Number(l.cantidad) || 0))); pintarTotal(); guardarBorrador(); }
+function cant(k, v){ const l = itemDe(k); if (!l) return; l.cantidad = v === "" ? "" : r3(v); pintarMontosLinea(l); marcarFaltas(); pintarTotal(); guardarBorrador(); }
+function precioMan(k, v){ const l = itemDe(k); if (!l) return; l.pFinal = Math.max(0, Number(v) || 0); pintarMontosLinea(l); pintarTotal(); guardarBorrador(); }
 async function tipoLinea(k, sel){
   const l = itemDe(k); if (!l) return;
   const antes = l.manual ? "manual" : String(l.tipoIdx);

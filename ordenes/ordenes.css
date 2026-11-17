@@ -153,8 +153,13 @@ select.inp{padding:8px 10px;}
 .paso button:first-child{border-radius:9px 0 0 9px;border-right:none;} .paso button:last-child{border-radius:0 9px 9px 0;border-left:none;}
 .paso input{width:58px;height:38px;border:1px solid var(--border);background:var(--bg2);text-align:center;font-size:16px;font-weight:800;border-radius:0;}
 .lin select{padding:7px 6px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);font-size:13px;}
-.lin .l-tot{margin-left:auto;font-size:17px;font-weight:900;color:var(--green);white-space:nowrap;}
-.lin .l-pu{font-size:12px;color:var(--text-dim);}
+.lin .l-tot{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;white-space:nowrap;}
+.lin .l-tot-m{font-size:17px;font-weight:900;color:var(--green);}
+.lin .l-tot-m small{font-size:11px;font-weight:800;}
+.lin .l-pu{display:flex;flex-direction:column;font-size:12px;color:var(--text-dim);white-space:nowrap;}
+.lin .l-pu-m{font-weight:700;}
+.lin .l-eq{display:block;font-size:11px;font-weight:600;color:var(--text-dim);line-height:1.35;}
+.lin .l-cod{display:block;font-size:11px;font-weight:600;color:var(--text-dim);margin-top:2px;}
 .lin input.man{width:110px;padding:7px 8px;border-radius:7px;border:1px solid var(--border-g);background:var(--bg2);font-size:15px;font-weight:800;}
 .lin .l-aviso{font-size:11px;font-weight:800;color:#e74c3c;margin-top:6px;}
 .vacio{text-align:center;padding:22px 10px;color:var(--text-dim);font-size:13px;line-height:1.6;}
