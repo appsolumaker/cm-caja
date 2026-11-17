@@ -107,6 +107,11 @@ async function huellaDe(salt, n, clave){
 // ══ SIN TURNO: ¿quién está en la caja? → contraseña → fondo → turno abierto ══
 function pintarTurno(){
   const box = $("turnoCuerpo"); if (!box || !S.datos) return;
+  if (S.eq && S.eq.auto && !S.turno && !_turnoOk) {   // 5.0i · Tanda 3B-1: el turno es de quien entró a la caja
+    const yo = usuarioSes().toLowerCase();
+    const c = yo && cajerosTodos().find(x => String(x.usuario || x.id).toLowerCase() === yo);
+    if (c) { _turnoSel = c.id; _turnoOk = c.id; }
+  }
   const l = cajerosTurno();
   if (!l.length) {
     PK.c = null;

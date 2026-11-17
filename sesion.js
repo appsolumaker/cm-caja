@@ -19,6 +19,7 @@ function modsSesion(){
 function puedeCaja(n){ const m = modsSesion(); return m.indexOf("todos") >= 0 || m.indexOf("ventas_" + n) >= 0; }
 async function guardarSesion(r){
   S.ses = { token: r.token, usuario: r.usuario || {}, desde: Date.now() };
+  S.recienEntro = Date.now();   // 5.0i: acaba de poner su contraseña (o vino con el pase): su turno no se la vuelve a pedir
   S.sesionMal = ""; S.noDirecta = false;
   await kvSet("sesion", S.ses);
 }
@@ -73,6 +74,7 @@ async function entrarConPase(){
   } catch (e) { S.avisoPase = "No se pudo usar el pase del sistema (" + e.message + ")."; }
 }
 async function continuarArranque(){
+  if (await arranqueSistema()) return;   // 5.0i · Tanda 3B-1: con el sistema nuevo, se entra a una caja sin activar el equipo
   // 1) El equipo
   if (!S.eq) {
     if (navigator.onLine === false) {
@@ -108,6 +110,131 @@ async function continuarArranque(){
     aviso({ icono: "🧾", titulo: "Este equipo es de la Caja " + S.eq.caja, html: "Tocaste la <b>Caja " + S.paseCaja + "</b> en el sistema, pero este equipo está activado para la <b>Caja " + esc(S.eq.caja) + "</b>: aquí se vende como Caja " + esc(S.eq.caja) + "." });
   }
   S.paseCaja = 0;
+}
+
+// ══ CAJA 5.0 · TANDA 3B-1 (14-11-2026): entrar a una caja SIN activar el equipo ══
+//  Si el sistema dice acceso «sistema» (cj_ping), no hay clave maestra: al entrar con el usuario (el pase de la tarjeta
+//  del Index, o usuario y contraseña) el sistema le da a este equipo la llave de ESA caja (una por caja: el
+//  administrador puede vender en varias). Con un sistema viejo, o con un equipo activado de antes que tiene un turno
+//  abierto, todo sigue como siempre.
+//  El turno: si la caja ya tiene un turno abierto del MISMO cajero (en otro equipo), este equipo lo sigue («adoptar»)
+//  y el otro deja de vender. Si es de otro cajero y entra el administrador, vende en ese turno como administrador.
+async function dispId(){
+  let d = await kvGet("disp");
+  if (!d) { d = uuid().replace(/-/g, "").slice(0, 16); await kvSet("disp", d); }
+  return d;
+}
+function nombreDisp(){
+  const ua = navigator.userAgent || "";
+  return /android/i.test(ua) ? "Teléfono Android" : /iphone|ipad/i.test(ua) ? "iPhone o iPad" : /windows/i.test(ua) ? "PC Windows" : /mac/i.test(ua) ? "Mac" : "Equipo";
+}
+async function accesoSistema(){
+  if (S.acceso === "sistema" || S.acceso === "viejo") return S.acceso === "sistema";
+  const guardado = await kvGet("acceso");
+  const preguntar = async () => {
+    try { const r = await api("cj_ping", {}, 20000); if (r && r.ok) { const a = r.acceso === "sistema" ? "sistema" : "viejo"; await kvSet("acceso", a); return a; } } catch (e) {}
+    return "";
+  };
+  if (guardado) { S.acceso = guardado; if (navigator.onLine !== false) preguntar(); }   // lo de la vez pasada; se revisa por detrás para la próxima
+  else S.acceso = (navigator.onLine !== false ? await preguntar() : "") || "";
+  return S.acceso === "sistema";
+}
+function esAdminSes(){ const u = S.ses && S.ses.usuario; return !!u && (String(u.rol || "").toLowerCase() === "admin" || modsSesion().indexOf("todos") >= 0); }
+function usuarioSes(){ const u = S.ses && S.ses.usuario; return u ? String(u.usuario || "") : ""; }
+function hayPendientes(){ return (S.ventas || []).some(v => v.estado === "por_subir") || (S.cierres || []).some(c => !c.subido); }
+// true si se encargó del arranque (mostró una pantalla); false para seguir con el arranque de siempre
+async function arranqueSistema(){
+  if (!(await accesoSistema())) return false;
+  if (S.eq && !S.eq.auto && S.turno) return false;   // equipo activado de antes con su turno abierto: sigue así hasta cerrarlo
+  if (!sesionViva()) {
+    if (S.eq && S.eq.auto) return false;   // la llave de esta caja vuelve a entrar sola (o pide usuario)
+    pantallaLogin((S.avisoPase ? esc(S.avisoPase) + "<br><br>" : "") + "Entra con tu usuario y contraseña del sistema.");
+    S.avisoPase = "";
+    return true;
+  }
+  if (sesionDirecta()) return false;   // sesión renovada con la llave: solo de esta caja
+  const quiere = Number(S.paseCaja) || (S.eq && S.eq.auto ? Number(S.eq.caja) : 0);
+  if (!quiere) { pantallaElegirCaja(); return true; }
+  if (S.entroCaja === quiere && S.eq && S.eq.auto && Number(S.eq.caja) === quiere) { S.paseCaja = 0; return false; }   // ya entró en esta carga de la página
+  if (navigator.onLine === false) return !(S.eq && S.eq.auto && Number(S.eq.caja) === quiere) ? (pantalla({ ico: "📡", html: "<p>Para entrar a la <b>Caja " + quiere + "</b> la primera vez hace falta <b>internet</b>.</p>", btns: '<button type="button" class="btn green" onclick="location.reload()">🔄 Reintentar</button>' }), true) : false;
+  // Cambiar de caja con un turno abierto o ventas sin subir: no (se mezclarían)
+  if (S.eq && Number(S.eq.caja) !== quiere && (S.turno || hayPendientes())) {
+    S.paseCaja = 0;
+    aviso({ icono: "🧾", titulo: "Este equipo está en la Caja " + esc(S.eq.caja), html: S.turno ? "Aquí está abierto el turno de <b>" + esc(S.turno.cajeroNombre) + "</b> en la Caja " + esc(S.eq.caja) + ". Para entrar a la Caja " + quiere + " en este equipo, primero cierra ese turno." : "Este equipo tiene ventas de la Caja " + esc(S.eq.caja) + " sin subir. Cuando suban (con internet), podrás entrar a la Caja " + quiere + "." });
+    return false;
+  }
+  pantallaCargando("Entrando a la Caja " + quiere + "…");
+  const llaves = (await kvGet("llaves")) || {};
+  let r = null;
+  try { r = await api("cj_entrar_caja", { caja: quiere, disp: await dispId(), nombreDisp: nombreDisp(), token: llaves[quiere] || (S.eq && S.eq.auto && Number(S.eq.caja) === quiere ? S.eq.token : "") }, 30000); }
+  catch (e) {
+    if (S.eq && S.eq.auto && Number(S.eq.caja) === quiere) return false;   // sin conexión: sigue con lo que tenía
+    pantalla({ ico: "📡", html: "<p>No se pudo entrar a la Caja " + quiere + ": " + esc(e.message) + "</p>", btns: '<button type="button" class="btn green" onclick="location.reload()">🔄 Reintentar</button>' });
+    return true;
+  }
+  S.paseCaja = 0;
+  if (!r || !r.ok) {
+    if (r && r.codigo === "SESION") return true;   // ya pidió entrar otra vez
+    pantalla({ ico: "🧾", html: "<p>" + esc((r && r.msg) || "El sistema no respondió.") + "</p>",
+      btns: '<button type="button" class="btn" onclick="irSistema(this)">🏠 Volver al inicio</button>' });
+    return true;
+  }
+  const cambia = !S.eq || Number(S.eq.caja) !== Number(r.caja);
+  const token = r.token || llaves[r.caja] || (S.eq && S.eq.token) || "";
+  llaves[r.caja] = token;
+  await kvSet("llaves", llaves);
+  S.eq = { token: token, equipo: r.equipo, caja: r.caja, nombre: r.nombre, auto: true, activado: ahoraTxt() };
+  await kvSet("equipo", S.eq);
+  if (cambia) await borrarDatosDelEquipo();   // los datos de la otra caja (las ventas sin subir no: no hay)
+  S.permisoMal = ""; S.reemplazado = false;
+  S.entroCaja = Number(r.caja);
+  await turnoDelSistema(r);
+  return false;   // sigue: datos → vender (o abrir turno)
+}
+// Lo que dice el sistema del turno de esta caja → el turno de este equipo
+async function turnoDelSistema(r){
+  const t = r.turno, yo = usuarioSes().toLowerCase();
+  const loc = S.turno;
+  if (loc && loc.invitado && (!t || t.id !== loc.id)) { S.turno = null; await kvSet("turno", null); }   // el turno donde vendía como administrador ya se cerró
+  else if (loc && (!t || t.id !== loc.id) && !(S.ventas || []).some(v => v.turno === loc.id && v.estado === "por_subir")) {   // 5.0l: se cerró en otro equipo
+    S.turno = null; await kvSet("turno", null);
+    aviso({ icono: "🔒", titulo: "Tu turno ya se cerró", html: "El turno de <b>" + esc(loc.cajeroNombre) + "</b> que estaba abierto en este equipo se cerró desde otro equipo (por ejemplo, el administrador). Para vender, abre un turno nuevo." });
+  }
+  if (!t) return;
+  const u0 = (S.ses && S.ses.usuario) || {}, nomT = String(t.cajeroNombre || "").trim().toLowerCase();
+  const mio = yo && (String(t.cajeroId || "").toLowerCase() === yo ||   // 5.0m: un turno viejo sin usuario anotado: por el nombre
+    (!t.cajeroId && nomT && (nomT === yo || nomT === String(u0.nombre || "").trim().toLowerCase())));
+  if (mio && (!S.turno || S.turno.id === t.id) && t.equipo !== r.equipo) {   // el mismo cajero: sigue su turno en este equipo
+    let a = null;
+    try { a = await api("cj_turno", { op: "adoptar", id: t.id }, 30000); } catch (e) { a = null; }
+    if (!(a && a.ok && a.turno) && !(a && a.codigo === "CERRADO")) a = { ok: true, turno: t };   // 5.0p: es su turno: sigue en él aunque el sistema no lo haya anotado (los dos equipos venden)
+    if (a && a.ok && a.turno) {
+      const x = a.turno;
+      S.turno = Object.assign({}, S.turno || {}, { id: x.id, cajeroId: x.cajeroId, cajeroNombre: x.cajeroNombre, apertura: x.apertura, aperturaMs: x.aperturaMs,
+        fondoBs: x.fondoBs, fondoUsd: x.fondoUsd, avisado: true, adoptado: !S.turno || !!S.turno.invitado });
+      delete S.turno.invitado; delete S.turno.de; delete S.turno.cierraAdmin;   // 5.0m: es su turno (no vende como invitado)
+      S.turnoOtro = "";
+      await kvSet("turno", S.turno);
+      toast("✅ Estás en tu turno de la Caja " + r.caja);
+    } else if (a && a.msg) aviso({ icono: "🔒", titulo: "Ese turno ya se cerró", html: esc(a.msg) + " Para vender, abre un turno nuevo." });
+    return;
+  }
+  if (mio && S.turno && S.turno.id === t.id) return;   // ya era de este equipo
+  if (!mio && r.admin && !S.turno) {   // el administrador vende en el turno de otro cajero
+    const u = S.ses.usuario || {};
+    S.turno = { id: t.id, cajeroId: String(u.usuario || ""), cajeroNombre: String(u.nombre || u.usuario || "") + " (administrador)", apertura: t.apertura, aperturaMs: t.aperturaMs,
+                fondoBs: 0, fondoUsd: 0, avisado: true, invitado: true, de: t.cajeroNombre };
+    await kvSet("turno", S.turno);
+    aviso({ icono: "⭐", titulo: "Vendes en la caja de " + esc(t.cajeroNombre), html: "La <b>Caja " + esc(r.caja) + "</b> tiene abierto el turno de <b>" + esc(t.cajeroNombre) + "</b>. Lo que vendas aquí queda como venta del <b>administrador</b>, pero el dinero es de esta caja y entra en el cierre de ese turno." });
+  }
+}
+// Sin pase (se abrió la caja directo): ¿a qué caja entra?
+function pantallaElegirCaja(){
+  const l = esAdminSes() ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5].filter(puedeCaja);
+  if (l.length === 1) { S.paseCaja = l[0]; continuarArranque(); return; }
+  if (!l.length) { pantalla({ ico: "🔒", html: "<p>Tu usuario no tiene ninguna caja. El administrador te la asigna en <b>Configuración → Usuarios</b>.</p>", btns: '<button type="button" class="btn" onclick="cerrarSesion(this)">🚪 Entrar con otro usuario</button>' }); return; }
+  pantalla({ ico: "🧾", html: "<p>¿A qué caja entras?</p>",
+    btns: '<div class="ac-cajas">' + l.map(n => '<button type="button" class="btn green" onclick="S.paseCaja=' + n + ';continuarArranque()">Caja ' + n + "</button>").join(" ") + "</div>" });
 }
 
 // ── Usuario y clave ──
@@ -309,6 +436,7 @@ async function irSistema(btn){
     return;
   }
   if (!sesionViva()) { aviso({ icono: "🔐", titulo: "Primero entra", html: "Entra con tu usuario y clave para abrir el sistema." }); return; }
+  irSistemaAqui(btn); return;   // 5.0j: vuelve a la pestaña del sistema (lo de abajo quedó de antes)
   // 1) Si el sistema abrió esta caja y sigue abierto, se vuelve a esa pestaña
   try {
     if (window.opener && !window.opener.closed) {
@@ -337,4 +465,37 @@ async function irSistema(btn){
     return;
   }
   try { w.location.href = r.url; w.focus(); } catch (e) { location.href = r.url; }
+}
+
+// 5.0j · 🏠 Sistema: primero sube lo pendiente. Después vuelve a la pestaña del sistema:
+//  1) si el navegador deja pasar a ella, pasa (la caja sigue abierta);
+//  2) si no, y el sistema abrió esta caja, la caja se cierra y el navegador vuelve solo a la pestaña del sistema;
+//  3) si la caja no la abrió el sistema (se abrió directo), el sistema se abre aquí mismo con un pase (sin pedir login).
+async function irSistemaAqui(btn){
+  if (ventaAMedias()) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de volver al inicio." }); return; }
+  let n = (S.ventas || []).filter(v => v.estado === "por_subir").length;
+  if (n && S.online !== false && navigator.onLine !== false) {   // 5.0k: solo si hay algo por subir (sin actualizar datos: eso es lo que tardaba)
+    btnOcupado(btn, "Subiendo…");
+    try { await sincronizar(false); } catch (e) {}
+    n = (S.ventas || []).filter(v => v.estado === "por_subir").length;
+    btnLibre(btn);
+  }
+  if (n && !await confirmar({ icono: "📤", titulo: n === 1 ? "Falta subir 1 venta" : "Faltan subir " + n + " ventas", ok: "Volver al inicio igual", colorOk: "naranja",
+      html: "Todavía no suben al sistema. Quedan guardadas en este equipo y se suben solas la próxima vez que abras la caja con internet." })) return;
+  let op = null;
+  try { op = window.opener && !window.opener.closed ? window.opener : null; } catch (e) { op = null; }
+  if (op) {
+    try { op.focus(); } catch (e) {}
+    await espera(350);
+    if (document.visibilityState === "hidden") return;   // pasó a la pestaña del sistema
+    try { window.close(); } catch (e) {}
+    await espera(300);   // si el navegador la cerró, aquí termina
+  }
+  btnOcupado(btn, "Abriendo…");
+  let r = null;
+  try { r = await api("cj_pase", {}, 30000); } catch (e) { r = { ok: false, msg: e.message }; }
+  if (r && (r.ok || r.codigo === "SOLO_CAJA") && r.url) { location.href = r.url; return; }
+  btnLibre(btn);
+  if (r && r.codigo === "SESION") return;
+  aviso({ icono: "🏠", titulo: "No se abrió el sistema", html: esc((r && r.msg) || "El sistema no respondió.") });
 }

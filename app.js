@@ -31,13 +31,15 @@
 //  dónde) ③ ¿cuánto? (en efectivo: ¿con cuánto te pagó? y el vuelto) [el delivery] ④ revisar y registrar. Mismas cuentas.
 //  3.6: ① ¿Cómo pagará el cliente? (De contado · Con crédito, total o parcial · Con Cashea) ② Bolívares · Dólares · Pago
 //  mixto ③ el método (solo de esa moneda) ④ el monto («¿Con cuánto te pagó?» ya trae el total) ⑤ el vuelto, si sobra.
+//  5.0 (14-11-2026): el número de la factura se pide al sistema al registrar (numeros.js: pedirNumeroVenta). Con un sistema
+//   viejo sigue con los números apartados.
 //  4.9: en pantalla nunca dice «gaveta» (dice «caja»). El total de la factura, la barra del teléfono y el modal de pago
 //  llevan el monto en Bs grande y el de $ debajo; en Venta en Dólares (TasaBin), el $ grande y los Bs debajo (totalesTxt).
 //  4.9 · Tasas (tasas.js): la BCV ya no se escribe a mano (🔄 la trae del BCV y queda en el sistema); fin de semana /
 //  feriado: se elige con cuál se cobra hoy; brecha / Divisas se guardan en el sistema; las tasas llegan a todas las cajas
 //  cada 2 minutos. ✏️ Editar servicio (tanda2.js).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "4.9 · 11-11-2026";
+const APP_VER = "5.0t · 16-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -77,7 +79,7 @@ const S = {
   permisoMal: "",    // texto si el sistema dijo que este equipo no tiene permiso
   datosMal: "",      // texto si el sistema no pudo dar los datos
   tasaOkHoy: "",     // fecha en que el cajero confirmó la tasa vieja
-  filtro: "hoy",
+  filtro: "turno",   // 5.0o: lo del turno abierto (sin turno: hoy)
   vista: "vender"
 };
 const F = nuevaFactura();   // la venta que se está armando
@@ -122,6 +124,7 @@ function guardarVentaNueva(v){
     const gn = kv.get("numeros"), g = kv.get("seq");   // en este orden: primero el número, después se guarda la venta
     let numeros = null;
     gn.onsuccess = () => {
+      if (Number(v.numeroTicket) > 0) { v.provisional = false; return; }   // 5.0: el número ya lo dio el sistema (pedirNumeroVenta)
       numeros = numNormal(gn.result);
       const n = numTomar(numeros);
       v.numeroTicket = n || 0; v.provisional = !n;
@@ -186,6 +189,7 @@ async function arrancar(){
   S.turno = await kvGet("turno") || null;
   S.cierres = await kvGet("cierres") || [];
   S.movs = await kvGet("movs") || [];             // 3.3 (gaveta.js): lo registrado de la gaveta
+  OT = Object.assign(OT, await kvGet("otrasTurno") || {});   // 5.0m: lo del turno hecho en otros equipos de la caja
   S.ultFondo = await kvGet("ultFondo") || null;   // Tanda 1b: lo que dejó en la gaveta el último cierre de este equipo
   S.clientesNuevos = await kvGet("clientesNuevos") || [];
   S.esperas = await kvGet("esperas") || [];       // Etapa 2: facturas en espera guardadas en este equipo (ordenes.js)
@@ -232,7 +236,8 @@ function listo(){
   // 2.9: lo PRIMERO es el cajero. Sin turno: «¿Quién está en la caja?» (antes de la facturación). Con turno: su PIN
   // al abrir la caja, y también después de activar el equipo o de entrar otra vez con usuario y clave.
   if (!S.turno && (S.vista === "vender" || !_listoYa)) { mostrarVista("turno"); seguro(pintarTurno); }
-  if (S.turno && (!_listoYa || S.pedirPin)) bloquear();   // cajero.js
+  const yaEntro = S.eq && S.eq.auto && S.turno && S.recienEntro && Date.now() - S.recienEntro < 120000 && usuarioSes().toLowerCase() === String(S.turno.cajeroId || "").toLowerCase();   // 5.0i: recién entró con su contraseña
+  if (S.turno && (!_listoYa || S.pedirPin) && !yaEntro) bloquear();   // cajero.js
   S.pedirPin = false;
   if (_listoYa) { sincronizar(); return; }
   _listoYa = true;
@@ -242,11 +247,12 @@ function listo(){
   setInterval(() => { if (S.online !== false) actualizarDatos(null, true); }, 20 * 60000);
   setTimeout(existenciasAlDia, 15000);
   setInterval(existenciasAlDia, 2 * 60000);   // existencias al día entre cajas (solo si cambiaron)
+  setInterval(() => { if (!document.hidden) otrasAlDia(S.vista === "ventas" ? 2 * 60000 : 5 * 60000); }, 60000);   // 5.0m: las ventas de los otros equipos del turno
   window.addEventListener("online", () => { sincronizar(); revisarVersion(); });
   setTimeout(revisarVersion, 5000);
   setInterval(revisarVersion, 30 * 60000);
   window.addEventListener("offline", () => marcarOnline(false));
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { sincronizar(); setTimeout(existenciasAlDia, 1500); } });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { sincronizar(); setTimeout(existenciasAlDia, 1500); setTimeout(() => otrasAlDia(60000), 2500); } });
 }
 async function primeraDescarga(btn){
   btnOcupado(btn, "Descargando…");
@@ -317,6 +323,7 @@ async function actualizarDatos(btn, silencioso){
   btnOcupado(btn, "Actualizando…");
   try {
     await descargarDatos();
+    await otrasAlDia(0);   // 5.0m: y las ventas del turno hechas en los otros equipos de esta caja
     btnLibre(btn);
     if (!silencioso) toast("✅ Datos actualizados");
     pintarTodo();
@@ -344,7 +351,7 @@ function irA(v){
   if (S.cierreAdmin && v !== "cierre") { cancelarCierreAdmin(); return; }   // cajero.js: el Administrador solo vino a cerrar el turno
   if (v === "vender" && !S.turno) { mostrarVista("turno"); pintarTurno(); return; }   // primero, abrir turno
   mostrarVista(v);
-  if (v === "ventas") pintarVentas();
+  if (v === "ventas") { pintarVentas(); otrasAlDia(60000); }   // 5.0m: con lo de los otros equipos (si tiene más de 1 minuto)
   if (v === "ajustes") pintarAjustes();
   if (v === "vender") setTimeout(() => { const b = $("busca"); if (b && window.innerWidth > 820) b.focus(); }, 50);
 }
@@ -413,7 +420,7 @@ function menuVtaAccion(a){
   if (a === "actualizar") { actualizarDatos(null, false); toast("🔄 Actualizando datos…"); return; }
   if (a === "cierre") { irCierre(); return; }
   if (a === "bloquear") { bloquear(); return; }
-  if (a === "sacar") { gvGasto(); return; }   // 3.3 (gaveta.js)
+  if (a === "sacar") { if (S.turno && S.turno.invitado) { aviso({ icono: "💸", titulo: "Solo el cajero", html: "Sacar efectivo de la caja de <b>" + esc(S.turno.de || "otro cajero") + "</b> lo hace su cajero." }); return; } gvGasto(); return; }   // 3.3 (gaveta.js)
   if (a === "facturas") { abrirFacturasAnt(); return; }   // 3.9 (tanda2.js)
   if (a === "servicio") { nuevoServicio(); return; }       // 3.9 (tanda2.js)
   irA(a);
@@ -486,6 +493,7 @@ function pintarBanners(){
   let h = "";
   { const rl = relojTxt(); if (rl) h += '<div class="banner av">' + rl + "</div>"; }   // 4.4
   if (S.permisoMal) h += '<div class="banner mal">⛔ ' + esc(S.permisoMal) + (S.reemplazado ? " Las ventas guardadas se suben solas; cierra el turno." : ' Puedes seguir vendiendo; las ventas quedan guardadas en este equipo. <a href="#" onclick="olvidarEquipo();return false;" style="color:inherit;font-weight:800;">Activar otra vez</a>') + "</div>";
+  if (S.turnoOtro) h += '<div class="banner mal">🧾 ' + esc(S.turnoOtro) + ' <a href="#" onclick="location.reload();return false;" style="color:inherit;font-weight:800;">Entrar otra vez</a></div>';   // 5.0i · Tanda 3B-1
   if (S.datosMal) h += '<div class="banner mal">⛔ ' + esc(S.datosMal) + ' <a href="#" onclick="actualizarDatos(null,false);return false;" style="color:inherit;font-weight:800;">Reintentar</a></div>';
   if (S.sesionMal) h += '<div class="banner av">🔐 ' + esc(S.sesionMal) + ' <a href="#" onclick="pedirEntrarOtraVez();return false;" style="color:inherit;font-weight:800;">Entrar</a></div>';
   if (S.datos && typeof hayQuePreguntarTasa === "function" && hayQuePreguntarTasa()) h += '<div class="banner av">💱 Hoy el BCV no tiene tasa propia: elige con cuál se cobra hoy. ' +   // 4.9 (tasas.js)
@@ -494,7 +502,7 @@ function pintarBanners(){
       ? "El sistema todavía tiene la tasa BCV del <b>" + fechaCorta(S.tasas.fecha) + "</b>: no se ha actualizado hoy. "
       : "Las tasas de este equipo son del <b>" + fechaCorta(S.tasas.fecha) + "</b>. Con internet se actualizan solas. ") +
     '<a href="#" onclick="actualizarTasaBCV(null);return false;" style="color:inherit;font-weight:800;">🔄 Actualizar tasa BCV</a>.</div>';
-  if (S.turno && S.num && !S.num.lista.length && S.online === false) h += '<div class="banner av">🔢 Este equipo no tiene números de factura apartados: los tickets salen <b>provisionales</b> y el sistema les da su número al subirlos.</div>';
+  if (!numPedir() && S.turno && S.num && !S.num.lista.length && S.online === false) h += '<div class="banner av">🔢 Este equipo no tiene números de factura apartados: los tickets salen <b>provisionales</b> y el sistema les da su número al subirlos.</div>';
   if (_verNueva) h += '<div class="banner av">🔄 Hay una versión nueva de la caja. Se actualiza sola cuando termines esta venta.</div>';
   const c = cuentas();
   if (c.mal) h += '<div class="banner av">⚠️ ' + c.mal + ' venta' + (c.mal > 1 ? "s" : "") + ' no se pudo' + (c.mal > 1 ? "eron" : "") + ' registrar en el sistema. ' + (c.mal > 1 ? "Están guardadas" : "Está guardada") + ' en este equipo: revisa el motivo en <a href="#" onclick="irA(\'ventas\');filtrarVentas(\'mal\');return false;" style="color:inherit;font-weight:800;">Ventas → Con problema</a>.</div>';
@@ -773,6 +781,8 @@ async function agregar(p){
 // ══ LA VENTA (factura) ══
 function pintarNumFactura(){
   const el = $("numFactura"); if (!el) return;
+  const bdg = $("badgeNum"); if (bdg) bdg.classList.toggle("oculto", numPedir());   // 5.0c: el número lo da el sistema al registrar: no se muestra
+  if (numPedir()) return;
   const N = S.num; el.value = N && N.lista && N.lista.length ? String(N.lista[0]) : (S.turno ? "Provisional" : "—");
 }
 function pintarSelectores(){
@@ -1065,6 +1075,7 @@ async function limpiarVentaConfirmar(){
 function limpiarVenta(){
   const tp = F.tipoPrecio;
   Object.assign(F, nuevaFactura()); F.tipoPrecio = tp;   // el vendedor vuelve al de la caja (como en Ventas)
+  F.idVenta = "";   // 5.0: la próxima venta lleva su propio código (y su propio número)
   $("busca").value = "";
   pintarSelectores(); buscar(); pintarFactura();
   if (_verNueva && !_ventaGuardada) setTimeout(recargarSiSePuede, 300);
@@ -1433,6 +1444,11 @@ async function crearCliente(btn){
 // ✅ Registrar Venta, como en Ventas: si la factura está en Genérico, primero "¿A quién le vendes?"
 // S2: solo se vende con la caja abierta por el cajero del turno (el Administrador que vino a cerrar el turno de otro no vende)
 function puedeVender(){
+  if (S.turnoOtro) {   // 5.0i · Tanda 3B-1: el mismo cajero siguió el turno en otro equipo
+    try { cerrarPago(); } catch (e) {}
+    aviso({ icono: "🧾", titulo: "Tu turno siguió en otro equipo", html: esc(S.turnoOtro) + "<br><br>Si quieres volver a vender aquí, toca <b>Entrar otra vez</b> (arriba): este equipo se queda con la caja y el otro deja de vender." });
+    return false;
+  }
   if (S.reemplazado) {   // 4.1 · un solo equipo por caja: otro equipo ya es esta caja
     try { cerrarPago(); } catch (e) {}
     aviso({ icono: "🧾", titulo: "Este equipo ya no es la caja", html: esc(S.permisoMal || "Otro equipo reemplazó a este.") + "<br><br>Las ventas que tenga guardadas se suben solas con internet. Cierra el turno en <b>☰ Menú → Cerrar turno</b>." });
@@ -1566,11 +1582,11 @@ async function abrirPago(){
     $("pgTotalBs").innerHTML = tx.seg + (T.dlv > 0 ? " · incluye " + esc(dlvTxt().toLowerCase()) + " $" + fmt(T.dlv) : "");
   }
   $("pgPaso1").classList.toggle("oculto", !aparte); $("pgPaso1M").textContent = "$" + fmt(T.prod);
-  $("pgHint").innerHTML = m === "div"
-    ? "💵 <b>Venta en Dólares</b>: los $ van a la par · los Bs a tasa Divisas <b>Bs " + fmt(tDiv()) + "</b>."
-    : "Venta en <b>$ BCV</b>: los Bs van a tasa BCV <b>Bs " + fmt(tBcv()) + "</b> · los $ a la tasa que elijas en cada línea" +
-      (m === "off" && !tDivOff() ? " (este negocio no tiene tasa Divisas: los $ valen a la BCV)" : "") + "." +
-    (F.fechaAnt ? "<br>📅 <b>Venta del " + fechaCorta(F.fechaAnt.fecha) + "</b>, con las tasas de ese día." : "");
+  // 5.0d: una línea corta con las tasas (antes: una explicación larga)
+  const tdh = m === "off" ? tDivOff() : tDiv();
+  $("pgHint").innerHTML = (m === "div" ? "💵 Venta en dólares · Tasa Divisas <b>Bs " + fmt(tDiv()) + "</b>"
+      : "Tasa BCV <b>Bs " + fmt(tBcv()) + "</b>" + (tdh > 0 ? " · Divisas <b>Bs " + fmt(tdh) + "</b>" : "")) +
+    (F.fechaAnt ? " · 📅 Venta del <b>" + fechaCorta(F.fechaAnt.fecha) + "</b>" : "");
   $("pgRef").value = ""; $("pgObs").value = "";
   $("pgForm").classList.remove("oculto"); $("pgOk").classList.add("oculto");
   $("pgPie").classList.remove("oculto"); $("pgPieOk").classList.add("oculto"); $("pgX").classList.remove("oculto"); $("pgTit").textContent = "💳 Pago del cliente";
@@ -1679,22 +1695,63 @@ function pguDesc(m){
   return g[1] + " " + (pguNorm(e) === pguNorm(g[2]) || pguNorm(e).indexOf(pguNorm(g[2])) === 0 ? e : g[2] + " · " + e);
 }
 function metodoDe(nombre){ return metodos().find(x => x.metodo === nombre) || null; }
+// 5.0g: primero el MÉTODO y después la CUENTA (solo si ese método tiene varias). Un cuadro grande por método:
+//  · Con UNA cuenta: debajo, en pequeño, el banco; al tocarlo se usa esa cuenta.
+//  · Con VARIAS: debajo dice «3 cuentas»; al tocarlo, en el mismo lugar sale «¿A qué cuenta entra…?» con un cuadro por cuenta.
+//  Los métodos sin cuenta asociada no se muestran (no se pueden usar). Sirve igual en el paso Método, «＋ Otro método» y el vuelto.
+let PGU_ABIERTO = null;   // { fn, mon, tipo }: el método del que se está eligiendo la cuenta
+function pguAbierto(fn){ return !!(PGU_ABIERTO && PGU_ABIERTO.fn === fn); }
+function pguRepintar(fn){
+  if (!P) return;
+  if (fn === "pgVtAgregar") pgPintarVuelto(); else if (fn === "pgAgregar") pgPintarMetodos(); else pgWzPintar();
+  setTimeout(() => { const f = document.querySelector(".pgu-ctas .pgu-chip") || document.querySelector(".pw-s:not(.oculto) .pgu-chip"); if (f && window.innerWidth > 820) f.focus(); }, 40);
+}
+function pguElegir(fn, mon, tipo){ PGU_ABIERTO = { fn, mon, tipo }; pguRepintar(fn); }
+function pguVolver(){ const fn = PGU_ABIERTO && PGU_ABIERTO.fn; PGU_ABIERTO = null; if (fn) pguRepintar(fn); }
+function pguCuenta(fn, i){ PGU_ABIERTO = null; if (typeof window[fn] === "function") window[fn](i); }
+// Los métodos con cuenta de una moneda, juntos por tipo (los «Otros» van cada uno aparte)
+function pguGruposDe(mon){
+  const orden = PGU_GRUPOS[mon].map(g => g[0]), grupos = [];
+  metodos().map((m, i) => ({ m, i })).filter(o => o.m.tipo === mon && o.m.conCuenta)
+    .sort((a, b) => (orden.indexOf(pguTipoDe(a.m)) - orden.indexOf(pguTipoDe(b.m))) || (a.i - b.i))
+    .forEach(o => {
+      const t = pguTipoDe(o.m), g = t === "otro" ? null : grupos.find(x => x.tipo === t);
+      if (g) g.ms.push(o); else grupos.push({ tipo: t === "otro" ? "otro#" + o.i : t, g: pguGrupo(o.m), ms: [o] });
+    });
+  return grupos;
+}
 function pgFilasMetodos(fn, usados, conCredito, soloMon){
+  const esUsado = o => usados.indexOf(o.m.metodo) >= 0;
+  const tile = (cls, us, onclick, tit, a, b) => '<button type="button" class="pgu-chip pgu-tile ' + cls + (us ? " usado" : "") + '" title="' + esc(tit) + '" onclick="' + onclick + '">' +
+    '<span class="t1">' + a + "</span>" + (b ? "<small>" + b + "</small>" : "") + "</button>";
+  // ¿A qué cuenta? (el método ya está elegido)
+  if (pguAbierto(fn)) {
+    const A = PGU_ABIERTO, gr = pguGruposDe(A.mon).find(x => x.tipo === A.tipo);
+    if (gr && gr.ms.length > 1) {
+      const cls = A.mon === "BS" ? "bs" : "usd", vt = fn === "pgVtAgregar" || fn === "pgVtDirecto";
+      return '<div class="pw-preg ' + cls + '">' + (vt ? "Vuelto por " + gr.g[1] + " " + esc(gr.g[2]) + ": ¿de qué cuenta sale?" : "¿A qué cuenta entra el " + gr.g[1] + " " + esc(gr.g[2]) + "?") + "</div>" +
+        '<div class="pgu-tiles pgu-ctas">' + gr.ms.map(o => tile(cls, esUsado(o), "pguCuenta('" + fn + "'," + o.i + ")", o.m.metodo, esc(pguEtiqueta(o.m)), "")).join("") + "</div>" +
+        '<div style="text-align:center;margin-top:10px;"><button type="button" class="pgu-mas" onclick="pguVolver()">← Otro método</button></div>';
+    }
+    PGU_ABIERTO = null;   // ya no tiene varias cuentas (se actualizaron los datos): la lista normal
+  }
   const cols = [];
   [["BS", "bs", "💙 En bolívares"], ["USD", "usd", "💚 En dólares"]].forEach(([mon, cls, tit]) => {
     if (soloMon && soloMon !== mon) return;   // 3.5: el paso ② muestra solo la moneda elegida
-    const ms = metodos().map((m, i) => ({ m, i })).filter(o => o.m.tipo === mon);
-    if (!ms.length) return;
-    let h = '<div class="pgu-col"><div class="pgu-mon-tit ' + cls + '">' + tit + "</div>";
-    PGU_GRUPOS[mon].forEach(g => {
-      const del = ms.filter(o => pguTipoDe(o.m) === g[0]); if (!del.length) return;
-      h += '<div class="pgu-fila"><span class="pgu-grp">' + g[1] + " " + g[2] + '</span><div class="pgu-chips">' + del.map(o => {
-        const ok = o.m.conCuenta, us = usados.indexOf(o.m.metodo) >= 0;
-        return '<button type="button" class="pgu-chip ' + cls + (us ? " usado" : "") + '"' + (ok ? "" : " disabled") + ' title="' + esc(o.m.metodo + (ok ? "" : " — sin cuenta asociada")) + '" onclick="' + fn + "(" + o.i + ')">' + esc(pguEtiqueta(o.m)) + (ok ? "" : " (sin cuenta)") + "</button>";
-      }).join("") + "</div></div>";
-    });
-    cols.push(h + "</div>");
+    const grupos = pguGruposDe(mon);
+    if (!grupos.length) return;
+    cols.push('<div class="pgu-col">' + (soloMon ? "" : '<div class="pgu-mon-tit ' + cls + '">' + tit + "</div>") + '<div class="pgu-tiles">' + grupos.map(gr => {
+      const g = gr.g, otro = gr.tipo.indexOf("otro") === 0;
+      if (gr.ms.length === 1) {   // una sola cuenta: el método en grande y el banco debajo
+        const o = gr.ms[0], et = pguEtiqueta(o.m);
+        const igual = otro || pguNorm(et) === pguNorm(g[2]) || pguNorm(et).indexOf(pguNorm(g[2])) === 0;   // el nombre ya dice el método
+        return tile(cls, esUsado(o), fn + "(" + o.i + ")", o.m.metodo, (otro ? "" : g[1] + " ") + esc(igual ? et : g[2]), igual ? "" : esc(et));
+      }
+      const us = gr.ms.find(esUsado);   // varias cuentas: al tocarlo se elige la cuenta
+      return tile(cls, !!us, "pguElegir('" + fn + "','" + mon + "','" + gr.tipo + "')", g[2], g[1] + " " + esc(g[2]), us ? "✓ " + esc(pguEtiqueta(us.m)) : gr.ms.length + " cuentas");
+    }).join("") + "</div></div>");
   });
+  if (!cols.length) return '<div class="pw-aviso">No hay métodos de pago ' + (soloMon === "BS" ? "en bolívares " : soloMon === "USD" ? "en dólares " : "") + "con una cuenta asociada. Asígnales su cuenta en Configuración del sistema.</div>";
   let html = '<div class="pgu-cols' + (cols.length < 2 ? " una" : "") + '">' + cols.join("") + "</div>";
   if (conCredito && metodoCredito() && !(P && P.cs.on)) html += '<div class="pgu-mon-tit otros">Otros</div><div class="pgu-fila linea1"><span class="pgu-grp">📝 A crédito</span><div class="pgu-chips"><button type="button" class="pgu-chip cred' + (P.cred.on ? " on" : "") + '" onclick="pgCredito()">' + (P.cred.on ? "✓ Crédito" : "Crédito") + "</button></div></div>";
   return html;
@@ -1754,13 +1811,7 @@ function pgActualizar(){
   P.lineas.forEach(l => {
     const el = $("pgE_" + l.id); if (!el) return;
     if (!(Number(l.monto) > 0)) { el.innerHTML = ""; return; }
-    let t = "cubre <b>" + txtU(pgCubre(l)) + "</b>";
-    if (m !== "div" && l.tipo === "BS") t += " (Bs " + fmt(l.monto) + " ÷ " + fmt(tBcv()) + ")";
-    if (m === "div" && l.tipo === "BS") t += " (Bs " + fmt(l.monto) + " ÷ " + fmt(tDiv()) + ")";
-    if (l.tipo === "USD" && m !== "div") t += " (a Bs " + fmt(pgTasaLinea(l)) + ")";
-    if (m === "bcv") t += " · vale <b>" + txtL(pgVale(l)) + "</b>";
-    else if (m === "off" && l.tipo === "USD") t += " · vale <b>" + txtL(pgVale(l)) + "</b>" + (tDivOff() > 0 ? " (a Divisas Bs " + fmt(tDivOff()) + ")" : "");
-    el.innerHTML = t;
+    el.innerHTML = "= <b>" + txtU(pgCubre(l)) + "</b> de la venta";   // 5.0d: corto (antes con la cuenta y lo que vale en divisas)
   });
   const ec = $("pgE_cred");
   if (ec) { const c = pgCredValor(), q = P.cred.cashea ? "a nombre de Cashea: " : "queda a deber "; ec.innerHTML = c > 0 ? (m === "bcv" ? q + "<b>" + txtU(c) + "</b>, fijo en BCV · hoy vale <b>$" + fmt(r2(c * factorCxC())) + " div</b>" : q + "<b>" + txtU(c) + "</b>") : ""; }
@@ -1777,10 +1828,10 @@ function pgActualizar(){
       if (Math.abs(st.queda) <= TOL) h = '<div class="bal ok">✅ Pago exacto con vuelto</div>';
       else if (st.queda > 0) h = '<div class="bal sobra">Faltan ' + txtU(st.queda) + " por devolver" + bs(st.queda) + "</div>";
       else h = '<div class="bal falta">⚠️ El vuelto pasa de lo que sobra por ' + txtU(-st.queda) + "</div>";
-    } else h = '<div class="bal ok">' + (P.dlv.on ? "✅ Productos pagados: " + txtU(P.total) : "✅ Pago exacto: cubierto " + txtU(P.total) + " de " + txtU(P.total)) + "</div>";
+    } else h = '<div class="bal ok">' + (P.dlv.on ? "✅ Productos pagados" : "✅ Pago completo") + "</div>";   // 5.0d
     if (st.pend <= TOL && Math.abs(st.dif) > 0.01 && !(st.pend < -TOL && !P.vt.on)) {
       const favor = st.dif > 0;
-      h += '<div class="dif ' + (favor ? "afavor" : "encontra") + '">💹 Diferencial ' + (favor ? "a favor" : "en contra") + ": <b>" + txtL(Math.abs(st.dif)) + "</b>. Lo recibido vale " + txtL(r2(st.vale + st.credVale - st.vtVale)) + " y la venta vale " + txtL(st.valorVenta) + "." + pgMotivoDif() + "</div>";
+      h += '<div class="dif ' + (favor ? "afavor" : "encontra") + '">💹 Diferencial ' + (favor ? "a favor" : "en contra") + ": <b>" + txtL(Math.abs(st.dif)) + "</b>." + pgMotivoDif() + "</div>";   // 5.0d: sin «lo recibido vale… la venta vale…»
     }
   }
   $("pgBal").innerHTML = h;
@@ -1798,7 +1849,7 @@ function pgActualizar(){
     todo.innerHTML = uno && dos ? '<div class="pg-todo ok">✅ Todo pagado. Toca <b>Registrar</b>.</div>'
       : '<div class="pg-todo falta">Falta: ' + [uno ? "" : "① los productos", dos ? "" : "② el " + dlvTxt(P.dlv.tipo).toLowerCase()].filter(Boolean).join(" y ") + "</div>";
   }
-  $("pgLineasTit").classList.toggle("oculto", !(P.lineas.length || P.cred.on));
+  $("pgLineasTit").classList.add("oculto");   // 5.0d: sin el título «Pagos de esta venta»
   pgExtrasTxt();
 }
 function pgMotivoDif(){
@@ -1975,7 +2026,7 @@ function pgWzPasos(){
 function pgHaySobra(){ return !!P && P.lineas.length > 0 && pgEstado().pend < -TOL; }
 function pgIr(k){
   if (!P) return;
-  P.paso = k; if (k !== "4") P.listo = null; P.verOtros = false;
+  P.paso = k; if (k !== "4") P.listo = null; P.verOtros = false; PGU_ABIERTO = null;
   if (k === "3" || k === "V") { pgWzSync(); pgPintarLineas(); pgVtAjustar(); pgPintarVuelto(); pgActualizar(); }
   pgWzPintar();
   setTimeout(() => {
@@ -2013,7 +2064,7 @@ function pgWzPintar(){
   // ① ¿La venta incluye crédito?
   if (k === "1") {
     const div = P.modo === "div";
-    let h = '<div class="pw-preg">¿Cómo pagará el cliente?</div><div class="pw-ops">' +
+    let h = '<div class="pw-preg">¿Cómo pagará el cliente?</div><div class="pw-ops">' +   // 5.0d: la franja la pone .pw-preg (estilos.css)
       pgWzCard(P.tipo === "contado", "pgWzTipo('contado')", "✅", "De contado", "Paga todo ahora") +
       (metodoCredito() ? pgWzCard(P.tipo === "credito", "pgWzTipo('credito')", "📝", "Con crédito", "Total o parcial") : "") +
       (pgCsPuede() && !P.dlv.on ? pgWzCard(P.tipo === "cashea", "pgWzTipo('cashea')", '<span class="cs-marca">Cashea</span>', "Con Cashea", div ? "Va a precio BCV: quita 💵 Venta en Dólares para usarlo" : "Paga un inicial y Cashea el resto", div) : "") + "</div>";
@@ -2039,24 +2090,24 @@ function pgWzPintar(){
   // ③ El método (3.6: pantalla aparte, solo de la moneda elegida)
   if (k === "M") {
     const mon = P.como === "BS" ? "Bolívares" : P.como === "USD" ? "Dólares" : "";
-    $("pgPM").innerHTML = '<div class="pw-preg">' + (P.como === "MIX" ? "Toca un método en <b>Bs</b> y uno en <b>$</b>" : "¿Por dónde paga en " + mon + "?") + "</div>" +
+    $("pgPM").innerHTML = (pguAbierto("pgWzMetodo") ? "" : '<div class="pw-preg' + (P.como === "BS" ? " bs" : P.como === "USD" ? " usd" : "") + '">' + (P.como === "MIX" ? "Toca un método en Bs y uno en $" : "¿Por dónde paga en " + mon.toLowerCase() + "?") + "</div>") +
       pgFilasMetodos("pgWzMetodo", P.lineas.map(l => l.metodo), false, P.como === "MIX" ? null : P.como);
   }
   // ③ ¿Cuánto?
   if (k === "3") {
     const mix = P.lineas.some(l => l.tipo === "BS") && P.lineas.some(l => l.tipo === "USD");
-    $("pgP3").innerHTML = '<div class="pw-preg">' + (P.tipo === "credito" ? "¿Cuánto paga ahora?" : mix ? "¿Cuánto paga en " + (P.lineas[0].tipo === "USD" ? "$" : "Bs") + "? Lo demás se calcula solo." : "¿Cuánto paga?") + "</div>" +
-      (P.tipo === "credito" ? '<div class="cie-ayuda" style="text-align:center;">Lo que no pague ahora queda a deber.</div>' : "");
+    const monP3 = mix ? P.lineas[0].tipo : P.como;   // 5.0e: la franja con el color de la moneda
+    $("pgP3").innerHTML = '<div class="pw-preg' + (monP3 === "BS" ? " bs" : monP3 === "USD" ? " usd" : "") + '">' + (P.tipo === "credito" ? "¿Cuánto paga ahora? Lo demás queda a deber" : mix ? "¿Cuánto paga en " + (P.lineas[0].tipo === "USD" ? "$" : "Bs") + "?" : "¿Cuánto paga?") + "</div>";   // 5.0d: una sola línea
     $("pgOtrosBox").innerHTML = P.lineas.length >= 3 ? "" : (P.verOtros
-      ? '<div class="pw-preg pw-sub">Toca el otro método</div>' + pgFilasMetodos("pgWzOtro", P.lineas.map(l => l.metodo), false, P.como === "MIX" ? null : P.como) + '<div style="text-align:center;"><button type="button" class="lnk" onclick="P.verOtros=false;pgWzPintar()">Cancelar</button></div>'
-      : '<div style="text-align:center;margin:6px 0;"><button type="button" class="pgu-mas" onclick="P.verOtros=true;pgWzPintar()">＋ Paga con otro método también</button></div>');
+      ? (pguAbierto("pgWzOtro") ? "" : '<div class="pw-preg pw-sub">Toca el otro método</div>') + pgFilasMetodos("pgWzOtro", P.lineas.map(l => l.metodo), false, P.como === "MIX" ? null : P.como) + '<div style="text-align:center;"><button type="button" class="lnk" onclick="P.verOtros=false;PGU_ABIERTO=null;pgWzPintar()">Cancelar</button></div>'
+      : '<div style="text-align:center;margin:6px 0;"><button type="button" class="pgu-mas" onclick="P.verOtros=true;pgWzPintar()">＋ Otro método</button></div>');
   }
   // El vuelto (3.6: pantalla aparte)
   if (k === "V") {
     const st = pgEstado(), sobraX = -st.pendX;
     $("pgPV").innerHTML = '<div class="pw-preg">💸 Sobran ' + (sobraX > 0 ? txtU(-st.pend) + " · Bs " + fmt(r2(sobraX * bsPorU())) : "") + "</div>" +
       (P.sinVuelto ? '<div class="pw-sinvt" style="font-size:15px;">No le das vuelto: queda como diferencial a favor del negocio.<br><button type="button" class="lnk" onclick="pgWzSinVuelto(false)">Mejor sí le doy vuelto</button></div>'
-        : P.vt.on ? "" : '<div class="pw-preg pw-sub">¿En qué le das el vuelto?</div>' + pgFilasMetodos("pgVtDirecto", [], false) +
+        : P.vt.on ? "" : (pguAbierto("pgVtDirecto") ? "" : '<div class="pw-preg pw-sub">¿En qué le das el vuelto?</div>') + pgFilasMetodos("pgVtDirecto", [], false) +
           '<div style="text-align:center;margin-top:8px;"><button type="button" class="lnk" onclick="pgWzSinVuelto(true)">No le doy vuelto (queda a favor del negocio)</button></div>');
   }
   // Delivery: los días si queda a deber y no los eligió en el paso ①
@@ -2171,6 +2222,7 @@ async function pgA4(){ const b = $("pgSig"); btnOcupado(b, "Revisando…"); let 
 function pgAtras(){
   if (!P) { cerrarPago(); return; }
   if ($("pgCerrar").disabled) return;
+  if (PGU_ABIERTO) { pguVolver(); return; }   // 5.0g: eligiendo la cuenta, «Atrás» vuelve a los métodos
   const l = pgWzPasos().filter(x => !x.salta), i = l.findIndex(x => x.k === P.paso);
   if (i <= 0) { cerrarPago(); return; }
   pgIr(l[i - 1].k);
@@ -2475,12 +2527,31 @@ async function pgGuardar(pagos, vuelto){
     total: totPant, totalBs: totBs, totalBcv: m === "div" ? (tb > 0 ? r2(totBs / tb) : 0) : totPant,
     estado: "por_subir", intentos: 0, msg: "", avisos: [], numeroFactura: "", subidaEn: 0
   };
+  // 5.0: el número de la factura lo da el sistema ahora. Si no llega, la venta se queda aquí y se reintenta con el MISMO
+  // código (F.idVenta): el sistema devuelve el mismo número y no se gasta otro.
+  let barra = null;
+  if (numPedir()) {
+    F.idVenta = F.idVenta || v.id;
+    v.id = F.idVenta;
+    try { const x = await pedirNumeroVenta(v); barra = x.barra; v.numeroTicket = x.numero; v.provisional = false; }
+    catch (e) {
+      btnLibre(btn); $("pgCerrar").disabled = false;
+      const r = await modal({ icono: "🔢", titulo: "No se pudo obtener el número de la factura",
+        html: '<div class="m-txt">' + (e && e.red ? "No hay conexión con el sistema, o tardó demasiado en responder." : esc((e && e.message) || "El sistema no respondió.")) +
+          "<br><br>La venta <b>no se registró</b> y sigue aquí, tal cual: no entregues el ticket.<br>Revisa el internet y toca <b>🔄 Reintentar</b>.</div>",
+        botones: [{ txt: "Cancelar", v: false }, { txt: "🔄 Reintentar", v: true, cls: "green" }] });
+      if (r === true && P) pgGuardar(pagos, vuelto);
+      return;
+    }
+  }
   try { await guardarVentaNueva(v); }
   catch (e) {
+    if (barra) barra.cerrar();
     btnLibre(btn); $("pgCerrar").disabled = false;
     aviso({ icono: "❌", titulo: "La venta NO se guardó", html: "El equipo no pudo guardarla (" + esc(e.message) + "). No entregues el ticket: vuelve a tocar <b>✅ Registrar</b>. Si sigue fallando, anótala en papel y avísale al administrador." });
     return;
   }
+  if (barra) barra.cerrar();
   S.ventas.push(v); _vendidoLocal = null;
   _ventaGuardada = v;
   btnLibre(btn); $("pgCerrar").disabled = false;
@@ -2621,9 +2692,24 @@ function imprimirHTML(html){
 
 // ══ CIERRE DE TURNO ══
 function esEfectivo(p){ const m = metodoDe(p.metodo) || { metodo: p.metodo, tipo: p.tipo }; return pguTipoDe(m) === "efectivo"; }
+// 5.0s (Revisión Historial): ¿esta venta del turno se anuló en el sistema? Lo dice el sistema (cjVentasTurno → OT.anuladas)
+function anuladaEnSistema(v){
+  if (!v || !v.numeroFactura || !OT.tid || v.turno !== OT.tid) return false;
+  return (OT.anuladas || []).indexOf(String(v.numeroFactura)) >= 0;
+}
+function bcvDe0(v){ return v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0; }
+// Lo que el sistema restó por esas ventas anuladas («Ventas anuladas» en MovCaja): se muestra junto a ellas, no en «Movido desde el sistema»
+function cieAnulOcultas(sis, R){
+  const nums = {}; ((R && R.anuladas && R.anuladas.lista) || []).forEach(a => { if (a.num) nums["Factura #" + a.num] = true; });
+  const movs = (sis && sis.movs) || [], oc = movs.filter(m => m.origen === "anulacion_venta" && nums[String(m.ref || "")]);
+  const s = { bs: 0, usd: 0 };
+  oc.forEach(m => { if (m.moneda === "BS") s.bs = r2(s.bs + Number(m.monto || 0)); else s.usd = r2(s.usd + Number(m.monto || 0)); });
+  return { bs: s.bs, usd: s.usd, sisVis: Object.assign({}, sis || {}, { movs: movs.filter(m => oc.indexOf(m) < 0) }) };
+}
 function resumenTurno(t){
-  const todas = S.ventas.filter(v => v.turno === t.id && v.estado !== "invalida");
-  const vs = todas.filter(v => !v.fechaAnt), otras = todas.filter(v => v.fechaAnt);   // Tanda 1: las ventas de otro día no cuentan en la gaveta de hoy
+  const todas = S.ventas.filter(v => v.turno === t.id && v.estado !== "invalida").concat(otrasDe(t.id));   // 5.0l/5.0m: + las de los otros equipos de la caja
+  const vsT = todas.filter(v => !v.fechaAnt), otras = todas.filter(v => v.fechaAnt);   // Tanda 1: las ventas de otro día no cuentan en la gaveta de hoy
+  const anul = vsT.filter(anuladaEnSistema), vs = vsT.filter(v => !anuladaEnSistema(v));   // 5.0s: las anuladas en el sistema no cuentan en las ventas del turno
   const met = {};
   let totalUsd = 0, totalBs = 0, credito = 0, desc = 0, sinSubir = 0, cashea = 0, casheaBs = 0, saf = 0;
   const sumar = (p, m) => {
@@ -2647,14 +2733,22 @@ function resumenTurno(t){
     (v.pago.vuelto || []).forEach(p => sumar(p, -(Number(p.monto) || 0)));
   });
   const metodos = Object.values(met).sort((a, b) => (a.tipo === b.tipo ? 0 : a.tipo === "BS" ? -1 : 1) || a.desc.localeCompare(b.desc));
-  const efBs = metodos.filter(m => m.efectivo && m.tipo === "BS").reduce((s, m) => s + m.neto, 0);
-  const efUsd = metodos.filter(m => m.efectivo && m.tipo === "USD").reduce((s, m) => s + m.neto, 0);
+  // 5.0s: su efectivo SÍ sigue en «lo de las ventas»: el sistema lo resta aparte («Ventas anuladas», MovCaja), así el cierre cuadra igual
+  const efAn = { BS: 0, USD: 0 };
+  anul.forEach(v => {
+    (v.pago.pagos || []).forEach(p => { if ((p.tipo === "BS" || p.tipo === "USD") && esEfectivo(p)) efAn[p.tipo] += Number(p.monto) || 0; });
+    (v.pago.vuelto || []).forEach(p => { if ((p.tipo === "BS" || p.tipo === "USD") && esEfectivo(p)) efAn[p.tipo] -= Number(p.monto) || 0; });
+  });
+  const efBs = metodos.filter(m => m.efectivo && m.tipo === "BS").reduce((s, m) => s + m.neto, 0) + efAn.BS;
+  const efUsd = metodos.filter(m => m.efectivo && m.tipo === "USD").reduce((s, m) => s + m.neto, 0) + efAn.USD;
+  const anuladas = { n: anul.length, lista: anul.map(v => ({ num: String(v.numeroFactura || ""), nro: "#" + (v.numeroFactura || v.numeroTicket || ""), totalBs: r2(Number(v.totalBs) || 0), totalUsd: r2(bcvDe0(v)) })) };
   const bcvDe = v => v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0;
   const otroDia = { n: otras.length, totalBs: r2(otras.reduce((s, v) => s + (Number(v.totalBs) || 0), 0)), totalUsd: r2(otras.reduce((s, v) => s + bcvDe(v), 0)),
     lista: otras.map(v => ({ nro: v.numeroFactura ? "#" + v.numeroFactura : (v.numeroTicket ? "#" + v.numeroTicket : "PROV " + v.numero), fecha: v.fecha, totalBs: r2(Number(v.totalBs) || 0) })) };
   sinSubir += otras.filter(v => v.estado !== "subida").length;
   const gv = gvSuma(t.id);   // 3.3 (gaveta.js): gastos, faltantes, sobrantes y redondeos registrados en este turno
-  return { ventas: vs.length, totalUsd: r2(totalUsd), totalBs: r2(totalBs), credito: r2(credito), cashea: r2(cashea), casheaBs: r2(casheaBs), saf: r2(saf), otroDia: otroDia, descuentos: r2(desc), sinSubir,
+  cjmDe(t.id).forEach(m => { if (m.moneda === "BS") gv.bs = r2(gv.bs + m.monto); else gv.usd = r2(gv.usd + m.monto); });   // 5.0l/5.0m: los registrados en otro equipo
+  return { ventas: vs.length, anuladas: anuladas, totalUsd: r2(totalUsd), totalBs: r2(totalBs), credito: r2(credito), cashea: r2(cashea), casheaBs: r2(casheaBs), saf: r2(saf), otroDia: otroDia, descuentos: r2(desc), sinSubir,
            metodos, efBsVentas: r2(efBs), efUsdVentas: r2(efUsd),
            gaveta: gvParaCierre(t.id), gavetaBs: gv.bs, gavetaUsd: gv.usd,
            efBsEsperado: r2((Number(t.fondoBs) || 0) + efBs + gv.bs), efUsdEsperado: r2((Number(t.fondoUsd) || 0) + efUsd + gv.usd) };
@@ -2684,14 +2778,92 @@ function cieQuedaTxt(){
       '<div class="q-sale">📤 <span>Sale de la caja (se le entrega al dueño o al encargado):</span><b>Bs ' + fmt(r2(x.bs - q.bs)) + " · $" + fmt(r2(x.usd - q.usd)) + "</b></div></div>" : "");   // 1c: más claro (lo contado ya está arriba)
 }
 const CIE_PASOS = [["1", "Efectivo Bs"], ["2", "Efectivo $"], ["3", "Revisar"], ["4", "Lo que queda"], ["5", "Cerrar"]];
-function irCierre(){
+async function irCierre(){
   if (!S.turno) return;
   if (F.items.length || P) { aviso({ icono: "🧾", titulo: "Hay una venta a medias", html: "Termina la venta (o vacíala con 🗑️) antes de cerrar el turno." }); return; }
+  if (cajaConSistema() && !(await cierreDelSistema())) return;   // 5.0l · Tanda 3B-2 (5.0n: también un equipo activado de antes)
   if (CIE.tid !== S.turno.id) Object.assign(CIE, { paso: 1, bs: "", usd: "", obs: "", qBs: "", qUsd: "", hora: "", tid: S.turno.id });
   else if (CIE.paso > 3) CIE.paso = 3;   // 1b: volvió a cerrar (p. ej. registró la venta que faltaba): lo contado se queda y se revisa otra vez
   CIE.sis = null;
   mostrarVista("cierre"); pintarCierre();
   cierreTraerSistema();
+}
+// ══ 5.0l · TANDA 3B-2: el cierre con lo que está en el sistema ══
+//  El turno puede haber vendido en varios equipos (el mismo cajero que siguió en otro, o el administrador). Antes de
+//  cerrar: se sube lo de este equipo y se trae del sistema lo del turno. Si hay facturas con número entregado cuya
+//  venta todavía no sube, NO se cierra: se espera (o, si el equipo se dañó o se perdió, un administrador las marca
+//  como no usadas). El administrador también puede cerrar el turno de un cajero, con un aviso que explica todo.
+//  true = se puede seguir al cierre.
+async function cierreDelSistema(){
+  const t = S.turno;
+  if (!hayInternet()) {
+    aviso({ icono: "📡", titulo: "Para cerrar hace falta internet", html: "El cierre se calcula con lo que está en el sistema: las ventas de este turno en <b>todos</b> los equipos. Conéctate a internet y vuelve a tocar <b>Cerrar turno</b>. Mientras tanto puedes seguir vendiendo." });
+    return false;
+  }
+  if (t.invitado && !t.cierraAdmin && !await confirmar({ icono: "⭐", titulo: "¿Cerrar el turno de " + esc(t.de || "otro cajero") + "?", ok: "Sí, cerrar su turno", colorOk: "naranja",
+      html: '<div class="m-txt" style="text-align:left;line-height:1.55;">Este es el turno de <b>' + esc(t.de || "otro cajero") + "</b> en la <b>Caja " + esc(S.eq.caja) + "</b>. Ciérralo solo si " + esc(t.de || "el cajero") + " no puede (por ejemplo, se fue)." +
+        "<br><br>• Vas a <b>contar el efectivo</b> que hay en esta caja, como en cualquier cierre." +
+        "<br>• El cierre suma <b>todas</b> las ventas del turno, también las que hizo " + esc(t.de || "el cajero") + " en su equipo." +
+        "<br>• Si su equipo tiene ventas sin subir, primero hay que esperar a que suban." +
+        "<br>• Al cerrarlo, su equipo ya <b>no podrá vender</b> en este turno: tendrá que abrir uno nuevo." +
+        "<br>• En el cierre queda anotado que lo cerraste tú.</div>" })) return false;
+  const b = barraProgreso("Revisando las ventas del turno…");
+  try { await sincronizar(false); } catch (e) {}
+  let r = null;
+  try { r = await api("cj_turno", { op: "ventas", id: t.id }, 60000); } catch (e) { r = { ok: false, msg: e.message }; }
+  b.cerrar();
+  if (!r || !r.ok) { aviso({ icono: "❌", titulo: "No se pudo revisar el turno", html: esc((r && r.msg) || "El sistema no respondió.") + "<br><br>Vuelve a tocar <b>Cerrar turno</b>." }); return false; }
+  const mias = {};
+  S.ventas.filter(v => v.turno === t.id).forEach(v => { mias[v.id] = v; });
+  if ((r.pendientes || []).length) return await cierrePendientes(r.pendientes, mias);
+  await otrasGuardar(t.id, r);   // 5.0m: lo de los otros equipos (las de este equipo se quitan al usarlas)
+  const x = r.turno || {};
+  if (t.invitado || t.adoptado) {   // el cierre va a nombre del cajero del turno, con su fondo
+    const u = (S.ses && S.ses.usuario) || {};
+    S.turno = Object.assign({}, t, { cajeroId: x.cajeroId || t.cajeroId, cajeroNombre: x.cajeroNombre || t.cajeroNombre, apertura: x.apertura || t.apertura,
+      aperturaMs: x.aperturaMs || t.aperturaMs, fondoBs: x.fondoBs, fondoUsd: x.fondoUsd },
+      t.invitado ? { cierraAdmin: String(u.nombre || u.usuario || "Administrador") } : {});
+    try { await kvSet("turno", S.turno); } catch (e) {}
+  }
+  return true;
+}
+// Hay facturas con número entregado cuya venta no ha subido: se espera. Si el equipo se dañó o se perdió, un
+// administrador las marca como no usadas (las de ESTE equipo no: se suben solas).
+async function cierrePendientes(pend, mias){
+  const aqui = pend.filter(p => mias[p.ventaId]), fuera = pend.filter(p => !mias[p.ventaId]);
+  const lin = p => "<li>Factura <b>#" + esc(p.numero) + "</b>" + (p.entregado ? " · número dado el " + esc(p.entregado) : "") + "</li>";
+  const html = '<div class="m-txt" style="text-align:left;line-height:1.55;">Para que el cierre cuadre, primero tienen que subir al sistema todas las ventas de este turno.' +
+    (aqui.length ? "<br><br><b>En este equipo</b> (se suben solas con internet):<ul>" + aqui.map(lin).join("") + "</ul>" : "") +
+    (fuera.length ? "<br><b>En otro equipo</b> (ábrelo con internet para que suban):<ul>" + fuera.map(lin).join("") + "</ul>" : "") +
+    (fuera.length ? '<span style="color:var(--text-dim);font-size:13px;">Si ese equipo se dañó o se perdió, esas ventas nunca van a llegar: un administrador las puede marcar como <b>no usadas</b> para poder cerrar.</span>' : "") + "</div>";
+  const bt = [{ txt: "Cerrar", v: "" }, { txt: "🔄 Revisar otra vez", v: "otra", cls: "green" }];
+  if (fuera.length) bt.splice(1, 0, { txt: "Marcar como no usadas", v: "marcar", cls: "naranja" });
+  const q = await modal({ icono: "📤", titulo: pend.length === 1 ? "Falta subir 1 venta" : "Faltan subir " + pend.length + " ventas", html: html, botones: bt });
+  if (q === "otra") return await cierreDelSistema();
+  if (q !== "marcar") return false;
+  // Lo autoriza un administrador: el que está en la caja, o con su usuario y contraseña
+  let extra = {}, cred = null;
+  if (!esAdminSes()) {
+    const a = await modal({ icono: "⭐", titulo: "Autoriza un administrador",
+      html: '<div class="m-txt">Las facturas <b>' + fuera.map(p => "#" + esc(p.numero)).join(", ") + "</b> quedan como <b>no usadas</b> (con el motivo). Si una de esas ventas llega después, se registra igual y queda marcada.</div>" +
+        '<label class="lbl" for="nuUsu">Usuario del administrador</label><input class="inp" id="nuUsu" autocapitalize="off" placeholder="Usuario">' +
+        '<label class="lbl" for="nuCla">Contraseña</label><input class="inp" id="nuCla" type="password" placeholder="Contraseña">',
+      botones: [{ txt: "Cancelar", v: null }, { txt: "Marcar como no usadas", v: "ok", cls: "naranja" }], foco: "nuUsu",
+      antes: v => {
+        if (v !== "ok") return true;
+        cred = { u: String(($("nuUsu") || {}).value || "").trim(), c: String(($("nuCla") || {}).value || "") };
+        if (!cred.u || !cred.c) { const i = !cred.u ? $("nuUsu") : $("nuCla"); if (i) i.focus(); return false; }
+        return true;
+      } });
+    if (a !== "ok" || !cred) return false;
+    extra = { adminUsuario: cred.u, adminClave: cred.c };
+  } else if (!await confirmar({ icono: "⭐", titulo: "¿Marcarlas como no usadas?", ok: "Sí, marcar", colorOk: "naranja",
+      html: "Las facturas <b>" + fuera.map(p => "#" + esc(p.numero)).join(", ") + "</b> quedan como <b>no usadas</b>, con el motivo y tu nombre. Si una de esas ventas llega después, se registra igual y queda marcada." })) return false;
+  let r = null;
+  try { r = await api("cj_turno", Object.assign({ op: "no_usados", id: S.turno.id, numeros: fuera.map(p => p.numero) }, extra), 30000); } catch (e) { r = { ok: false, msg: e.message }; }
+  if (!r || !r.ok) { aviso({ icono: "❌", titulo: "No se marcaron", html: esc((r && r.msg) || "El sistema no respondió.") }); return false; }
+  toast("✅ " + r.n + (r.n === 1 ? " factura marcada" : " facturas marcadas") + " como no usada" + (r.n === 1 ? "" : "s"));
+  return await cierreDelSistema();
 }
 // 4.2 · Lo que ya está registrado en el sistema con el efectivo durante este turno, sin decir de qué caja
 async function cieSinCaja(){
@@ -2773,7 +2945,10 @@ function pintarCierre(){
     const od = R.otroDia || { n: 0, lista: [] };   // Tanda 1: ventas de otro día hechas en este turno
     const filasOd = od.n ? '<div class="cie-tit">📅 Ventas de otro día (no cuentan en la caja)</div><table class="cie-tabla">' + od.lista.map(o => "<tr><td>" + esc(o.nro) + " · del " + fechaCorta(o.fecha) + '</td><td class="r">Bs ' + fmt(o.totalBs) + "</td></tr>").join("") +
       '</table><div class="cie-ayuda" style="margin-top:4px;">Se registran con su fecha y las tasas de ese día. Su dinero no se cuenta en el cierre de hoy.</div>' : "";
-    const sg = cierreSisGrupos(x.sis);
+    const oc = cieAnulOcultas(x.sis, R), sg = cierreSisGrupos(oc.sisVis);   // 5.0s
+    const an = R.anuladas || { n: 0, lista: [] };
+    const filasAn = an.n ? '<div class="cie-tit">🚫 Ventas anuladas en el sistema (no cuentan)</div><table class="cie-tabla">' + an.lista.map(a => "<tr><td>" + esc(a.nro) + '</td><td class="r">Bs ' + fmt(a.totalBs) + ' <span style="color:var(--text-dim);font-weight:600;">· $' + fmt(a.totalUsd) + " BCV</span></td></tr>").join("") +
+      '</table><div class="cie-ayuda" style="margin-top:4px;">Se anularon desde el sistema: no cuentan en las ventas ni en el efectivo que debe haber. Si se le devolvió el dinero al cliente, ya salió de la caja.</div>' : "";
     const sgn = v => (v > 0 ? "+" : v < 0 ? "−" : "") + fmt(Math.abs(v));
     const filasSis = sg.map(g => "<tr><td>" + (g.bs + g.usd >= 0 ? "+ " : "− ") + esc(g.etq) + ' <span class="cie-sis">(del sistema)</span></td><td class="r">' + (g.bs ? sgn(g.bs) : "—") + '</td><td class="r">' + (g.usd ? sgn(g.usd) : "—") + "</td></tr>").join("");
     const fila = (a, b, c, cls) => '<tr' + (cls ? ' class="' + cls + '"' : "") + "><td>" + a + '</td><td class="r">' + b + '</td><td class="r">' + c + "</td></tr>";
@@ -2786,16 +2961,16 @@ function pintarCierre(){
       '<div class="cie-tit">Efectivo en la caja</div>' +
       '<table class="cie-tabla"><tr><td></td><td class="r">Bs</td><td class="r">$</td></tr>' +
       fila("Fondo inicial", fmt(t.fondoBs), fmt(t.fondoUsd)) +
-      fila("+ Efectivo de las ventas (menos vuelto)", fmt(R.efBsVentas), fmt(R.efUsdVentas)) + filasSis + filasGv +
+      fila("+ Efectivo de las ventas (menos vuelto)", fmt(r2(R.efBsVentas + oc.bs)), fmt(r2(R.efUsdVentas + oc.usd))) + filasSis + filasGv +
       fila("<b>= Debe haber</b>", "<b>" + fmt(x.espBs) + "</b>", "<b>" + fmt(x.espUsd) + "</b>") +
       fila("Contaste", fmt(x.bs), fmt(x.usd)) +
       fila("<b>Resultado</b>", difHTML(x.dBs), difHTML(x.dUsd), "cie-res") + "</table>" + cieBloqueDescuadre(x) +
-      (x.sis && x.sis.movs.length ? '<div class="cie-tit">Movido desde el sistema</div><div class="cie-movs">' + x.sis.movs.map(m =>
+      (oc.sisVis.movs.length ? '<div class="cie-tit">Movido desde el sistema</div><div class="cie-movs">' + oc.sisVis.movs.map(m =>
         "<div><b>" + (m.monto >= 0 ? "+" : "−") + (m.moneda === "BS" ? "Bs " : "$") + fmt(Math.abs(m.monto)) + "</b> · " + esc(m.etiqueta) + (m.usuario ? " · " + esc(m.usuario) : "") + (m.hora ? " · " + esc(m.hora) : "") +
         (m.detalle ? '<div class="cie-sis">' + esc(m.detalle) + "</div>" : "") + "</div>").join("") + "</div>" : "") +
       '<div class="res" style="margin-top:12px;"><div><span>Ventas</span><b>' + R.ventas + '</b></div><div><span>Total</span><b>Bs ' + fmt(R.totalBs) + '</b><span style="text-transform:none;">$' + fmt(R.totalUsd) + " BCV</span></div>" +
       (R.descuentos ? '<div><span>Descuentos</span><b>$' + fmt(R.descuentos) + "</b></div>" : "") + "</div>" +
-      '<div class="cie-tit">Por método (cobrado menos vuelto)</div><table class="cie-tabla">' + (filasMet || '<tr><td colspan="2" style="color:var(--text-dim);">Sin ventas en este turno.</td></tr>') + "</table>" + filasOd +
+      '<div class="cie-tit">Por método (cobrado menos vuelto)</div><table class="cie-tabla">' + (filasMet || '<tr><td colspan="2" style="color:var(--text-dim);">Sin ventas en este turno.</td></tr>') + "</table>" + filasAn + filasOd +
       '<div class="m-btns">' + atras + '<button type="button" class="btn green" onclick="cierrePaso(4)">Siguiente →</button></div>';
   } else if (CIE.paso === 4) {   // 1b: lo que queda en la gaveta para el próximo turno (su fondo)
     cuerpo = '<div class="cie-paso"><div class="cie-preg">💵 ¿Cuánto efectivo <u>DEJAS en la caja</u> para el próximo turno?</div>' +
@@ -2867,14 +3042,15 @@ async function cerrarTurno(btn){
   const c = Object.assign({}, R, { id: t.id, cajeroId: t.cajeroId, cajeroNombre: t.cajeroNombre, apertura: t.apertura, aperturaMs: t.aperturaMs || 0, cierre: ahoraTxt(), cierreMs: Date.now(),
     fondoBs: t.fondoBs, fondoUsd: t.fondoUsd, efBsContado: x.bs, efUsdContado: x.usd, efBsEsperado: x.espBs, efUsdEsperado: x.espUsd, efBsDif: x.dBs, efUsdDif: x.dUsd,
     sistemaOk: !!sis.ok, sistemaBs: r2(sis.bs || 0), sistemaUsd: r2(sis.usd || 0), sistemaGrupos: cierreSisGrupos(sis),
-    obs: [S.cierreAdmin ? "Lo cerró " + S.cierreAdmin.nombre + " (" + t.cajeroNombre + " no estaba)." : "",
+    obs: [S.cierreAdmin ? "Lo cerró " + S.cierreAdmin.nombre + " (" + t.cajeroNombre + " no estaba)." : t.cierraAdmin ? "Lo cerró el administrador " + t.cierraAdmin + " desde otro equipo (" + t.cajeroNombre + " no estaba)." : "",
           t.fondoExpl ? "Al abrir, el fondo no coincidía: " + t.fondoExpl + "." : "",
           String(CIE.obs || "").trim()].filter(Boolean).join(" "),
-    cerradoPor: S.cierreAdmin ? S.cierreAdmin.nombre : t.cajeroNombre,
+    cerradoPor: S.cierreAdmin ? S.cierreAdmin.nombre : (t.cierraAdmin || t.cajeroNombre),
     queda: { bs: q.bs, usd: q.usd }, entregado: { bs: r2(x.bs - q.bs), usd: r2(x.usd - q.usd) },   // 1b: fondo encadenado
     fondoPrev: t.fondoPrev || null, fondoExpl: t.fondoExpl || "",
     caja: S.datos.caja, equipo: S.datos.equipo, estado: "por_subir", msg: "" });
   c.metodos = R.metodos.map(m => ({ metodo: m.metodo, tipo: m.tipo, desc: m.desc, neto: m.neto, efectivo: m.efectivo }));
+  { const oc = cieAnulOcultas(sis, R); c.efBsVentas = r2(R.efBsVentas + oc.bs); c.efUsdVentas = r2(R.efUsdVentas + oc.usd); c.sistemaGrupos = cierreSisGrupos(oc.sisVis); }   // 5.0s
   S.cierres.push(c);
   const uf = { caja: S.datos.caja, bs: q.bs, usd: q.usd, cajero: c.cajeroNombre, cierre: c.cierre, cierreMs: c.cierreMs, turno: t.id };   // 4.2: con la hora real (ms)
   try { await kvSet("cierres", S.cierres); await kvSet("turno", null); await kvSet("ultFondo", uf); S.ultFondo = uf; CIE.tid = ""; }
@@ -2905,6 +3081,8 @@ function htmlCierre(c){
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Por método (menos vuelto)</div><table>' +
     (c.metodos || []).map(m => fila(esc(String(m.desc || m.metodo).replace(/^[^\wÁÉÍÓÚÑáéíóúñ]+\s*/, "")), (m.tipo === "BS" ? "Bs " : "$") + fmt(m.neto))).join("") + (r2(c.credito - (c.cashea || 0)) > 0.004 ? fila("A crédito:", "$" + fmt(r2(c.credito - (c.cashea || 0)))) : "") +
     (c.cashea ? fila("Cashea:", "Bs " + fmt(c.casheaBs != null ? c.casheaBs : c.cashea)) : "") + (c.saf ? fila("Saldo a favor:", "$" + fmt(c.saf)) : "") + "</table>" +
+    (c.anuladas && c.anuladas.n ? '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Ventas anuladas (no cuentan)</div><table>' +
+      c.anuladas.lista.map(a => fila(esc(a.nro), "Bs " + fmt(a.totalBs))).join("") + "</table>" : "") +   // 5.0s
     (c.otroDia && c.otroDia.n ? '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Ventas de otro día (no van en la caja)</div><table>' +
       c.otroDia.lista.map(o => fila(esc(o.nro) + " del " + fechaCorta(o.fecha), "Bs " + fmt(o.totalBs))).join("") + "</table>" : "") +
     '<hr class="sep"><div style="font-size:9px;text-transform:uppercase;margin-bottom:3px;">Efectivo Bs</div><table>' +
@@ -2924,7 +3102,8 @@ function htmlCierre(c){
 // ══ SUBIR LAS VENTAS AL SISTEMA ══
 function datosParaSubir(v){
   return { id: v.id, numero: v.numero, creada: v.creada, fecha: v.fecha, tasas: v.tasas, items: v.items, pago: v.pago,
-           numeroFactura: v.numeroTicket || 0, turno: v.turno || "", caja: Number(v.caja) || 0 };   // S2: la caja donde se vendió
+           numeroFactura: v.numeroTicket || 0, turno: v.turno || "", caja: Number(v.caja) || 0,   // S2: la caja donde se vendió
+           total: v.total, totalBs: v.totalBs, totalBcv: v.totalBcv, unidad: v.unidad, modo: v.modo, fechaAnt: !!v.fechaAnt };   // 5.0p: los totales, para los otros equipos del turno
 }
 async function sincronizar(manual){
   if (!S.eq || !S.datos || S.sincronizando) return { subidas: 0 };
@@ -3045,60 +3224,134 @@ async function reintentar(id, btn){
   await subirAhora(btn);
 }
 
+// ══ 5.0m · LAS VENTAS DEL TURNO HECHAS EN LOS OTROS EQUIPOS DE ESTA CAJA ══
+//  El mismo usuario puede vender a la vez en varios equipos de su caja (por ejemplo, la computadora y el teléfono), y
+//  el administrador puede vender en la caja de un cajero. Cada equipo trae del sistema lo que se registró en los otros
+//  (al abrir Ventas, al tocar 🔄 Actualizar datos y cada pocos minutos) y lo suma en Ventas y en el turno.
+let OT = { tid: "", ventas: [], cjm: [], anuladas: [], en: 0 };
+// 5.0n: el sistema ya tiene las cajas por usuario (acceso «sistema»): también un equipo activado de antes (que sigue con
+// su turno abierto) trae lo de los otros equipos y cierra con lo que está en el sistema
+function cajaConSistema(){ return !!(S.eq && (S.eq.auto || S.acceso === "sistema")); }
+let _otPidiendo = false;
+function otrasDe(tid){   // sin las de este equipo (cuando una de aquí sube, también llega del sistema)
+  if (!tid || OT.tid !== tid) return [];
+  const mias = {}; S.ventas.forEach(v => { mias[v.id] = true; });
+  return (OT.ventas || []).filter(v => v && v.id && !mias[v.id]).map(v => Object.assign(otraConTotales(v), { _otro: true, estado: "subida" }));
+}
+// 5.0p: las ventas que subieron antes de la 5.0p no traen sus totales: se sacan de lo que sí traen (como en la caja que las hizo)
+function otraConTotales(v){
+  if (v.totalBs != null && v.total != null) return v;
+  const p = v.pago || {}, t = v.tasas || {}, bcv = Number(t.bcv) || 0, div = p.objetivoVenta === "DIVISAS", dl = Number(p.delivery) || 0;
+  let total = Number(p.totalPantallaUSD);
+  if (!(total > 0)) total = totales((v.items || []).map(i => ({ cantidad: i.cantidad, base: i.pu != null ? i.pu : i.precio, iva: i.iva })), { tipo: p.descuentoTipo || "ninguno", valor: Number(p.descuentoValor) || 0 }).total + dl;
+  const bsU = div ? (Number(t.div) > 0 ? Number(t.div) : bcv) : bcv;
+  v.total = r2(total); v.totalBs = r2((total - dl) * bsU + dl * bcv); v.totalBcv = div ? (bcv > 0 ? r2(v.totalBs / bcv) : 0) : v.total;
+  v.unidad = div ? "div" : "BCV"; v.modo = div ? "div" : (t.binOn ? "bcv" : "off"); v.fechaAnt = !!p.fechaAnterior;
+  return v;
+}
+function cjmDe(tid){
+  if (!tid || OT.tid !== tid) return [];
+  const ya = {}; (S.movs || []).forEach(m => { ya[m.id] = true; });
+  return (OT.cjm || []).filter(m => !ya[m.id]);
+}
+function otrasEnHoy(deHoy){ const n = deHoy.filter(v => v._otro).length; return n ? n + " en otro equipo" : ""; }
+async function otrasGuardar(tid, r){
+  OT = { tid: tid, ventas: r.ventas || [], cjm: r.cjm || [], anuladas: (r.anuladas || []).map(String), en: Date.now() };   // 5.0s: + las anuladas en el sistema
+  try { await kvSet("otrasTurno", OT); } catch (e) {}
+}
+// maxEdad: si lo que hay es más nuevo que esto (ms), no se vuelve a pedir (0 = pedirlo ya)
+async function otrasAlDia(maxEdad){
+  const t = S.turno;
+  if (!t || !cajaConSistema() || _otPidiendo || !hayInternet()) return;
+  if (maxEdad && OT.tid === t.id && Date.now() - OT.en < maxEdad) return;
+  _otPidiendo = true;
+  try {
+    const r = await api("cj_turno", { op: "ventas", id: t.id }, 45000);
+    if (!r || !r.ok || !S.turno || S.turno.id !== t.id) return;
+    const antes = otrasDe(t.id).length;
+    await otrasGuardar(t.id, r);
+    if (r.turno && r.turno.estado === "CERRADO" && !S.turnoOtro) { S.turnoOtro = "Este turno ya se cerró en otro equipo. Para seguir vendiendo, abre un turno nuevo."; seguro(pintarBanners); }
+    if (S.vista === "ventas") seguro(pintarVentas);
+    const n = otrasDe(t.id).length;
+    if (n > antes && antes >= 0 && S.vista === "ventas") toast("📱 " + (n - antes === 1 ? "Llegó 1 venta" : "Llegaron " + (n - antes) + " ventas") + " de otro equipo");
+  } catch (e) {} finally { _otPidiendo = false; }
+}
+
 // ══ VENTAS DEL EQUIPO ══
 function diaDe(v){ return String(v.creada || v.fecha || "").slice(0, 10); }   // el día en que se hizo la venta en el equipo
 function filtrarVentas(f){ S.filtro = f; document.querySelectorAll("#filtros button").forEach(b => b.classList.toggle("on", b.dataset.f === f)); pintarVentas(); }
 function estadoHTML(v){
-  if (v.estado === "subida") return (v.avisos && v.avisos.length) ? '<span class="est av">⚠️ En el sistema #' + esc(v.numeroFactura) + " · con avisos</span>" : '<span class="est sub">✅ En el sistema #' + esc(v.numeroFactura) + "</span>";
+  if (v.estado === "subida") return (v.avisos && v.avisos.length) ? '<span class="est av">⚠️ Factura #' + esc(v.numeroFactura) + " · con avisos</span>" : '<span class="est sub">✅ Factura #' + esc(v.numeroFactura) + "</span>";   // 5.0o
   if (v.estado === "por_subir") return '<span class="est por">⏳ Por subir</span>';
   return '<span class="est mal">❌ No se registró</span>';
 }
 function pintarVentas(){
+  // 5.0o: tarjetas y secciones con el estilo del sistema; lo del TURNO (también los días anteriores y los otros equipos) y lo de hoy
   const hoy = hoyTxt();
-  const deHoy = S.ventas.filter(v => diaDe(v) === hoy);   // Tanda 1: lo hecho hoy en este equipo (también las ventas de otro día)
+  const tu = S.turno, otrasT = tu ? otrasDe(tu.id) : [];   // 5.0m: las del turno hechas en los otros equipos de esta caja
+  if (S.filtro === "turno" && !tu) S.filtro = "hoy";
+  document.querySelectorAll("#filtros button").forEach(b => { b.classList.toggle("on", b.dataset.f === S.filtro); if (b.dataset.f === "turno") b.classList.toggle("oculto", !tu); });
+  const deHoy = S.ventas.filter(v => diaDe(v) === hoy).concat(otrasT.filter(v => diaDe(v) === hoy)).filter(v => !anuladaEnSistema(v));   // Tanda 1: lo hecho hoy (también las ventas de otro día) · 5.0s: sin las anuladas
   const bcvDe = v => v.totalBcv != null ? Number(v.totalBcv) || 0 : Number(v.total) || 0;   // en $ BCV (una Venta en Dólares, pasada con sus tasas)
   const sumBs = deHoy.reduce((s, v) => s + (Number(v.totalBs) || 0), 0), sumUsd = deHoy.reduce((s, v) => s + bcvDe(v), 0);
   const c = cuentas();
-  // Por método (hoy): lo cobrado menos el vuelto
-  const porMet = {};
-  deHoy.forEach(v => {
-    (v.pago.pagos || []).forEach(p => { const k = p.metodo + "|" + p.tipo; porMet[k] = (porMet[k] || 0) + (Number(p.monto) || 0); });
-    (v.pago.vuelto || []).forEach(p => { const k = p.metodo + "|" + p.tipo; porMet[k] = (porMet[k] || 0) - (Number(p.monto) || 0); });
-  });
-  const tu = S.turno;   // 1b: con cuánto abrió el turno y quién
-  const fi = tu ? (tu.fondoContado || { bs: tu.fondoBs, usd: tu.fondoUsd }) : null;   // 3.6: lo que había en la gaveta al abrir
-  // 3.7: tarjetas con ícono y color
-  const tj = (cls, ico, lbl, val, sub) => '<div class="rc ' + cls + '"><div class="rc-ico">' + ico + '</div><div class="rc-tx"><span class="rc-lbl">' + lbl + "</span>" + val + (sub ? '<span class="rc-sub">' + sub + "</span>" : "") + "</div></div>";
-  let h = (tu ? tj("rc-verde", "👤", "Turno abierto", "<b>" + esc(tu.cajeroNombre) + "</b>", "desde las " + horaDe(tu.apertura)) +
-      tj("rc-verde rc-fondo", "💵", "Fondo inicial de la caja", '<b>Bs ' + fmt(fi.bs) + '</b><b class="rc-b2">$' + fmt(fi.usd) + "</b>") : "") +
-    tj("rc-morado", "🧾", "Ventas de hoy", "<b>" + deHoy.length + "</b>", deHoy.length === 1 ? "venta" : "ventas") +
-    tj("rc-ambar", "💰", "Total de hoy", "<b>Bs " + fmt(sumBs) + "</b>", "$" + fmt(sumUsd) + " BCV") +
-    tj(c.por ? "rc-azul" : "rc-gris", c.por ? "⏳" : "☁️", "Por subir", "<b>" + c.por + "</b>", c.por ? "se suben solas con internet" : "todo está en el sistema") +
-    tj(c.mal ? "rc-rojo" : "rc-gris", c.mal ? "⚠️" : "✅", "Con problema", "<b>" + c.mal + "</b>", c.mal ? "revísalas abajo" : "ninguna");
-  const mets = Object.keys(porMet);
-  if (mets.length) h += '<div class="rc-mets"><div class="rc-mets-tit">💳 Hoy por método <small>(lo cobrado menos el vuelto)</small></div><div class="rc-mets-l">' +
-    mets.map(k => { const [m, t] = k.split("|"); return '<div class="rc-met ' + (t === "BS" ? "bs" : t === "USD" ? "usd" : "otro") + '"><span>' + esc(m) + "</span><b>" + (t === "BS" ? "Bs " : "$") + fmt(porMet[k]) + "</b></div>"; }).join("") + "</div></div>";
+  const R = tu ? resumenTurno(tu) : null;
+  const fi = tu ? (tu.fondoContado || { bs: tu.fondoBs, usd: tu.fondoUsd }) : null;   // 3.6: lo que había en la caja al abrir
+  const desde = tu ? (String(tu.apertura).slice(0, 10) === hoy ? "desde las " + horaDe(tu.apertura) : "desde el " + fechaCorta(tu.apertura) + " " + horaDe(tu.apertura)) : "";
+  // 5.0r: grande = la segunda línea en letra grande (la fecha del turno, los $); extra = una línea pequeña debajo
+  const kp = (color, ico, tit, val, sub, grande, extra) => '<div class="vk-card vk-' + color + '"><div class="vk-tit">' + tit + '</div><div class="vk-ico">' + ico + '</div><div class="vk-val">' + val + "</div>" +
+    (sub ? '<div class="vk-sub' + (grande ? " vk-sub-g" : "") + '">' + sub + "</div>" : "") + (extra ? '<div class="vk-sub">' + extra + "</div>" : "") + "</div>";
+  let h = "";
+  if (tu) {
+    const nOtras = otrasT.filter(v => !v.fechaAnt).length;
+    h += kp("verde", "👤", "Turno abierto", esc(tu.cajeroNombre), desde, true) +
+      kp("azul", "💵", "Fondo inicial", '<div class="vk-fila"><span>Efectivo Bs</span><b>Bs ' + fmt(fi.bs) + '</b></div><div class="vk-fila"><span>Efectivo $</span><b>$' + fmt(fi.usd) + "</b></div>", "") +
+      kp("morado", "🧾", "Ventas del turno", String(R.ventas + R.otroDia.n), (nOtras ? nOtras + " en otro equipo" : (R.ventas + R.otroDia.n === 1 ? "venta" : "ventas")) + (R.otroDia.n ? " · " + R.otroDia.n + " de otro día" : "")) +
+      kp("naranja", "💰", "Total del turno", "Bs " + fmt(r2(R.totalBs + R.otroDia.totalBs)), "$" + fmt(r2(R.totalUsd + R.otroDia.totalUsd)) + " BCV", true);
+  } else h += kp("gris", "🔒", "Turno", "Sin turno", "abre un turno para vender");
+  h += kp("teal", "📅", "Hoy", "Bs " + fmt(sumBs), "$" + fmt(sumUsd) + " BCV", true, deHoy.length + (deHoy.length === 1 ? " venta" : " ventas")) +
+    kp(c.por ? "azul" : "gris", c.por ? "⏳" : "☁️", "Por subir", String(c.por), c.por ? "se suben solas con internet" : "todo está en el sistema") +
+    kp(c.mal ? "rojo" : "gris", c.mal ? "⚠️" : "✅", "Con problema", String(c.mal), c.mal ? "revísalas abajo" : "ninguna");
   $("resumen").innerHTML = h;
-  // Por cajero (hoy)
+  // Por método: lo del turno (o lo de hoy, sin turno) — lo cobrado menos el vuelto
+  let mets = [];
+  if (R) mets = R.metodos.filter(m => Math.abs(m.neto) >= 0.005).map(m => ({ m: m.metodo, t: m.tipo, v: m.neto }));
+  else {
+    const porMet = {};
+    deHoy.forEach(v => {
+      (v.pago.pagos || []).forEach(p => { const k = p.metodo + "|" + p.tipo; porMet[k] = (porMet[k] || 0) + (Number(p.monto) || 0); });
+      (v.pago.vuelto || []).forEach(p => { const k = p.metodo + "|" + p.tipo; porMet[k] = (porMet[k] || 0) - (Number(p.monto) || 0); });
+    });
+    mets = Object.keys(porMet).map(k => { const [m, t] = k.split("|"); return { m: m, t: t, v: porMet[k] }; });
+  }
+  const sec = (ico, tit, sub, cuerpo) => '<div class="card"><div class="card-tit">' + ico + " " + tit + (sub ? " <small>" + sub + "</small>" : "") + "</div>" + cuerpo + "</div>";
+  let p2 = trabadosHTML();
+  if (mets.length) p2 += sec("💳", "Por método", (R ? "este turno" : "hoy") + " · lo cobrado menos el vuelto", '<div class="rc-mets-l">' +
+    mets.map(x => '<div class="rc-met ' + (x.t === "BS" ? "bs" : x.t === "USD" ? "usd" : "otro") + '"><span>' + esc(x.m) + "</span><b>" + (x.t === "BS" ? "Bs " : "$") + fmt(x.v) + "</b></div>").join("") + "</div>");
+  p2 += gvHTMLVentas();   // 3.3: el efectivo sacado o ajustado en el turno
+  // Por cajero: solo si en el turno (o hoy) vendió más de uno
+  const base = (tu ? S.ventas.filter(v => v.turno === tu.id && v.estado !== "invalida" && !v.fechaAnt).concat(otrasT.filter(v => !v.fechaAnt)) : deHoy).filter(v => !anuladaEnSistema(v));
   const porCj = {};
-  deHoy.forEach(v => { const k = v.pago.cajeroNombre || "Sin cajero"; const x = porCj[k] = porCj[k] || { n: 0, bs: 0, usd: 0 }; x.n++; x.bs += Number(v.totalBs) || 0; x.usd += bcvDe(v); });
+  base.forEach(v => { const k = v.pago.cajeroNombre || "Sin cajero"; const x = porCj[k] = porCj[k] || { n: 0, bs: 0, usd: 0 }; x.n++; x.bs += Number(v.totalBs) || 0; x.usd += bcvDe(v); });
   const cjs = Object.keys(porCj);
-  $("porCajero").innerHTML = trabadosHTML() + gvHTMLVentas() + (cjs.length ? '<div class="card" style="margin-bottom:10px;"><div class="card-tit">🧾 Hoy por cajero</div><table class="cie-tabla">' +
-    cjs.map(k => "<tr><td><b>" + esc(k) + "</b> · " + porCj[k].n + " venta" + (porCj[k].n === 1 ? "" : "s") + '</td><td class="r">Bs ' + fmt(porCj[k].bs) + ' <span style="color:var(--text-dim);font-weight:600;">· $' + fmt(porCj[k].usd) + "</span></td></tr>").join("") + "</table></div>" : "");   // 3.3: antes, lo de la gaveta del turno abierto
+  if (cjs.length > 1) p2 += sec("🧾", "Por cajero", tu ? "este turno" : "hoy", '<table class="cie-tabla">' +
+    cjs.map(k => "<tr><td><b>" + esc(k) + "</b> · " + porCj[k].n + " venta" + (porCj[k].n === 1 ? "" : "s") + '</td><td class="r">Bs ' + fmt(porCj[k].bs) + ' <span style="color:var(--text-dim);font-weight:600;">· $' + fmt(porCj[k].usd) + "</span></td></tr>").join("") + "</table>");
+  $("porCajero").innerHTML = p2;
   // Turnos
   const tl = S.cierres.slice().reverse().slice(0, 20);
   let th = "";
-  if (S.turno) { const R = resumenTurno(S.turno); th += '<tr><td>🟢 <b>' + esc(S.turno.cajeroNombre) + "</b> · abierto desde " + fechaCorta(S.turno.apertura) + " " + horaDe(S.turno.apertura) + " · " + R.ventas + ' ventas</td><td class="r">Bs ' + fmt(R.totalBs) + "</td></tr>"; }
+  if (tu) th += '<tr><td>🟢 <b>' + esc(tu.cajeroNombre) + "</b> · abierto " + desde + " · " + R.ventas + ' ventas</td><td class="r">Bs ' + fmt(R.totalBs) + "</td></tr>";
   tl.forEach((c, k) => {
     const dif = (Math.abs(c.efBsDif) < 0.005 && Math.abs(c.efUsdDif) < 0.005) ? '<span class="dif-ok">cuadra</span>' : '<span class="dif-mal">dif. Bs ' + fmt(c.efBsDif) + " · $" + fmt(c.efUsdDif) + "</span>";
     th += "<tr><td>🔒 <b>" + esc(c.cajeroNombre) + "</b> · " + fechaCorta(c.apertura) + " " + horaDe(c.apertura) + "–" + horaDe(c.cierre) + " · " + c.ventas + " ventas · " + dif +
       (c.estado === "subido" ? "" : ' · <span style="color:' + (trabado(c, "cierre") ? "var(--red)" : "var(--blue)") + ';">⏳ por subir' + (c.msg ? " · " + esc(c.msg) : "") + "</span>") + '</td><td class="r">Bs ' + fmt(c.totalBs) +
       ' <button type="button" class="btn sm" onclick="imprimirCierreN(' + (S.cierres.length - 1 - k) + ')">🖨️</button></td></tr>';
   });
-  $("turnosLista").innerHTML = th ? '<div class="card" style="margin-bottom:10px;"><div class="card-tit">🔒 Turnos</div><table class="cie-tabla">' + th + "</table></div>" : "";
+  $("turnosLista").innerHTML = th ? sec("🔒", "Turnos", "", '<table class="cie-tabla">' + th + "</table>") : "";
   $("btnSubir").classList.toggle("oculto", !c.por && !c.mal);
-  let lst = S.ventas.slice().sort((a, b) => String(b.creada).localeCompare(String(a.creada)));
-  if (S.filtro === "hoy") lst = lst.filter(v => diaDe(v) === hoy);
+  let lst = S.ventas.concat(otrasT).sort((a, b) => String(b.creada).localeCompare(String(a.creada)));
+  if (S.filtro === "turno") lst = lst.filter(v => v.turno === tu.id);
+  else if (S.filtro === "hoy") lst = lst.filter(v => diaDe(v) === hoy);
   else if (S.filtro === "por") lst = lst.filter(v => v.estado === "por_subir");
   else if (S.filtro === "mal") lst = lst.filter(v => v.estado === "pendiente" || v.estado === "invalida");
   else if (S.filtro === "av") lst = lst.filter(v => v.estado === "subida" && v.avisos && v.avisos.length);
@@ -3115,10 +3368,11 @@ function pintarVentas(){
       (v.revisar ? "Si está bien así, el administrador toca <b>🔑 Subir igual</b> y escribe la clave de precio manual." : "Cuando el administrador lo corrija en el sistema, toca <b>Reintentar</b>.") + "</div>";
     if (v.estado === "por_subir" && v.msg) msg = '<div class="vt-msg av">Último intento: ' + esc(v.msg) + "</div>";
     const nroL = v.numeroFactura ? "#" + v.numeroFactura : (v.numeroTicket ? "#" + v.numeroTicket : "PROV " + v.numero);
+    if (anuladaEnSistema(v)) msg = '<div class="vt-msg mal">🚫 <b>Anulada en el sistema.</b> No cuenta en las ventas del turno.</div>' + msg;   // 5.0s
     if (v.numeroFactura && String(v.numeroTicket || "") !== String(v.numeroFactura)) msg = '<div class="vt-msg av">⚠️ El ticket salió ' + (v.numeroTicket ? "con el #" + esc(v.numeroTicket) : "provisional") + " y quedó registrada con el <b>#" + esc(v.numeroFactura) + "</b>. Reimprímelo si el cliente lo necesita.</div>" + msg;
-    return '<div class="vt-item" id="vt_' + v.id + '"><div class="vt-cab" onclick="this.parentNode.classList.toggle(\'abierto\')"><div style="min-width:0;"><div class="n">' + esc(nroL) + " · " + fechaCorta(v.fecha) + " " + horaDe(v.creada) + (v.fechaAnt ? ' <span class="otro-dia-tag">📅 de otro día</span>' : "") + (v.pago.cajeroNombre ? ' <span style="color:var(--text-dim);font-weight:600;">· ' + esc(v.pago.cajeroNombre) + "</span>" : "") + "</div>" +
+    return '<div class="vt-item" id="vt_' + v.id + '"><div class="vt-cab" onclick="this.parentNode.classList.toggle(\'abierto\')"><div style="min-width:0;"><div class="n">' + esc(nroL) + " · " + fechaCorta(v.fecha) + " " + horaDe(v.creada) + (v.fechaAnt ? ' <span class="otro-dia-tag">📅 de otro día</span>' : "") + (v._otro ? ' <span class="otro-eq-tag">📱 otro equipo</span>' : "") + (v.pago.cajeroNombre ? ' <span style="color:var(--text-dim);font-weight:600;">· ' + esc(v.pago.cajeroNombre) + "</span>" : "") + "</div>" +
       '<div class="s">' + esc(p.clienteNombre || "Genérico") + (p.clienteCedula ? " · " + esc(p.clienteCedula) : "") + "</div>" + estadoHTML(v) + "</div>" +
-      '<div class="m">Bs ' + fmt(v.totalBs) + '<div style="font-size:11px;color:var(--text-dim);font-weight:600;">$' + fmt(v.total) + (v.unidad === "div" ? " div" : "") + "</div></div></div>" +
+      '<div class="m">Bs ' + fmt(v.totalBs) + '<div class="m2">$' + fmt(v.total) + (v.unidad === "div" ? " div" : "") + "</div></div></div>" +   // 5.0q: los $ casi del tamaño de los Bs
       '<div class="vt-det">' + msg + "<table>" + items + "</table><table>" + pagos + "</table>" +
       '<div style="font-size:12px;color:var(--text-dim);">' + (v.unidad === "div" ? "💵 Venta en Dólares · " : "") + 'Tasa BCV Bs ' + fmt(v.tasas.bcv) + (v.tasas.div ? " · Divisas Bs " + fmt(v.tasas.div) : "") + (p.descuentoTipo !== "ninguno" && p.descuentoValor ? " · descuento " + (p.descuentoTipo === "pct" ? fmt(p.descuentoValor) + " %" : "$" + fmt(p.descuentoValor)) : "") + (p.referencia ? " · Ref: " + esc(p.referencia) : "") + (p.ordenId ? " · " + (p.canal === "WEB" ? "🌐 pedido web " : "📋 orden ") + esc(p.ordenId) : "") + "</div>" +
       '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;"><button type="button" class="btn sm" onclick="imprimirPorId(\'' + v.id + '\')">🖨️ Reimprimir</button>' +
@@ -3127,7 +3381,7 @@ function pintarVentas(){
   }).join("");
 }
 function imprimirCierreN(i){ const c = S.cierres[i]; if (c) imprimirHTML(htmlCierre(c)); }
-function imprimirPorId(id){ const v = S.ventas.find(x => x.id === id); if (v) imprimirTicket(v); }
+function imprimirPorId(id){ const v = S.ventas.find(x => x.id === id) || (OT.ventas || []).find(x => x.id === id); if (v) imprimirTicket(v); }
 function descargarRespaldo(){
   const d = S.datos || {};
   const obj = { tipo: "ControlMaster · Caja · respaldo", negocio: d.negocio, caja: d.caja, equipo: d.equipo, generado: ahoraTxt(), ventas: S.ventas, cierres: S.cierres };
@@ -3162,9 +3416,15 @@ async function guardarPref(){
   aplicarTema(); pintarTasa();
   try { await kvSet("pref", S.pref); toast("✅ Cambios guardados"); } catch (e) {}
 }
+// 5.0o: 🔄 en la barra de arriba: tasas, precios, existencias y las ventas de los otros equipos del turno
+async function actualizarTop(btn){
+  if (!btn || btn.disabled) return;
+  btn.disabled = true; btn.classList.add("girando");
+  try { await actualizarDatos(null, false); } finally { btn.disabled = false; btn.classList.remove("girando"); }
+}
 function aplicarTema(){
   document.body.classList.toggle("light", !!S.pref.claro);
-  const b = $("btnTema"); if (b) b.textContent = S.pref.claro ? "🌙" : "☀️";
+  const b = $("btnTema"); if (b) b.textContent = S.pref.claro ? "🌙" : "☀️";   // 5.0f: vuelve a la barra, antes del Menú (el Menú siempre de último)
   const c = $("chkClaro"); if (c) c.checked = !!S.pref.claro;
   const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = S.pref.claro ? "#eef1f5" : "#07090d";
 }

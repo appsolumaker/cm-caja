@@ -17,7 +17,7 @@
   --sk-mid:#e3b341;--sk-mid-bg:rgba(227,179,65,0.18);
 }
 body.light{
-  --bg:#eef1f5;--bg2:#ffffff;--bg3:#e0e5ec;--bg4:#d5dce5;
+  --bg:#eef1f5;--bg2:#ffffff;--bg3:#e0e5ec;--bg4:#d5dce5;   /* 5.0t: vuelven los colores claros de la caja 4.9 (los prefiere Jesús) */
   --green:#00a855;--green-dim:rgba(0,168,85,0.12);
   --border:rgba(0,0,0,0.11);--border-g:rgba(0,160,90,0.40);
   --text:#1a1d23;--text-dim:#5a6878;
@@ -664,6 +664,7 @@ body:not(.v-vender) #btnOrdenes{display:none;}
 .pl.cred.cs .cs-fin{font-size:16px;color:var(--text);}
 #fechaVenta.otro-dia{background:var(--amber-dim);border-color:var(--amber);color:var(--amber);font-weight:800;}
 .otro-dia-tag{font-size:11px;font-weight:800;color:var(--amber);}
+.otro-eq-tag{font-size:11px;font-weight:800;color:var(--blue);}
 .fa-modal .act-nota{font-size:12px;color:var(--text-dim);margin-top:4px;}
 
 /* ══ Tanda 1b (3.2): cierre con motivo, lo que queda y 🔒 Cerrar turno arriba ══ */
@@ -758,9 +759,44 @@ body:not(.v-vender) #btnOrdenes{display:none;}
 .res > .rc b{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;}
 .res > .rc::after{width:70px;height:70px;right:-24px;top:-24px;}
 .rc-tx{position:relative;z-index:1;}
-#vVentas .card{background:var(--bg2);border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.06);}
-#vVentas .card-tit{font-size:13px;color:var(--text);letter-spacing:.02em;margin-bottom:10px;}
+/* 5.0o: «Ventas de la caja» con el estilo del sistema: tarjetas de color con texto blanco y secciones con su título en verde */
+#vVentas .res{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px;}
+.res > .vk-card{position:relative;border:none;border-radius:14px;padding:15px 16px 14px;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,0.14);min-width:0;}
+.res > .vk-card.vk-verde{background:linear-gradient(135deg,#0f9d58,#0a7a43);}
+.res > .vk-card.vk-azul{background:linear-gradient(135deg,#2f6fe4,#1f4fb8);}
+.res > .vk-card.vk-morado{background:linear-gradient(135deg,#7c4ddb,#5b2fb4);}
+.res > .vk-card.vk-naranja{background:linear-gradient(135deg,#e07a12,#b45309);}
+.res > .vk-card.vk-teal{background:linear-gradient(135deg,#0e9aa7,#0b6f78);}
+.res > .vk-card.vk-rojo{background:linear-gradient(135deg,#e04848,#b3262e);}
+.res > .vk-card.vk-gris{background:linear-gradient(135deg,#7b8794,#5a6470);}
+.vk-tit{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.8px;opacity:0.92;padding-right:38px;}
+.vk-ico{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:16px;}
+.vk-val{font-size:22px;font-weight:900;line-height:1.15;margin-top:10px;letter-spacing:-0.3px;word-break:break-word;}
+.vk-sub{font-size:12px;font-weight:600;opacity:0.92;margin-top:4px;}
+.vk-sub.vk-sub-g{font-size:16px;font-weight:800;opacity:1;margin-top:5px;line-height:1.25;}   /* 5.0r: la fecha del turno y los $, grandes y legibles */
+.vk-fila{display:block;font-size:19px;line-height:1.2;margin-top:6px;}   /* 5.0p: el fondo en Bs y en $, del mismo tamaño */
+.res .vk-fila span{display:block;font-size:12px;font-weight:700;opacity:0.92;white-space:nowrap;text-transform:none;color:#fff;}
+.vk-fila b{display:block;font-weight:900;white-space:nowrap;}
+/* 5.0p: en el teléfono, arriba solo 🏠, Órdenes, 🔐, 🔄, el tema y ☰ (lo demás está en el Menú) */
+@media (max-width:640px){
+  .topbar #badgeTasa, .topbar #btnIrVender, .topbar #pillEstado, .topbar #badgeCajero, .topbar #btnCierreTop, .topbar .topbar-title{display:none!important;}
+}
+#vVentas .card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:0 0 12px;margin-bottom:12px;overflow:hidden;box-shadow:none;}
+#vVentas .card-tit{background:var(--green-dim);color:var(--green);border-bottom:1px solid var(--border-g);padding:10px 14px;margin:0 0 10px;font-size:13.5px;font-weight:800;text-transform:none;letter-spacing:0;}
+#vVentas .card-tit small{font-size:12px;font-weight:600;color:var(--text-dim);}
+#vVentas .card > *:not(.card-tit){margin-left:14px!important;margin-right:14px!important;}
+#vVentas .card > table{width:calc(100% - 28px);}
 #vVentas .cie-tabla td{padding:8px 4px;}
+#vVentas .rc-met{background:var(--bg2);}
+#vVentas .vt-item{background:var(--bg3);}
+#vVentas .vt-cab .n{font-size:14px;}
+#vVentas .vt-cab .m{font-size:17px;line-height:1.2;}   /* 5.0q: los $ un poco más pequeños que los Bs, que se lean bien */
+#vVentas .vt-cab .m .m2{font-size:15px;font-weight:800;color:var(--text-dim);margin-top:2px;}
+/* 5.0o: 🔄 Actualizar en la barra de arriba */
+.btn-act-top span{display:inline-block;}
+.btn-act-top.girando span{animation:girar 0.8s linear infinite;}
+.btn-act-top:disabled{cursor:default;opacity:0.8;}
+@keyframes girar{to{transform:rotate(360deg);}}
 
 /* ══ 3.9 · Activar el equipo en dos pasos ══ */
 .ac-preg{margin:14px 0 12px;}
@@ -869,3 +905,32 @@ body:not(.v-vender) #btnOrdenes{display:none;}
 .serv-ed{margin-left:6px;padding:2px 8px;font-size:11px;font-weight:800;border:1px solid var(--border);border-radius:8px;background:var(--bg3);color:var(--text);cursor:pointer;font-family:inherit;}
 .serv-ed:hover{border-color:var(--green);color:var(--green);}
 .ns-guarda{margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--green-dim);color:var(--text);font-size:12px;line-height:1.5;}
+
+/* 5.0 · barra mientras se pide el número de la factura (numeros.js: barraProgreso) */
+.barra-num{max-width:360px;width:100%;}
+.barra-num .mb{padding:22px 20px;}
+.bn-txt{font-size:16px;font-weight:700;text-align:center;margin-bottom:14px;color:var(--text);}
+.bn-barra{height:8px;border-radius:6px;background:var(--bg3, rgba(255,255,255,0.08));overflow:hidden;position:relative;}
+.bn-barra i{position:absolute;top:0;bottom:0;left:-40%;width:40%;border-radius:6px;background:var(--green, #00e87a);animation:bnMover 1.1s ease-in-out infinite;}
+@keyframes bnMover{0%{left:-40%;}100%{left:100%;}}
+
+/* 5.0d · pago: cada pregunta en su franja de color (azul = bolívares, verde = dólares) y los métodos en cuadritos */
+.pw-preg{font-size:16px;font-weight:800;padding:10px 14px;margin:4px 0 12px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);}
+.pw-preg.pw-sub{font-size:14px;padding:8px 12px;margin:12px 0 8px;}
+.pw-preg.bs{background:var(--blue-dim);border-color:rgba(52,152,219,0.35);color:var(--blue);}
+.pw-preg.usd{background:var(--green-dim);border-color:var(--border-g);color:var(--green);}
+.pgu-hint{text-align:center;margin:0 0 8px;}
+.pgu-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.pgu-cols:not(.una) .pgu-tiles{grid-template-columns:minmax(0,1fr);}
+.pgu-chip.pgu-tile,.pw-s .pgu-chip.pgu-tile{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;text-align:left;white-space:normal;min-height:52px;padding:8px 12px;font-size:14px;line-height:1.25;}
+.pgu-tile .t1{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pgu-tile small{display:block;max-width:100%;font-size:12px;font-weight:600;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pgu-chip.pgu-tile.usado{opacity:1;background:var(--green-dim);border:2px solid var(--green);}
+.pgu-cols{gap:4px 12px;}
+@media (max-width:520px){ .pgu-tiles{grid-template-columns:minmax(0,1fr);} }
+/* 5.0g: el nombre del método (o de la cuenta, al elegirla) en grande */
+.pgu-chip.pgu-tile,.pw-s .pgu-chip.pgu-tile{min-height:64px;padding:10px 14px;gap:3px;}
+.pgu-tile .t1{font-size:17px;font-weight:800;}
+.pgu-tile small{font-size:12.5px;}
+.pgu-ctas{margin-top:2px;}
+@media (max-width:520px){ #btnSistema .mv-lbl{display:none;} }   /* 5.0k: en el teléfono, solo la casita */

@@ -5,18 +5,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
 <meta name="cm-caja-web" content="ControlMaster · Caja">
-<meta name="cm-ver" content="4.9">
+<meta name="cm-ver" content="5.0t">
 <title>Caja · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="estilos.css?v=4.9">
+<link rel="stylesheet" href="estilos.css?v=5.0t">
 </head>
 <body class="light entrando">
 
 <!-- BARRA DE ARRIBA (como Ventas) -->
 <div class="topbar">
-  <button type="button" class="btn-volver" id="btnSistema" onclick="irSistema(this)" title="Abrir el menú del sistema">🏠 Sistema</button>
+  <button type="button" class="btn-volver" id="btnSistema" onclick="irSistema(this)" title="Volver al inicio del sistema">🏠 <span class="mv-lbl">Volver al inicio</span></button>
   <span class="topbar-title" id="tbTit">🛒 Punto de Venta</span>
   <div class="sep"></div>
   <div class="badge badge-vend info oculto" id="badgeCajero" title="Cajero del turno">🧾 <span class="solo-pc">Cajero: </span><span id="cajeroNombre">—</span></div>
@@ -29,8 +29,9 @@
   <button type="button" class="btn-tema btn-vender-top oculto" id="btnIrVender" onclick="irA('vender')" title="Volver a la factura">🛒 <span class="mv-lbl">Volver a vender</span></button>
   <button type="button" class="btn-tema btn-ordenes oculto" id="btnOrdenes" onclick="abrirOrdenes()" title="Órdenes por cobrar y facturas en espera">📋 <span class="mv-lbl">Órdenes</span><span class="ord-cnt" id="contOrdenes"></span></button>
   <button type="button" class="btn-tema btn-estado" id="pillEstado" onclick="irA('ventas')" title="Ventas de este equipo"><span class="dot"></span><span id="pillTxt">Revisando…</span><span id="pillCorto"></span></button>
-  <button type="button" class="btn-tema btn-menu-vta" id="btnMenuVta" onclick="abrirMenuVta()" title="Menú de la caja">☰ <span class="mv-lbl">Menú</span></button>
+  <button type="button" class="btn-tema btn-act-top" id="btnActTop" title="Actualizar datos: tasas, precios, existencias y las ventas de los otros equipos" onclick="actualizarTop(this)"><span>🔄</span></button>
   <button type="button" class="btn-tema" id="btnTema" title="Cambiar tema" onclick="cambiarTema()">🌙</button>
+  <button type="button" class="btn-tema btn-menu-vta" id="btnMenuVta" onclick="abrirMenuVta()" title="Menú de la caja">☰ <span class="mv-lbl">Menú</span></button>
 </div>
 
 <div class="menu-vta-fondo" id="menuVtaFondo" onclick="cerrarMenuVta()"></div>
@@ -89,7 +90,7 @@
 
     <div class="col-der">
       <div class="toprow">
-        <div class="badge-inp">
+        <div class="badge-inp" id="badgeNum">
           <label>N° Factura:</label>
           <input type="text" id="numFactura" readonly tabindex="-1" style="opacity:0.7;cursor:not-allowed;width:88px;">
         </div>
@@ -195,7 +196,7 @@
 <!-- VENTAS DEL EQUIPO -->
 <section class="vista" id="vVentas">
   <div class="wrap">
-    <div class="vista-cab"><button type="button" class="btn" onclick="irA('vender')">← Volver a vender</button><h2>🧾 Ventas de este equipo</h2></div>
+    <div class="vista-cab"><button type="button" class="btn" onclick="irA('vender')">← Volver a vender</button><h2>🧾 Ventas de la caja</h2></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
       <button type="button" class="btn green" id="btnSubir" onclick="subirAhora(this)">⬆️ Subir ahora</button>
       <button type="button" class="btn" onclick="descargarRespaldo()">💾 Descargar respaldo</button>
@@ -205,7 +206,8 @@
     <div id="porCajero"></div>
     <div id="turnosLista"></div>
     <div class="filtros" id="filtros">
-      <button type="button" class="btn sm on" data-f="hoy" onclick="filtrarVentas('hoy')">Hoy</button>
+      <button type="button" class="btn sm on" data-f="turno" onclick="filtrarVentas('turno')">Este turno</button>
+      <button type="button" class="btn sm" data-f="hoy" onclick="filtrarVentas('hoy')">Hoy</button>
       <button type="button" class="btn sm" data-f="por" onclick="filtrarVentas('por')">Por subir</button>
       <button type="button" class="btn sm" data-f="mal" onclick="filtrarVentas('mal')">Con problema</button>
       <button type="button" class="btn sm" data-f="av" onclick="filtrarVentas('av')">Con avisos</button>
@@ -323,14 +325,14 @@
 <div class="bloqueo oculto" id="bloqueo"><div class="bq-box" id="bloqCuerpo"></div></div>
 <div class="toast" id="toast"></div>
 
-<script src="app.js?v=4.9"></script>
-<script src="api.js?v=4.9"></script>
-<script src="sesion.js?v=4.9"></script>
-<script src="numeros.js?v=4.9"></script>
-<script src="ordenes.js?v=4.9"></script>
-<script src="cajero.js?v=4.9"></script>
-<script src="gaveta.js?v=4.9"></script>
-<script src="tanda2.js?v=4.9"></script>
-<script src="tasas.js?v=4.9"></script>
+<script src="app.js?v=5.0t"></script>
+<script src="api.js?v=5.0t"></script>
+<script src="sesion.js?v=5.0t"></script>
+<script src="numeros.js?v=5.0t"></script>
+<script src="ordenes.js?v=5.0t"></script>
+<script src="cajero.js?v=5.0t"></script>
+<script src="gaveta.js?v=5.0t"></script>
+<script src="tanda2.js?v=5.0t"></script>
+<script src="tasas.js?v=5.0t"></script>
 </body>
 </html>
