@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#eef1f5">
-<meta name="cm-ver" content="2.2">
+<meta name="cm-ver" content="2.4">
 <title>Órdenes · ControlMaster</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="icono-180.png">
-<link rel="stylesheet" href="ordenes.css?v=2.2">
+<link rel="stylesheet" href="ordenes.css?v=2.4">
 </head>
 <body class="light">
 
@@ -24,7 +24,7 @@
   <div class="menu-vta-info" id="menuInfo"></div>
   <button type="button" class="menu-vta-item" onclick="cerrarMenu();actualizarDatos(true)"><span class="mv-ico">🔄</span><span><span class="mv-tit">Actualizar datos</span><span class="mv-sub">Productos, precios, existencias y clientes (con internet)</span></span></button>
   <button type="button" class="menu-vta-item" onclick="cerrarMenu();cambiarTema()"><span class="mv-ico">🌙</span><span><span class="mv-tit">Cambiar tema</span><span class="mv-sub">Claro u oscuro</span></span></button>
-  <button type="button" class="menu-vta-item" onclick="cerrarMenu();salir()"><span class="mv-ico">🚪</span><span><span class="mv-tit">Salir</span><span class="mv-sub">La próxima vez entras con tu usuario y contraseña</span></span></button>
+  <button type="button" class="menu-vta-item" onclick="cerrarMenu();salir()"><span class="mv-ico">🚪</span><span><span class="mv-tit">Salir</span><span class="mv-sub">Cierra tu sesión y vuelve a la entrada del sistema</span></span></button>
 </div>
 
 <!-- ENTRAR: usuario y contraseña del sistema (2.0) -->
@@ -76,6 +76,7 @@
         <div class="blq oculto" id="vendBlq">
           <div class="blq-tit">🧑‍💼 Vendedor</div>
           <select class="inp" id="selVend" onchange="O.vendedorId=Number(this.value)||0;guardarBorrador()"></select>
+          <div class="oculto" id="vendDir" style="font-size:13px;line-height:1.45;">🏪 <b>Venta directa</b> (sin vendedor ni comisión). Si vendes con comisión, pídele al administrador que te marque como <b>🧑‍💼 Vendedor</b> en Configuración → Usuarios.</div>
         </div>
         <div class="blq oculto" id="monBlq">
           <div class="blq-tit">💱 ¿Cómo va la orden?</div>
@@ -111,7 +112,7 @@
 <div class="cargando oculto" id="cargando"><div class="cg-box"><div class="cg-sp"></div><div class="cg-txt" id="cgTxt">Cargando…</div><div class="cg-sub" id="cgSub"></div></div></div>
 <div id="toast"></div>
 
-<script src="ov.js?v=2.2"></script>
-<script src="escaner.js?v=2.2"></script>
+<script src="ov.js?v=2.4"></script>
+<script src="escaner.js?v=2.4"></script>
 </body>
 </html>

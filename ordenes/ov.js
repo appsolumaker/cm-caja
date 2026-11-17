@@ -2,6 +2,9 @@
 // ══════════════════════════════════════════════════════════════
 //  ÓRDENES · ControlMaster — la página de los vendedores (Etapa 3)
 //  <cliente>.micontrolmaster.com/ordenes · habla con el sistema por /ordenes/api (acciones "cj_ov_…").
+//  · 2.4 (15-11-2026): «Salir» cierra la sesión y lleva a la entrada del sistema (ya no se queda en el login de Órdenes).
+//  · 2.3 (15-11-2026): nadie elige vendedor. El que no es vendedor (administrador o cajero) ve «Venta directa».
+//    Con el sistema viejo (que todavía manda la lista de vendedores) se ve igual que antes.
 //  · 2.2: la barra del total lleva los Bs grandes y el $ debajo; en una orden en dólares (TasaBin), al revés.
 //  · 2.0 (Acceso único): el vendedor entra con su USUARIO Y CONTRASEÑA del sistema (el mismo de siempre).
 //    La sesión dura 7 días en ese teléfono. El vendedor de cada usuario se elige en Configuración → Usuarios.
@@ -9,7 +12,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "2.2 · 11-11-2026";
+const OV_VER = "2.4 · 15-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -187,12 +190,16 @@ async function pedirEntrada(luego){
   OV._volver = luego || null;
   mostrarEntrar(OV.quien ? "Entra otra vez con tu usuario y contraseña (no se pierde nada de lo que tienes en el teléfono)." : "");
 }
+// 2.4: «Salir» cierra la sesión y lleva a la entrada del SISTEMA (…/?salir=1: el sistema cierra también su sesión en
+// este navegador y muestra su login). Las órdenes por enviar quedan en el teléfono y se envían cuando ese usuario vuelva.
 async function salir(){
-  const ok = await confirmar({ icono: "🚪", titulo: "Salir", ok: "Salir", html: "La próxima vez entras con tu usuario y contraseña." + (OV.pend.length ? "<br><br>Tienes <b>" + OV.pend.length + "</b> orden(es) por enviar: quedan guardadas en el teléfono y se envían cuando vuelvas a entrar." : "") });
+  if (!hayRed()) { aviso({ icono: "📡", titulo: "Sin internet", html: "Para salir hace falta internet (al salir vas a la pantalla de entrada del sistema).<br><br>Conéctate y vuelve a tocar <b>Salir</b>." }); return; }
+  const ok = await confirmar({ icono: "🚪", titulo: "Salir", ok: "Salir", html: "Se cierra tu sesión y vas a la pantalla de entrada del sistema." + (OV.pend.length ? "<br><br>Tienes <b>" + OV.pend.length + "</b> orden(es) por enviar: quedan guardadas en el teléfono y se envían cuando vuelvas a entrar." : "") });
   if (!ok) return;
-  try { if (hayRed() && OV.ses) await api("cj_ov_salir", { sesion: OV.ses.token }, 15000); } catch (e) {}
+  cargando("Saliendo…", "Un momento, por favor.");
+  try { if (OV.ses) await api("cj_ov_salir", { sesion: OV.ses.token }, 15000); } catch (e) {}
   OV.ses = null; await kvDel("ses");
-  mostrarEntrar();
+  location.replace(new URL("../?salir=1", location.href).href);
 }
 
 // ── Datos del sistema ──
@@ -227,7 +234,7 @@ function pintarTodo(){ pintarCabecera(); pintarNueva(); pintarMis(); pintarEstad
 function pintarCabecera(){
   const d = OV.d || {};
   $("tbTit").textContent = "📋 " + (d.negocio || "Órdenes");
-  $("menuInfo").innerHTML = "<b>" + esc(d.negocio || "") + "</b><br>" + esc((OV.quien && OV.quien.nombre) || "") + (d.vendedor ? " · vendedor" : d.puedeElegirVendedor ? " · administrador" : "") +
+  $("menuInfo").innerHTML = "<b>" + esc(d.negocio || "") + "</b><br>" + esc((OV.quien && OV.quien.nombre) || "") + (d.vendedor ? " · vendedor" : d.puedeElegirVendedor ? " · administrador" : d.ventaDirecta ? " · venta directa" : "") +
     "<br>Datos del " + (d.descargadoEn ? new Date(d.descargadoEn).toLocaleString("es-VE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—") + " · versión " + OV_VER;
 }
 function irA(v){
@@ -307,8 +314,11 @@ function pintarNueva(){
   $("tabNuevaTxt").textContent = O.id || O.editPend ? "Editando" : "Nueva orden";
   $("btnEnviar").textContent = O.id || O.editPend ? "💾 Guardar cambios" : "✅ Enviar orden";
   pintarCliente();
-  // Vendedor (admin sin vínculo)
-  $("vendBlq").classList.toggle("oculto", !d.puedeElegirVendedor);
+  // Vendedor (admin sin vínculo, con el sistema viejo) · 2.3: quien no es vendedor ve «Venta directa»
+  const vDir = !d.puedeElegirVendedor && !!d.ventaDirecta;
+  $("vendBlq").classList.toggle("oculto", !d.puedeElegirVendedor && !vDir);
+  $("selVend").classList.toggle("oculto", !d.puedeElegirVendedor);
+  $("vendDir").classList.toggle("oculto", !vDir);
   if (d.puedeElegirVendedor) {
     if (!O.vendedorId && (d.vendedores || []).length) O.vendedorId = d.vendedores[0].id;
     $("selVend").innerHTML = (d.vendedores || []).map(v => '<option value="' + v.id + '"' + (v.id === O.vendedorId ? " selected" : "") + ">" + esc(v.nombre) + "</option>").join("");
