@@ -12,7 +12,7 @@
 //    Cada orden lleva una llave (APP-…): si el teléfono la manda dos veces, el sistema no la repite.
 //  · Mis órdenes: ABIERTA (se edita o anula) · TOMADA (en una caja) · FACTURADA · ANULADA.
 // ══════════════════════════════════════════════════════════════
-const OV_VER = "2.5 · 17-11-2026";
+const OV_VER = "2.6 · 19-11-2026";
 const $ = id => document.getElementById(id);
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const r3 = v => Math.round((Number(v) || 0) * 1000) / 1000;
@@ -104,6 +104,8 @@ function registrarEventos(){
   document.addEventListener("visibilitychange", () => { if (!document.hidden) enviarPendientes(); });
   setInterval(() => enviarPendientes(), 60000);
   setInterval(() => { if (sesionOk() && hayRed()) actualizarDatos(false); }, 20 * 60000);
+  setInterval(() => existenciasAlDia(false), 60000);   // 2.6: existencia y apartados al día cada minuto (con la app abierta)
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) setTimeout(() => existenciasAlDia(false), 1000); });
   document.addEventListener("wheel", e => { const t = e.target; if (t && t.type === "number" && document.activeElement === t) t.blur(); }, { passive: true });
 }
 // ¿Qué pantalla toca?
@@ -219,6 +221,30 @@ async function actualizarDatos(conAviso){
   if (conAviso === true && OV.vista) toast("✅ Datos al día");
   if (!$("main").classList.contains("oculto")) pintarTodo();
   return true;
+}
+
+// ── 2.6 · Existencia y apartados al día: consulta liviana (el sistema responde «sin cambios» sin leer nada si no se movió el inventario) ──
+let _exiOv = false, _exiOvNo = false;
+async function existenciasAlDia(antesDeEnviar){
+  if (_exiOv || _exiOvNo || !OV.d || !sesionOk() || !hayRed()) return;
+  if (!antesDeEnviar && document.hidden) return;
+  _exiOv = true;
+  try {
+    const r = await api("cj_ov_existencias", { firma: OV.d.exiFirma || "" }, antesDeEnviar ? 6000 : 20000);
+    if (!r) return;
+    if (r.codigo === "SIN_FUNCION" || (!r.ok && /no reconocida/i.test(String(r.msg || "")))) { _exiOvNo = true; return; }   // sistema sin actualizar: queda como antes (cada 20 min)
+    if (!r.ok) return;
+    OV.exiEn = Date.now();
+    if (r.cambio) {
+      const m = {}; (r.codigos || []).forEach((c, k) => m[String(c)] = Number((r.existencias || [])[k]) || 0);
+      (OV.d.productos || []).forEach(p => { if (String(p.codigo) in m) p.stock = m[String(p.codigo)]; });
+      OV.d.reservas = r.reservas || {};
+    }
+    const cambioFirma = OV.d.exiFirma !== r.firma;
+    OV.d.exiFirma = r.firma || "";
+    if (r.cambio || cambioFirma) { try { await kvSet("datos", OV.d); } catch (e) {} }
+    if (r.cambio && !$("main").classList.contains("oculto")) { buscar(true); marcarFaltas(); }
+  } catch (e) {} finally { _exiOv = false; }
 }
 
 // ══ LA APP ══
@@ -568,6 +594,10 @@ async function enviarOrden(){
   if (OV.d.pideClave && O.items.some(l => l.manual) && !O.clave) {   // orden que se edita (o se corrige) con precio manual: la clave otra vez
     const c = await pedirClave(); if (!c) return;
     O.clave = c;
+  }
+  if (Date.now() - (OV.exiEn || 0) > 45000 && !_exiOvNo && sesionOk() && hayRed()) {   // 2.6: la existencia de este momento antes de enviar (si la última es de hace más de 45 s)
+    const bE = $("btnEnviar"); btnOcupado(bE, "Revisando existencia…");
+    try { await existenciasAlDia(true); } finally { btnLibre(bE); }
   }
   const noEx = O.items.find(l => !catDe(l)); if (noEx) { aviso({ icono: "📦", titulo: (esServ(noEx) ? "Servicio" : "Producto") + " que ya no está", html: "<b>" + esc(noEx.nombre) + "</b> ya no está en los datos del teléfono. Quítalo de la orden." }); return; }
   const faltan = [...new Set(O.items.filter(l => !esServ(l)).map(l => l.codigo))].filter(c => enOrden(c) > disponible(c) + 0.0005).map(c => prodDe(c));

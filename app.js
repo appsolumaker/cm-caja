@@ -39,7 +39,7 @@
 //  feriado: se elige con cuál se cobra hoy; brecha / Divisas se guardan en el sistema; las tasas llegan a todas las cajas
 //  cada 2 minutos. ✏️ Editar servicio (tanda2.js).
 // ══════════════════════════════════════════════════════════════
-const APP_VER = "5.1a · 17-11-2026";
+const APP_VER = "5.2 · 19-11-2026";
 const DB_NOMBRE = "cm_caja_web";
 const TOL = 0.011;   // un centavo, como el servidor (> 0,01)
 
@@ -246,7 +246,7 @@ function listo(){
   setInterval(() => sincronizar(), 60000);                     // cada minuto: lo que haya por subir y los números al día
   setInterval(() => { if (S.online !== false) actualizarDatos(null, true); }, 20 * 60000);
   setTimeout(existenciasAlDia, 15000);
-  setInterval(existenciasAlDia, 2 * 60000);   // existencias al día entre cajas (solo si cambiaron)
+  setInterval(existenciasAlDia, 60000);   // 5.2: existencias al día entre cajas cada minuto (con el sello del sistema casi siempre responde «sin cambios» sin leer nada)
   setInterval(() => { if (!document.hidden) otrasAlDia(S.vista === "ventas" ? 2 * 60000 : 5 * 60000); }, 60000);   // 5.0m: las ventas de los otros equipos del turno
   window.addEventListener("online", () => { sincronizar(); revisarVersion(); });
   setTimeout(revisarVersion, 5000);
@@ -528,6 +528,13 @@ function enDeposito(p){ const d = S.datos && S.datos.deposito; return d ? Number
 function disponible(p){ return r3((Number(p.existencia) || 0) - enDeposito(p) - (vendidoLocal()[p.codigo] || 0)); }
 function enFactura(cod){ return F.items.filter(i => i.tipo !== "servicio" && String(i.codigo) === String(cod)).reduce((s, i) => s + (Number(i.cantidad) || 0), 0); }
 function existenciaLocal(p){ return r3(disponible(p) - enFactura(p.codigo)); }
+// 5.2 · Lo apartado en órdenes abiertas (de vendedores, esperas y la tienda), sin contar la orden que está en la factura.
+// Solo es un aviso: la caja vende con la existencia física (como siempre).
+function apartadas(p){
+  const a = S.datos && S.datos.apartadas; if (!a) return 0;
+  const n = Number(a[claveCod(p.codigo)]) || 0; if (!(n > 0)) return 0;
+  return Math.max(0, r3(n - (F.orden ? enFactura(p.codigo) : 0)));
+}
 // ══ 4.6 · Depósito por línea (Configuración → Administración: «Elegir si sale de la tienda o del depósito») ══
 // Cada línea de la factura dice de dónde sale: 🏪 Tienda o 📦 Depósito. Arranca en la tienda; si en la tienda
 // no queda y en el depósito sí, arranca en el depósito. Apagado (o sin Depósito), todo queda como antes.
@@ -571,7 +578,8 @@ function cambiarLugar(key, lugar){
   toast(i.lugar === "deposito" ? "📦 Sale del depósito" : "🏪 Sale de la tienda");
   revisarExistencia(key);
 }
-// ── Existencias al día entre cajas: con internet, cada 2 minutos, solo si cambiaron (la misma consulta de Ventas) ──
+// ── Existencias al día entre cajas: con internet, cada minuto, solo si cambiaron (la misma consulta de Ventas) ──
+// 5.2: el sistema también manda lo apartado en órdenes abiertas (reservas): se muestra como aviso en la lista.
 let _exiFirma = "", _exiOcupado = false;
 async function existenciasAlDia(){
   if (!S.datos || !S.eq || _exiOcupado || !hayInternet() || document.hidden || S.vista === "activar") return;
@@ -588,6 +596,7 @@ async function aplicarExistencias(r, t0){
   cods.forEach((c, k) => m[claveCod(c)] = Number(ex[k]) || 0);
   (S.datos.productos || []).forEach(p => { const k = claveCod(p.codigo); if (k in m) p.existencia = m[k]; });
   if (S.datos.deposito && Array.isArray(r.depositos)) { const d = {}; cods.forEach((c, k) => d[claveCod(c)] = Number(r.depositos[k]) || 0); S.datos.deposito = d; }
+  if (r.reservas && typeof r.reservas === "object") { const a = {}; Object.keys(r.reservas).forEach(c => { const n = Number(r.reservas[c]) || 0; if (n > 0) a[claveCod(c)] = n; }); S.datos.apartadas = a; }   // 5.2
   S.datos.exiEn = t0; _vendidoLocal = null; _cat = null;
   try { await kvSet("datos", S.datos); } catch (e) {}
   const box = $("listaProd"), st = box ? box.scrollTop : 0;
@@ -678,7 +687,8 @@ function buscar(){
         (p.ubicacion ? '<div class="prod-barcode prod-ubic">📍 ' + esc(p.ubicacion) + "</div>" : "") +   // 4.6: dónde está guardado (Inventario → Ubicación)
         (p.codigoBarras && String(p.codigoBarras) !== String(p.codigo) ? '<div class="prod-barcode">Cód. de Barras: ' + esc(p.codigoBarras) + "</div>" : "") +
         '<div style="margin-top:4px;"><span class="prod-stock" style="' + semaforo(ex, p) + '">' + (ex <= 0 ? (enDeposito(p) > 0 ? "Tienda 0" : "Sin stock") : fmtCant(ex) + " uds") + "</span>" +
-        (enDeposito(p) > 0 ? ' <span class="prod-barcode" style="display:inline;">📦 Depósito: ' + fmtCant(enDeposito(p)) + "</span>" : "") + "</div>";
+        (enDeposito(p) > 0 ? ' <span class="prod-barcode" style="display:inline;">📦 Depósito: ' + fmtCant(enDeposito(p)) + "</span>" : "") +
+        (apartadas(p) > 0 ? ' <span class="prod-apart" title="Pedidas en órdenes que todavía no se cobran. La caja las puede vender igual.">📋 ' + fmtCant(apartadas(p)) + " apartada" + (apartadas(p) === 1 ? "" : "s") + " en órdenes</span>" : "") + "</div>";
     }
     const q2 = cuantasEnFactura(p.codigo);
     const cf = fotos && p.tipo !== "servicio";
@@ -3200,7 +3210,7 @@ async function sincronizar(manual){
     if (S.vista === "ventas") pintarVentas();
   }
   if (!cortado) { await subirCierres(); await numerosAlDia(); await ordAlDia(); await efectivoAlDia(); await copiasAlDia(); }   // 3.0: cajero.js · 3.9: copias para reimprimir (tanda2.js)
-  if (subidas && S.online) { await actualizarDatos(null, true); contarOrdenes(); }   // existencias al día (y las órdenes que se convirtieron)
+  if (subidas && S.online) { await existenciasAlDia(); contarOrdenes(); }   // 5.2: solo las existencias (antes bajaba TODOS los datos después de cada venta) y las órdenes que se convirtieron
   return { subidas, cortado };
 }
 async function subirCierres(){

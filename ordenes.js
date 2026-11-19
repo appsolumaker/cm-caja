@@ -41,7 +41,7 @@ async function contarOrdenes(){
   if (!S.datos || !ordEnLinea() || _ord.ocupado) return;
   try {
     const r = await api_ord("buscar", { q: "" }, 30000);
-    if (r && r.ok) { _ord.lista = r.ordenes || []; _ord.abiertas = _ord.lista.filter(o => o.estado === "ABIERTA").length; }
+    if (r && r.ok) { _ord.lista = r.ordenes || []; _ord.listaEn = Date.now(); _ord.abiertas = _ord.lista.filter(o => o.estado === "ABIERTA").length; }
   } catch (e) {}
   pintarBotonOrdenes();
 }
@@ -100,7 +100,9 @@ function abrirOrdenes(){
       $("ordBusca").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(_ord.timer); buscarOrdenes(); } });
       $("btnOrdRef").addEventListener("click", () => buscarOrdenes());
     } }).then(() => { _ord.cerrar = null; clearTimeout(_ord.timer); });
-  pintarOrdenes(ordEnLinea() ? "cargando" : "");
+  // 5.2: abre al instante con la lista que la caja ya tiene (de hace menos de 5 min) y la pone al día por detrás (🔃 girando)
+  const fresca = ordEnLinea() && (_ord.lista || []).length > 0 && Date.now() - (_ord.listaEn || 0) < 5 * 60000;
+  pintarOrdenes(ordEnLinea() && !fresca ? "cargando" : "", fresca ? _ord.lista : undefined);
   if (ordEnLinea()) buscarOrdenes();
 }
 function cerrarOrdenes(){ if (_ord.cerrar) _ord.cerrar(null); }
@@ -116,7 +118,7 @@ async function buscarOrdenes(){
   if (!r.ok) { _ord.error = r.red ? "sinred" : (r.msg || "No se pudieron cargar las órdenes."); pintarOrdenes(""); return; }
   _ord.error = "";
   const L = r.ordenes || [];
-  if (!q) { _ord.lista = L; _ord.abiertas = L.filter(o => o.estado === "ABIERTA").length; pintarBotonOrdenes(); }
+  if (!q) { _ord.lista = L; _ord.listaEn = Date.now(); _ord.abiertas = L.filter(o => o.estado === "ABIERTA").length; pintarBotonOrdenes(); }
   pintarOrdenes("", L);
 }
 function pintarOrdenes(estado, lista){
